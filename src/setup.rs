@@ -14,9 +14,11 @@ const MIN_PASSWORD: usize = 4;
 
 /// Terminal oçilişidan oldin çaqiriladi.
 pub fn run(disk: bool) {
-    match accounts::current() {
-        Some(account) => login(&account),
-        None => wizard(disk),
+    accounts::set_current(None);
+    if accounts::all().is_empty() {
+        wizard(disk);
+    } else {
+        login();
     }
 }
 
@@ -90,11 +92,14 @@ fn wizard(disk: bool) {
     };
 
     tprintln!(msg::SETUP_CREATING);
-    let (account, master) = accounts::create(&username, &full_name, &password);
+    // Birinçi foydalanuvçi — administrator; disk kaliti yangi
+    let master = accounts::new_volume_key();
+    let account = accounts::create(&username, &full_name, &password, accounts::FIRST_UID, true, &master);
     accounts::forget(password);
+    accounts::set_all(alloc::vec![account.clone()]);
     accounts::set_current(Some(account));
     accounts::set_master_key(Some(master));
-    let home = fs::setup_home(&username).unwrap_or_default();
+    let home = fs::setup_home(&username, accounts::FIRST_UID).unwrap_or_default();
     if disk {
         zaminfs::wipe(); // eski (boşqa kalit bilan şifrlangan) nusxalar qolmasin
         zaminfs::format(&master);
@@ -113,8 +118,25 @@ fn wizard(disk: bool) {
     println!();
 }
 
-fn login(account: &accounts::Account) {
+/// Kiriş. Bitta hisob bölsa — darhol parol; bir neçta bölsa — avval foydalanuvçi nomi.
+fn login() {
+    let list = accounts::all();
     println!();
+    let account = if list.len() == 1 {
+        list[0].clone()
+    } else {
+        let names: alloc::vec::Vec<&str> = list.iter().map(|a| a.username.as_str()).collect();
+        tprintln!(msg::LOGIN_USERS, names.join(", "));
+        loop {
+            tprint!(msg::LOGIN_USER_PROMPT);
+            let u = read_line(false);
+            if let Some(a) = list.iter().find(|a| a.username == u.trim()) {
+                break a.clone();
+            }
+            tprintln!(msg::LOGIN_NO_USER);
+        }
+    };
+    let account = &account;
     tprintln!(msg::LOGIN_WELCOME, account.full_name);
     let mut failures = 0u32;
     let key = loop {
@@ -132,7 +154,8 @@ fn login(account: &accounts::Account) {
         task::sleep_ms((1000u64 << failures.min(5)).min(30_000));
     };
     accounts::set_master_key(Some(key));
-    let _ = fs::setup_home(&account.username);
+    accounts::set_current(Some(account.clone()));
+    let _ = fs::setup_home(&account.username, account.uid);
     match zaminfs::mount(&key) {
         Ok(Some(meta)) => match fs::import_meta(&meta) {
             Ok(n) => tprintln!(msg::ZFS_RESTORED, n),

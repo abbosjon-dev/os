@@ -290,7 +290,8 @@ pub fn apply_language(lang: Lang) {
 
 /// Foydalanuvçining uy papkasini (va standart içki papkalarini) yaratadi hamda
 /// `~` ni unga yönaltiradi. Allaqaçon bor bölsa — şunçaki yönaltiradi.
-pub fn setup_home(username: &str) -> Result<String, FsError> {
+/// Foydalanuvçi uy papkasi; egasi — şu foydalanuvçi.
+pub fn setup_home(username: &str, uid: u32) -> Result<String, FsError> {
     let mut v = VFS.lock();
     let lang = crate::i18n::current() as usize;
     let homes = v.lookup("/uy")?;
@@ -298,6 +299,7 @@ pub fn setup_home(username: &str) -> Result<String, FsError> {
         Ok(id) => id,
         Err(_) => v.add(homes, username, Data::Dir(Vec::new()), false)?,
     };
+    v.node_mut(home)?.owner = uid;
     for r in HOME_FOLDERS {
         if v.child(home, r.names()[0]).is_err() {
             v.add_with_role(home, r.names()[lang], Data::Dir(Vec::new()), false, Some(r))?;

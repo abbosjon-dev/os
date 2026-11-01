@@ -14,6 +14,7 @@ use crate::i18n::Lang;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
+use alloc::vec::Vec;
 
 const MAGIC: &[u8; 8] = b"ZAMINDSK";
 const VERSION: u32 = 2;
@@ -22,7 +23,7 @@ const CONFIG_SECTORS: usize = 16;
 
 pub struct Settings {
     pub lang: Lang,
-    pub account: Option<Account>,
+    pub accounts: Vec<Account>,
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -61,26 +62,44 @@ pub fn load() -> Option<Settings> {
     let text = core::str::from_utf8(&buf[..len]).ok()?;
 
     let mut lang = Lang::Uz;
-    let (mut user, mut name, mut salt, mut iters, mut key) = (None, None, None, None, None);
+    let mut accounts = Vec::new();
+    // Har bir "[hisob]" bölimini yiğamiz; eski (bitta hisobli) format ham öqiladi.
+    let mut cur: Vec<(String, String)> = Vec::new();
+    let flush = |cur: &mut Vec<(String, String)>, accounts: &mut Vec<Account>, legacy: bool| {
+        let get = |k: &str| cur.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone());
+        let (Some(username), Some(full_name), Some(salt), Some(iterations), Some(wrapped_key)) = (
+            get("login"),
+            get("ism"),
+            get("tuz").and_then(|v| unhex::<16>(&v)),
+            get("takror").and_then(|v| v.parse::<u32>().ok()),
+            get("kalit").and_then(|v| unhex::<{ crate::accounts::WRAPPED_LEN }>(&v)),
+        ) else {
+            cur.clear();
+            return;
+        };
+        let uid = get("uid").and_then(|v| v.parse().ok()).unwrap_or(crate::accounts::FIRST_UID);
+        let admin = get("admin").map_or(legacy, |v| v == "ha");
+        if iterations > 0 {
+            accounts.push(Account { username, full_name, uid, admin, salt, iterations, wrapped_key });
+        }
+        cur.clear();
+    };
+    let mut in_section = false;
     for line in text.lines() {
+        if line.trim() == "[hisob]" {
+            flush(&mut cur, &mut accounts, !in_section);
+            in_section = true;
+            continue;
+        }
         let Some((k, v)) = line.split_once('=') else { continue };
-        match k {
-            "til" => lang = Lang::from_code(v).unwrap_or(Lang::Uz),
-            "login" => user = Some(String::from(v)),
-            "ism" => name = Some(String::from(v)),
-            "tuz" => salt = unhex::<16>(v),
-            "takror" => iters = v.parse::<u32>().ok(),
-            "kalit" => key = unhex::<{ crate::accounts::WRAPPED_LEN }>(v),
-            _ => {}
+        if k == "til" && !in_section {
+            lang = Lang::from_code(v).unwrap_or(Lang::Uz);
+        } else {
+            cur.push((String::from(k), String::from(v)));
         }
     }
-    let account = match (user, name, salt, iters, key) {
-        (Some(username), Some(full_name), Some(salt), Some(iterations), Some(wrapped_key)) if iterations > 0 => {
-            Some(Account { username, full_name, salt, iterations, wrapped_key })
-        }
-        _ => None,
-    };
-    Some(Settings { lang, account })
+    flush(&mut cur, &mut accounts, !in_section);
+    Some(Settings { lang, accounts })
 }
 
 /// Diskka yozadi. Natija: saqlandimi.
@@ -89,11 +108,13 @@ pub fn save(s: &Settings) -> bool {
         return false;
     }
     let mut text = format!("# Zamin OS sozlamalari\ntil={}\n", lang_code(s.lang));
-    if let Some(a) = &s.account {
+    for a in &s.accounts {
         text += &format!(
-            "login={}\nism={}\nkdf=pbkdf2-sha256\ntakror={}\ntuz={}\nkalit={}\n",
+            "[hisob]\nlogin={}\nism={}\nuid={}\nadmin={}\nkdf=pbkdf2-sha256\ntakror={}\ntuz={}\nkalit={}\n",
             a.username,
             a.full_name,
+            a.uid,
+            if a.admin { "ha" } else { "yöq" },
             a.iterations,
             hex(&a.salt),
             hex(&a.wrapped_key)
@@ -124,5 +145,5 @@ pub fn wipe() -> bool {
 
 /// Joriy sozlamalar (til + hisob) ni saqlaydi.
 pub fn save_current() -> bool {
-    save(&Settings { lang: crate::i18n::current(), account: crate::accounts::current() })
+    save(&Settings { lang: crate::i18n::current(), accounts: crate::accounts::all() })
 }

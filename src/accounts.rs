@@ -5,6 +5,9 @@
 //!   - paroldan PBKDF2-HMAC-SHA256 (300 000 takror, tasodifiy tuz) orqali **örov kaliti** olinadi;
 //!   - asosiy kalit örov kaliti bilan ChaCha20-Poly1305 da şifrlanib ("örab") diskka yoziladi.
 //!
+//! Bir neçta foydalanuvçi: disk kaliti (bitta) har bir foydalanuvçining paroli bilan alohida
+//! öraladi — har kim öz paroli bilan kiradi, kalitni boşqasiga bilmay berib qöymaydi.
+//!
 //! Natijada: parol heç qayerda saqlanmaydi; parolsiz disk maʼlumotlarini öqib bölmaydi;
 //! parol özgarganda faqat kalit qayta öraladi (maʼlumotlarni qayta şifrlaş şart emas);
 //! sozlamalarni öçiriş (`tiklaş`) — kalit yöqoladi, maʼlumotlar abadiy öqib bölmas bölib qoladi.
@@ -24,12 +27,19 @@ pub const WRAPPED_LEN: usize = 60;
 pub struct Account {
     pub username: String,
     pub full_name: String,
+    /// Foydalanuvçi raqami: 1000, 1001, ... (0 — tizim)
+    pub uid: u32,
+    /// Administrator: foydalanuvçi qöşiş/öçiriş, tiklaş, boşqalarning jarayonlarini töxtatiş
+    pub admin: bool,
     pub salt: [u8; 16],
     pub iterations: u32,
     pub wrapped_key: [u8; WRAPPED_LEN],
 }
 
 static CURRENT: SpinLock<Option<Account>> = SpinLock::new(None);
+/// Barça hisoblar (diskdagi sozlamalardan)
+static ALL: SpinLock<Vec<Account>> = SpinLock::new(Vec::new());
+pub const FIRST_UID: u32 = 1000;
 /// Kirişdan keyin oçilgan asosiy kalit (faqat xotirada).
 static MASTER_KEY: SpinLock<Option<[u8; 32]>> = SpinLock::new(None);
 
@@ -54,18 +64,73 @@ fn wrap(username: &str, password: &str, master: &[u8; 32]) -> ([u8; 16], [u8; WR
     (salt, w)
 }
 
-/// Yangi hisob va uning asosiy kaliti.
-pub fn create(username: &str, full_name: &str, password: &str) -> (Account, [u8; 32]) {
-    let master = random::bytes::<32>();
-    let (salt, wrapped_key) = wrap(username, password, &master);
-    let account = Account {
+/// Yangi disk kaliti (birinçi sozlaşda).
+pub fn new_volume_key() -> [u8; 32] {
+    random::bytes::<32>()
+}
+
+/// Yangi hisob: disk kaliti uning paroli bilan öraladi.
+pub fn create(username: &str, full_name: &str, password: &str, uid: u32, admin: bool, volume_key: &[u8; 32]) -> Account {
+    let (salt, wrapped_key) = wrap(username, password, volume_key);
+    Account {
         username: String::from(username),
         full_name: String::from(full_name),
+        uid,
+        admin,
         salt,
         iterations: ITERATIONS,
         wrapped_key,
-    };
-    (account, master)
+    }
+}
+
+pub fn all() -> Vec<Account> {
+    ALL.lock().clone()
+}
+
+pub fn set_all(list: Vec<Account>) {
+    *ALL.lock() = list;
+}
+
+#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
+pub fn find(username: &str) -> Option<Account> {
+    ALL.lock().iter().find(|a| a.username == username).cloned()
+}
+
+#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
+/// Hisobni qöşadi yoki yangilaydi (login böyiça).
+pub fn upsert(a: Account) {
+    let mut all = ALL.lock();
+    match all.iter_mut().find(|x| x.username == a.username) {
+        Some(x) => *x = a,
+        None => all.push(a),
+    }
+}
+
+#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
+pub fn remove(username: &str) -> bool {
+    let mut all = ALL.lock();
+    let n = all.len();
+    all.retain(|a| a.username != username);
+    all.len() != n
+}
+
+#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
+pub fn next_uid() -> u32 {
+    ALL.lock().iter().map(|a| a.uid + 1).max().unwrap_or(FIRST_UID).max(FIRST_UID)
+}
+
+#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
+/// Foydalanuvçi nomi raqami böyiça (0 — "tizim").
+pub fn username_of(uid: u32) -> String {
+    if uid == 0 {
+        return String::from("tizim");
+    }
+    ALL.lock().iter().find(|a| a.uid == uid).map_or_else(|| alloc::format!("{}", uid), |a| a.username.clone())
+}
+
+#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
+pub fn is_admin_uid(uid: u32) -> bool {
+    uid == 0 || ALL.lock().iter().any(|a| a.uid == uid && a.admin)
 }
 
 /// Parol töğri bölsa — asosiy kalitni oçadi.
@@ -184,7 +249,7 @@ pub fn master_key() -> Option<[u8; 32]> {
     *MASTER_KEY.lock()
 }
 
-/// Joriy foydalanuvçi raqami: 1000 — birinçi foydalanuvçi, 0 — tizim (heç kim kirmagan).
+/// Tizimga kirgan foydalanuvçi raqami (heç kim kirmagan bölsa — 0).
 pub fn current_uid() -> u32 {
-    if CURRENT.lock().is_some() { 1000 } else { 0 }
+    CURRENT.lock().as_ref().map_or(0, |a| a.uid)
 }

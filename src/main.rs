@@ -148,9 +148,9 @@ pub extern "C" fn kernel_main() -> ! {
     match config::load() {
         Some(s) => {
             i18n::set(s.lang);
-            let who = s.account.as_ref().map_or(String::from("—"), |a| a.username.clone());
-            tprintln!(msg::CONFIG_LOADED, who);
-            accounts::set_current(s.account);
+            let who: Vec<String> = s.accounts.iter().map(|a| a.username.clone()).collect();
+            tprintln!(msg::CONFIG_LOADED, who.join(", "));
+            accounts::set_all(s.accounts);
         }
         None => tprintln!(msg::CONFIG_FRESH),
     }
