@@ -17,6 +17,15 @@ enum St {
     Closed,
 }
 
+/// Tasdiq kutayotgan jönatilgan segment (qayta jönatiş uçun).
+struct Unacked {
+    seq: u32,
+    flags: u8,
+    data: Vec<u8>,
+    sent_ms: u64,
+    retries: u8,
+}
+
 struct Conn {
     /// Egasi (jarayon PID): faqat u bu ulanişni öqiy/yoza oladi
     owner: usize,
@@ -28,6 +37,67 @@ struct Conn {
     state: St,
     inbox: VecDeque<u8>,
     got_synack: bool,
+    /// Tasdiq kutayotgan segmentlar (eng eskisidan)
+    unacked: VecDeque<Unacked>,
+    /// Peer tasdiqlagan eng katta seq
+    snd_una: u32,
+}
+
+const RTO_MS: u64 = 200;
+const MAX_RETRIES: u8 = 6;
+
+/// Seq maydonini egallaydigan segment: saqlanadi va kerak bölsa qayta jönatiladi.
+fn send_tracked(c: &mut Conn, flags: u8, data: Vec<u8>) {
+    send_segment(c, flags, &data);
+    let seq = c.seq;
+    let consumed = data.len() as u32 + if flags & (SYN | FIN) != 0 { 1 } else { 0 };
+    c.seq = c.seq.wrapping_add(consumed);
+    if consumed > 0 {
+        c.unacked.push_back(Unacked { seq, flags, data, sent_ms: crate::timer::uptime_ms(), retries: 0 });
+    }
+}
+
+/// Peer `ack` gaça bölgan segmentlarni tasdiqlangan deb olib taşlaydi.
+fn acknowledge(c: &mut Conn, ack: u32) {
+    c.snd_una = ack;
+    while let Some(u) = c.unacked.front() {
+        let end = u.seq.wrapping_add(u.data.len() as u32 + if u.flags & (SYN | FIN) != 0 { 1 } else { 0 });
+        // end <= ack (wrapping): tasdiqlangan
+        if ack.wrapping_sub(end) < 0x8000_0000 {
+            c.unacked.pop_front();
+        } else {
+            break;
+        }
+    }
+}
+
+/// Davriy tekşiruv (tarmoq oqimidan): vaqtida tasdiq kelmagan segmentlarni qayta jönatadi.
+pub fn tick() {
+    let now = crate::timer::uptime_ms();
+    let mut cs = CONNS.lock();
+    for slot in cs.iter_mut() {
+        let Some(c) = slot.as_mut() else { continue };
+        if c.state == St::Closed {
+            continue;
+        }
+        if let Some(u) = c.unacked.front_mut() {
+            if now.saturating_sub(u.sent_ms) >= RTO_MS {
+                if u.retries >= MAX_RETRIES {
+                    c.state = St::Closed;
+                    task::wake_event(EVENT);
+                    continue;
+                }
+                u.retries += 1;
+                u.sent_ms = now;
+                let (seq, flags, data) = (u.seq, u.flags, u.data.clone());
+                // seq ni vaqtinça örnatib qayta jönatamiz
+                let saved = c.seq;
+                c.seq = seq;
+                send_segment(c, flags, &data);
+                c.seq = saved;
+            }
+        }
+    }
 }
 
 static CONNS: SpinLock<Vec<Option<Conn>>> = SpinLock::new(Vec::new());
@@ -71,6 +141,8 @@ pub fn connect(remote: Ip, remote_port: u16) -> Option<usize> {
         state: St::SynSent,
         inbox: VecDeque::new(),
         got_synack: false,
+        unacked: VecDeque::new(),
+        snd_una: seq,
     };
     let id = {
         let mut cs = CONNS.lock();
@@ -85,7 +157,7 @@ pub fn connect(remote: Ip, remote_port: u16) -> Option<usize> {
             }
             None => return None,
         };
-        send_segment(cs[id].as_ref().unwrap(), SYN, &[]);
+        send_tracked(cs[id].as_mut().unwrap(), SYN, Vec::new());
         id
     };
     // SYN-ACK kutamiz
@@ -97,7 +169,7 @@ pub fn connect(remote: Ip, remote_port: u16) -> Option<usize> {
                 if c.got_synack {
                     c.got_synack = false;
                     c.state = St::Open;
-                    send_segment(c, ACK, &[]);
+                    send_segment(c, ACK, &[]); // toza ACK (seq maydonini egallamaydi)
                     return Some(id);
                 }
                 if c.state == St::Closed {
@@ -119,8 +191,7 @@ pub fn send(id: usize, data: &[u8]) -> bool {
         return false;
     }
     for chunk in data.chunks(1400) {
-        send_segment(c, PSH | ACK, chunk);
-        c.seq = c.seq.wrapping_add(chunk.len() as u32);
+        send_tracked(c, PSH | ACK, chunk.to_vec());
     }
     true
 }
@@ -200,8 +271,11 @@ pub fn handle(src: Ip, p: &[u8]) {
         task::wake_event(EVENT);
         return;
     }
+    let seg_ack = u32::from_be_bytes([p[8], p[9], p[10], p[11]]);
+    if flags & ACK != 0 {
+        acknowledge(c, seg_ack);
+    }
     if c.state == St::SynSent && flags & SYN != 0 && flags & ACK != 0 {
-        c.seq = c.seq.wrapping_add(1);
         c.ack = seg_seq.wrapping_add(1);
         c.got_synack = true;
         task::wake_event(EVENT);

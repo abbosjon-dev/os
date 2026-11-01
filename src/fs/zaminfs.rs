@@ -324,9 +324,22 @@ pub fn commit(meta: &[u8]) -> Result<u64, ZfsError> {
     }
     let mut refs = Vec::with_capacity(chunks.len());
     for c in chunks {
-        let block = ST.lock().alloc()?;
-        let nonce = seal_write(&key, block, KIND_META, c)?;
-        refs.push(BlockRef { block, nonce });
+        // Xato bölsa, şu saqlaşda ajratilgan meta bloklarni qaytaramiz (oqmasin)
+        let block = match ST.lock().alloc() {
+            Ok(b) => b,
+            Err(e) => {
+                rollback(&refs);
+                return Err(e);
+            }
+        };
+        match seal_write(&key, block, KIND_META, c) {
+            Ok(nonce) => refs.push(BlockRef { block, nonce }),
+            Err(e) => {
+                ST.lock().set_used(block, false);
+                rollback(&refs);
+                return Err(e);
+            }
+        }
     }
 
     let st = ST.lock();
@@ -351,7 +364,12 @@ pub fn commit(meta: &[u8]) -> Result<u64, ZfsError> {
     buf[32..48].copy_from_slice(&tag);
     buf[48..48 + body.len()].copy_from_slice(&body);
     drop(st);
-    disk::write(block_sector(slot), &buf).map_err(|_| ZfsError::Io)?;
+    if let Err(e) = disk::write(block_sector(slot), &buf) {
+        rollback(&refs);
+        return Err(match e {
+            _ => ZfsError::Io,
+        });
+    }
 
     // Saqlandi. Endi eski metadata va almaştirilgan bloklarni böşatiş mumkin.
     let mut st = ST.lock();
@@ -367,6 +385,16 @@ pub fn commit(meta: &[u8]) -> Result<u64, ZfsError> {
     st.active_slot = slot;
     st.blocks_written += refs.len() as u64 + 1;
     Ok(st.blocks_written - written_before)
+}
+
+/// Muvaffaqiyatsiz saqlaşda ajratilgan meta bloklarni qaytaradi.
+fn rollback(refs: &[BlockRef]) {
+    let mut st = ST.lock();
+    for r in refs {
+        if r.block < st.total {
+            st.set_used(r.block, false);
+        }
+    }
 }
 
 /// Ikkala superblokni öçiradi va kalitni unutadi ("kripto-öçiriş").

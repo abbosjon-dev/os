@@ -114,21 +114,29 @@ fn send_eth(dst: Mac, ethertype: u16, payload: &[u8]) {
 
 // --- ARP ---
 const ARP_MAX: usize = 32;
-static ARP_CACHE: SpinLock<Vec<(Ip, Mac)>> = SpinLock::new(Vec::new());
+/// (IP, MAC, qöşilgan vaqt ms). Eski yozuvlar eskiradi va qayta söraladi.
+static ARP_CACHE: SpinLock<Vec<(Ip, Mac, u64)>> = SpinLock::new(Vec::new());
+const ARP_TTL_MS: u64 = 60_000;
 
 fn arp_lookup(ip: Ip) -> Option<Mac> {
-    ARP_CACHE.lock().iter().find(|(i, _)| *i == ip).map(|(_, m)| *m)
+    let now = crate::timer::uptime_ms();
+    ARP_CACHE.lock().iter().find(|(i, _, t)| *i == ip && now.saturating_sub(*t) < ARP_TTL_MS).map(|(_, m, _)| *m)
 }
 
 fn arp_insert(ip: Ip, mac: Mac) {
+    let now = crate::timer::uptime_ms();
     let mut c = ARP_CACHE.lock();
-    if let Some(e) = c.iter_mut().find(|(i, _)| *i == ip) {
+    if let Some(e) = c.iter_mut().find(|(i, _, _)| *i == ip) {
         e.1 = mac;
+        e.2 = now;
     } else {
+        // Böş joy yoki eng eski yozuv örniga
         if c.len() >= ARP_MAX {
-            c.remove(0);
+            if let Some(oldest) = (0..c.len()).min_by_key(|&k| c[k].2) {
+                c.remove(oldest);
+            }
         }
-        c.push((ip, mac));
+        c.push((ip, mac, now));
     }
 }
 
@@ -194,7 +202,7 @@ pub fn send_ipv4(dst: Ip, proto: u8, payload: &[u8]) -> bool {
     h.extend_from_slice(&[0x45, 0x00]);
     h.extend_from_slice(&(total as u16).to_be_bytes());
     h.extend_from_slice(&id.to_be_bytes());
-    h.extend_from_slice(&[0x40, 0x00]); // Don't fragment
+    h.extend_from_slice(&[0x40, 0x00]); // Donʼt fragment
     h.extend_from_slice(&[64, proto]);
     h.extend_from_slice(&[0, 0]); // checksum keyin
     h.extend_from_slice(&our_ip());
@@ -313,6 +321,7 @@ extern "C" fn worker(_: usize) {
         for frame in nic::poll() {
             dispatch(&frame);
         }
+        tcp::tick(); // vaqtida tasdiq kelmagan TCP segmentlarini qayta jönatiş
         task::sleep_ms(2);
     }
 }
