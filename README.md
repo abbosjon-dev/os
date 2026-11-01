@@ -136,6 +136,24 @@ abbosjon@zamin:~> çiqiş                                    # çiqiş (qayta ki
 - töxtatiş xavfsiz: jarayon yadro içida (masalan, qulf uşlab turganda) uzilmaydi, foydalanuvçi
   rejimiga qaytayotganda özi tugaydi.
 
+## Oqimlar
+
+Bitta jarayon içida bir neçta oqim parallel (turli yadrolarda) işlaydi. Ular jarayonning
+manzil maydoni, dastaklari, muhiti va joriy papkasini böliştadi.
+
+```rust
+let h = zamin::thread::spawn(|| hisobla(0, 1_000_000));
+let natija = h.join();
+
+static HISOB: zamin::sync::Mutex<u64> = zamin::sync::Mutex::new(0);
+*HISOB.lock() += 1; // band bölsa — oqim uxlaydi (futex)
+```
+
+- `SYS_THREAD_CREATE / EXIT / JOIN`, `SYS_FUTEX_WAIT / WAKE`;
+- istalgan oqim `exit` qilsa — butun jarayon tugaydi (qolgan oqimlar xavfsiz nuqtada töxtaydi);
+- jarayon resurslari faqat barça oqimlari tugagaç böşatiladi;
+- `oqimlar 4` — 4 oqimda tub sonlarni sanaydi va tezlaşişni körsatadi (~3.6x).
+
 Yordamçi dasturlar: `ekran` (fayl/kirişni çiqariş), `izla` (qidiriş), `sana` (sanaş), `tartib` (tartiblaş).
 
 ## Dasturlar va jarayonlar
@@ -214,9 +232,11 @@ src/ipc.rs           Zamin kanallari — jarayonlararo xabar almaşiş
 src/abi.rs           Tizim çaqiruvlari raqamlari (yadro va dasturlar uçun umumiy)
 build.rs             Foydalanuvçi dasturlarini yiğib, yadroga joylaydi
 user/src/lib.rs      `zamin` kutubxonasi: tizim çaqiruvlari, println!, tr(), Channel, spawn/wait
-user/src/heap.rs     Foydalanuvçi xotira ajratuvçisi (Vec, String, format! işlaydi)
+user/src/heap.rs     Foydalanuvçi xotira ajratuvçisi (Vec, String, format! işlaydi; oqimlar uçun xavfsiz)
+user/src/thread.rs   Oqimlar: spawn, join
+user/src/sync.rs     Futex asosidagi Mutex
 user/src/fs.rs       Fayllar: File, read, write, list, mkdir, remove
-user/src/bin/        Dasturlar: terminal, ekran, izla, sana, tartib, salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz, katta
+user/src/bin/        Dasturlar: terminal, oqimlar, ekran, izla, sana, tartib, salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz, katta
 src/setup.rs         Birinçi sozlaş (til, ism, login, parol) va kiriş
 src/accounts.rs      Foydalanuvçi hisoblari, parol xeşi
 src/config.rs        Diskdagi sozlamalar

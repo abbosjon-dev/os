@@ -112,6 +112,11 @@ fn program_help(name: &str) -> Text {
         "izla" => ["qatorlarda qidiradi: izla söz [fayl]", "ищет в строках: izla слово [файл]", "searches lines: izla word [file]"],
         "sana" => ["qator, söz, baytlarni sanaydi", "считает строки, слова, байты", "counts lines, words, bytes"],
         "tartib" => ["qatorlarni tartiblaydi (-t teskari)", "сортирует строки (-t обратно)", "sorts lines (-t reverse)"],
+        "oqimlar" => [
+            "tub sonlarni bir neçta oqimda sanaydi: oqimlar [son] [çegara]",
+            "считает простые в нескольких потоках: oqimlar [n] [предел]",
+            "counts primes in several threads: oqimlar [n] [limit]",
+        ],
         "katta" => [
             "katta fayl yozib tekşiradi: katta [MB] | katta tekşir",
             "пишет и проверяет большой файл: katta [МБ] | katta tekşir",
@@ -164,7 +169,7 @@ fn abs_path(p: &str) -> String {
 }
 
 /// Terminal oqimi: avval birinçi sozlaş yoki kiriş, keyin foydalanuvçi terminali
-/// (`/dasturlar/terminal`) işonçli jarayon sifatida işga tuşiriladi. U tugasa (`chiqiş`) —
+/// (`/dasturlar/terminal`) işonçli jarayon sifatida işga tuşiriladi. U tugasa (`çiqiş`) —
 /// qayta kiriş söraladi. Terminal dasturi bölmasa — yadro içidagi zaxira terminal.
 pub extern "C" fn run(disk: usize) {
     loop {

@@ -101,5 +101,29 @@ fn main() -> i64 {
     if zamin::wait(child).is_ok() {
         return 42; // ikkinçi marta kutib bölmaydi — u allaqaçon tozalangan
     }
+
+    // 50–52: oqimlar va futex qulfi (4 oqim × 2000 = 8000)
+    static COUNTER: zamin::sync::Mutex<u64> = zamin::sync::Mutex::new(0);
+    let hs: Vec<_> = (0..4)
+        .map(|k| {
+            zamin::thread::spawn(move || {
+                for _ in 0..2000 {
+                    let mut g = COUNTER.lock();
+                    *g += 1;
+                }
+                k
+            })
+        })
+        .collect();
+    let codes: i64 = hs.into_iter().map(|h| h.join()).sum();
+    if codes != 0 + 1 + 2 + 3 {
+        return 50;
+    }
+    if *COUNTER.lock() != 8000 {
+        return 51;
+    }
+    if zamin::thread::current_tid() != zamin::pid() {
+        return 52; // asosiy oqimning TID i — jarayon PID i
+    }
     42
 }

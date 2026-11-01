@@ -57,3 +57,9 @@ pub fn user_string(addr: u64, len: u64, max: usize) -> Result<String, i64> {
     }
     String::from_utf8(copy_from_user(addr, len)?).map_err(|_| ERR_INVALID)
 }
+
+/// Tekşirilgan manzildan u32 öqiydi (futex şarti uçun; rejalaştiruvçi qulfi ostida
+/// çaqiriladi, şuning uçun bu yerda tekşiruv qilinmaydi — oldindan `check_writable`).
+pub fn read_u32_checked_before(addr: u64) -> u32 {
+    with_user_access(|| unsafe { core::ptr::read_volatile(addr as *const u32) })
+}

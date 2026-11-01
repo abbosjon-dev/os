@@ -1,6 +1,6 @@
 //! Foydalanuvçi xotira ajratuvçisi: böş bloklar röyxati (free list).
-//! Xotira yetmasa, yadrodan yangi sahifalar sörar (SYS_MAP). Jarayon bitta oqimli,
-//! şuning uçun qulf kerak emas.
+//! Xotira yetmasa, yadrodan yangi sahifalar sörar (SYS_MAP). Bir neçta oqim bölişi
+//! mumkin, şuning uçun qisqa qulf (band bölsa — navbat böşatiladi).
 
 use crate::abi::SYS_MAP;
 use core::alloc::{GlobalAlloc, Layout};
@@ -17,12 +17,26 @@ struct Node {
 
 struct Heap {
     head: UnsafeCell<*mut Node>,
+    lock: core::sync::atomic::AtomicBool,
+}
+
+impl Heap {
+    fn acquire(&self) {
+        use core::sync::atomic::Ordering;
+        while self.lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            crate::yield_now();
+        }
+    }
+
+    fn release(&self) {
+        self.lock.store(false, core::sync::atomic::Ordering::Release);
+    }
 }
 
 unsafe impl Sync for Heap {}
 
 #[global_allocator]
-static HEAP: Heap = Heap { head: UnsafeCell::new(null_mut()) };
+static HEAP: Heap = Heap { head: UnsafeCell::new(null_mut()), lock: core::sync::atomic::AtomicBool::new(false) };
 
 const fn align_up(x: usize, a: usize) -> usize {
     (x + a - 1) & !(a - 1)
@@ -95,22 +109,26 @@ unsafe impl GlobalAlloc for Heap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let size = block_size(&layout);
         let align = layout.align().max(MIN_BLOCK);
-        unsafe {
-            let p = self.try_alloc(size, align);
-            if !p.is_null() {
-                return p;
+        self.acquire();
+        let p = unsafe {
+            let mut p = self.try_alloc(size, align);
+            if p.is_null() {
+                let grow = align_up(size + align, GROW);
+                let addr = crate::syscall(SYS_MAP, grow as u64, 0, 0, 0);
+                if addr >= 0 {
+                    self.insert(addr as usize, grow);
+                    p = self.try_alloc(size, align);
+                }
             }
-            let grow = align_up(size + align, GROW);
-            let addr = crate::syscall(SYS_MAP, grow as u64, 0, 0, 0);
-            if addr < 0 {
-                return null_mut();
-            }
-            self.insert(addr as usize, grow);
-            self.try_alloc(size, align)
-        }
+            p
+        };
+        self.release();
+        p
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        self.acquire();
         unsafe { self.insert(ptr as usize, block_size(&layout)) };
+        self.release();
     }
 }

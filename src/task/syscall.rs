@@ -263,6 +263,38 @@ fn handle(num: u64, a: [u64; 5]) -> SysResult {
             task::set_foreground(a[0] as usize);
             Ok(0)
         }
+        // --- Oqimlar ---
+        SYS_THREAD_CREATE => {
+            let (entry, stack) = (a[0] as usize, a[1] as usize);
+            // Kiriş va stek joriy jarayonning foydalanuvçi xotirasida bölişi kerak
+            if !task::user_range_ok(entry, 4, false) || !task::user_range_ok(stack - 16, 16, true) {
+                return Err(ERR_BAD_ADDRESS);
+            }
+            task::spawn_thread(entry, stack, a[2]).map(|t| t as i64).map_err(|_| ERR_NO_MEMORY)
+        }
+        SYS_THREAD_EXIT => task::exit_thread(a[0] as i64),
+        SYS_THREAD_JOIN => {
+            let tid = a[0] as usize;
+            if task::parent_of(tid) != Some(task::current_pid()) || tid == task::current_tid() {
+                return Err(ERR_NOT_CHILD);
+            }
+            task::wait(tid).ok_or(ERR_NOT_FOUND)
+        }
+        SYS_FUTEX_WAIT => {
+            let (addr, expected) = (a[0], a[1] as u32);
+            if addr % 4 != 0 {
+                return Err(ERR_INVALID);
+            }
+            check_writable(addr, 4)?;
+            let key = task::futex_key(addr as usize);
+            task::wait_event(key, || task::uaccess::read_u32_checked_before(addr) == expected);
+            Ok(0)
+        }
+        SYS_FUTEX_WAKE => {
+            task::wake_event(task::futex_key(a[0] as usize));
+            Ok(0)
+        }
+        SYS_TID => Ok(task::current_tid() as i64),
         SYS_CHDIR => {
             let path = user_path(a[0], a[1])?;
             fs::list(&path).map_err(fs_err)?; // mavjud papka bölişi kerak

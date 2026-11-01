@@ -5,6 +5,7 @@
 //! - xotira ajratuvçi: `Vec`, `String`, `Box`, `format!` işlaydi
 //! - fayllar (`fs`), Zamin kanallari (`Channel`)
 //! - dastur argumentlari (`args`)
+//! - oqimlar (`thread::spawn`) va futex asosidagi `sync::Mutex`
 
 #![no_std]
 
@@ -12,6 +13,8 @@ extern crate alloc;
 
 pub mod fs;
 mod heap;
+pub mod sync;
+pub mod thread;
 
 use core::arch::asm;
 use core::fmt::{self, Write};

@@ -115,6 +115,11 @@ pub struct Task {
     pub user: bool,
     /// Uni işga tuşirgan jarayon
     pub parent: Pid,
+    /// Oqim bölsa — u tegişli jarayon (yetakçi) PID i; jarayon yoki yadro oqimi bölsa — 0.
+    /// Jarayon resurslari (manzil maydoni, dastaklar, muhit, joriy papka) yetakçida.
+    pub leader: Pid,
+    /// Sahifa jadvali (oqimlar yetakçinikini işlatadi)
+    root: usize,
     /// Heç kim kutmaydi — tugagaç avtomatik tozalanadi.
     detached: bool,
     /// Konteksti hozir biror yadroda "jonli" (işlayapti yoki almaştiriş tugamagan)
@@ -254,6 +259,8 @@ fn idle_task(cpu: usize) -> Box<Task> {
         state: State::Running,
         user: false,
         parent: 0,
+        leader: 0,
+        root: mmu::kernel_root_pa(),
         detached: false,
         on_cpu: true,
         last_cpu: cpu,
@@ -326,6 +333,8 @@ pub fn spawn_kernel_ext(name: &str, entry: extern "C" fn(usize), arg: usize, det
         state: State::Ready,
         user: false,
         parent: 0,
+        leader: 0,
+        root: mmu::kernel_root_pa(),
         detached,
         on_cpu: false,
         last_cpu: 0,
@@ -438,6 +447,8 @@ pub fn spawn_user(name: &str, image: &[u8], args: &str, opts: SpawnOptions) -> R
         state: State::Ready,
         user: true,
         parent,
+        leader: 0,
+        root: aspace.root_pa(),
         detached,
         on_cpu: false,
         last_cpu: 0,
@@ -499,7 +510,7 @@ fn schedule() {
         }
         s.current[cpu] = next;
         PREV[cpu].store(cur, Ordering::Release);
-        let new_root = next_task.aspace.as_ref().map_or(mmu::kernel_root_pa(), |a| a.root_pa());
+        let new_root = next_task.root;
         let new: *const Context = &next_task.ctx;
         let old: *mut Context = &mut s.tasks[cur].as_mut().unwrap().ctx;
         mmu::activate(new_root);
@@ -604,8 +615,17 @@ pub fn wake_input() {
     wake_where(|st| st == State::WaitingInput);
 }
 
-/// Joriy vazifani tugatadi. Qaytmaydi.
+/// Joriy vazifani tugatadi (foydalanuvçi jarayoni bölsa — butun jarayonni). Qaytmaydi.
 pub fn exit_current(code: i64) -> ! {
+    exit_inner(code, false)
+}
+
+/// Faqat joriy oqimni tugatadi (jarayon davom etadi).
+pub fn exit_thread(code: i64) -> ! {
+    exit_inner(code, true)
+}
+
+fn exit_inner(code: i64, thread_only: bool) -> ! {
     irq_save();
     let handles;
     {
@@ -614,7 +634,27 @@ pub fn exit_current(code: i64) -> ! {
         let pid = s.tasks[cur].as_ref().unwrap().pid;
         let me = s.tasks[cur].as_mut().unwrap();
         me.state = State::Dead(code);
-        handles = core::mem::take(&mut me.handles);
+        handles = core::mem::take(&mut me.handles); // oqimda böş: dastaklar yetakçida
+        let (leader, is_thread_exit) = (if me.leader != 0 { me.leader } else { me.pid }, thread_only);
+        if me.user && !is_thread_exit {
+            // Jarayon tugaydi: uning barça oqimlari (va yetakçisi) ham xavfsiz nuqtada töxtaydi
+            for t in s.tasks.iter_mut().flatten() {
+                if (t.leader == leader || t.pid == leader) && !matches!(t.state, State::Dead(_)) {
+                    t.killed = true;
+                    if !matches!(t.state, State::Running | State::Ready | State::WaitingEvent(_)) {
+                        t.state = State::Ready;
+                    }
+                }
+            }
+        }
+        // Yetakçi tugasa — oqimlarini endi heç kim kutmaydi
+        if s.tasks[cur].as_ref().unwrap().leader == 0 {
+            for t in s.tasks.iter_mut().flatten() {
+                if t.leader == pid {
+                    t.detached = true;
+                }
+            }
+        }
         for t in s.tasks.iter_mut().flatten() {
             if t.state == State::WaitingPid(pid) {
                 t.state = State::Ready;
@@ -652,9 +692,10 @@ pub fn wait(pid: Pid) -> Option<i64> {
                 None => (Step::Done(None), None),
                 Some(i) => {
                     let t = s.tasks[i].as_ref().unwrap();
+                    let threads_left = has_threads(&s, pid);
                     match (t.state, t.on_cpu) {
-                        // Tugagan va konteksti saqlangan — tozalaş mumkin
-                        (State::Dead(code), false) => (Step::Done(Some(code)), s.tasks[i].take()),
+                        // Tugagan, konteksti saqlangan va oqimlari qolmagan — tozalaş mumkin
+                        (State::Dead(code), false) if !threads_left => (Step::Done(Some(code)), s.tasks[i].take()),
                         // Tugagan, lekin hali boşqa yadrodan çiqib ulgurmagan
                         (State::Dead(_), true) => (Step::Retry, None),
                         _ => {
@@ -682,6 +723,65 @@ pub fn wait(pid: Pid) -> Option<i64> {
     }
 }
 
+/// Jarayonning hali tozalanmagan oqimlari bormi (bölsa, yetakçi resurslari böşatilmaydi).
+fn has_threads(s: &Scheduler, pid: Pid) -> bool {
+    pid != 0 && s.tasks.iter().flatten().any(|t| t.leader == pid)
+}
+
+/// Joriy jarayonda yangi oqim: `entry(arg)` foydalanuvçi rejimida, `stack_top` stekda.
+pub fn spawn_thread(entry: usize, stack_top: usize, arg: u64) -> Result<Pid, SpawnError> {
+    let (leader, root, cwd) = {
+        let s = SCHED.lock();
+        let cur = s.current[cpu_id()];
+        let p = proc_slot(&s, cur);
+        let t = s.tasks[p].as_ref().unwrap();
+        if !t.user {
+            return Err(SpawnError::BadImage(elf::ElfError::NotElf));
+        }
+        (t.pid, t.root, t.cwd.clone())
+    };
+    let kstack = alloc_kstack()?;
+    let top = kstack_top(kstack);
+    let frame_ptr = (top - core::mem::size_of::<TrapFrame>()) as *mut TrapFrame;
+    unsafe {
+        let mut x = [0u64; 31];
+        x[0] = arg;
+        frame_ptr.write(TrapFrame { x, elr: entry as u64, spsr: 0, sp_el0: (stack_top & !15) as u64 });
+    }
+    let mut ctx = Context::default();
+    ctx.lr = user_trampoline as *const () as u64;
+    ctx.sp = frame_ptr as u64;
+    insert(Box::new(Task {
+        pid: 0,
+        name: String::from("oqim"),
+        state: State::Ready,
+        user: true,
+        parent: leader,
+        leader,
+        root,
+        detached: false,
+        on_cpu: false,
+        last_cpu: 0,
+        handles: Vec::new(),
+        env: Vec::new(),
+        trusted: false,
+        killed: false,
+        cwd,
+        heap_base: 0,
+        heap_end: 0,
+        ctx,
+        kstack: Some(kstack),
+        aspace: None,
+    }))
+}
+
+/// Oqim uçun hodisa kaliti (futex): manzil maydoni + manzil.
+pub fn futex_key(addr: usize) -> usize {
+    let s = SCHED.lock();
+    let root = s.tasks[s.current[cpu_id()]].as_ref().map_or(0, |t| t.root);
+    0x4000_0000_0000_0000 | (root << 20) ^ addr
+}
+
 /// Kutmasdan tekşiradi: `Some(Some(kod))` — tugagan (va tozalandi), `Some(None)` — işlayapti,
 /// `None` — bunday jarayon yöq.
 pub fn try_wait(pid: Pid) -> Option<Option<i64>> {
@@ -690,7 +790,7 @@ pub fn try_wait(pid: Pid) -> Option<Option<i64>> {
         let i = s.tasks.iter().position(|t| t.as_ref().is_some_and(|t| t.pid == pid && t.pid != 0))?;
         let t = s.tasks[i].as_ref().unwrap();
         match (t.state, t.on_cpu) {
-            (State::Dead(_), false) => s.tasks[i].take(),
+            (State::Dead(_), false) if !has_threads(&s, pid) => s.tasks[i].take(),
             _ => return Some(None),
         }
     };
@@ -708,9 +808,9 @@ pub fn reap_detached() {
         let task = {
             let mut s = SCHED.lock();
             let slot = (MAX_CPUS..MAX_TASKS).find(|&i| {
-                s.tasks[i]
-                    .as_ref()
-                    .is_some_and(|t| t.detached && !t.on_cpu && matches!(t.state, State::Dead(_)))
+                s.tasks[i].as_ref().is_some_and(|t| {
+                    t.detached && !t.on_cpu && matches!(t.state, State::Dead(_)) && !has_threads(&s, t.pid)
+                })
             });
             match slot {
                 Some(i) => s.tasks[i].take(),
@@ -732,13 +832,18 @@ pub fn kill(pid: Pid) -> bool {
         let Some(i) = s.tasks.iter().position(|t| t.as_ref().is_some_and(|t| t.pid == pid)) else {
             return false;
         };
-        let t = s.tasks[i].as_mut().unwrap();
+        let t = s.tasks[i].as_ref().unwrap();
         if !t.user || matches!(t.state, State::Dead(_)) {
             return false;
         }
-        t.killed = true;
-        if !matches!(t.state, State::Running | State::Ready | State::WaitingEvent(_)) {
-            t.state = State::Ready; // uxlayotgan / kutayotgan — uyğotamiz
+        let leader = if t.leader != 0 { t.leader } else { t.pid };
+        for t in s.tasks.iter_mut().flatten() {
+            if (t.pid == leader || t.leader == leader) && !matches!(t.state, State::Dead(_)) {
+                t.killed = true;
+                if !matches!(t.state, State::Running | State::Ready | State::WaitingEvent(_)) {
+                    t.state = State::Ready; // uxlayotgan / kutayotgan — uyğotamiz
+                }
+            }
         }
     }
     kick_others();
@@ -757,7 +862,15 @@ pub fn set_foreground(pid: Pid) {
     FOREGROUND.store(pid, Ordering::Release);
 }
 
+/// Joriy jarayon raqami (oqimdan çaqirilsa — jarayonniki).
 pub fn current_pid() -> Pid {
+    let s = SCHED.lock();
+    let cur = s.current[cpu_id()];
+    s.tasks[cur].as_ref().map_or(0, |t| if t.leader != 0 { t.leader } else { t.pid })
+}
+
+/// Joriy oqim raqami.
+pub fn current_tid() -> Pid {
     let s = SCHED.lock();
     s.tasks[s.current[cpu_id()]].as_ref().map_or(0, |t| t.pid)
 }
@@ -770,7 +883,8 @@ pub fn user_range_ok(addr: usize, len: usize, write: bool) -> bool {
         return false;
     }
     let s = SCHED.lock();
-    let Some(aspace) = s.tasks[s.current[cpu_id()]].as_ref().and_then(|t| t.aspace.as_ref()) else {
+    let p = proc_slot(&s, s.current[cpu_id()]);
+    let Some(aspace) = s.tasks[p].as_ref().and_then(|t| t.aspace.as_ref()) else {
         return false;
     };
     let mut page = addr & !(PAGE_SIZE - 1);
@@ -783,15 +897,29 @@ pub fn user_range_ok(addr: usize, len: usize, write: bool) -> bool {
     true
 }
 
-fn with_current<R>(f: impl FnOnce(&mut Task) -> R) -> R {
+/// Uyaça raqami: oqim bölsa — uning jarayon yetakçisi.
+fn proc_slot(s: &Scheduler, slot: usize) -> usize {
+    match s.tasks[slot].as_ref().map(|t| t.leader) {
+        Some(leader) if leader != 0 => s
+            .tasks
+            .iter()
+            .position(|t| t.as_ref().is_some_and(|t| t.pid == leader && t.leader == 0))
+            .unwrap_or(slot),
+        _ => slot,
+    }
+}
+
+/// Joriy jarayon (oqimdan çaqirilsa ham — yetakçi) resurslari bilan işlaş.
+fn with_proc<R>(f: impl FnOnce(&mut Task) -> R) -> R {
     let mut s = SCHED.lock();
     let cur = s.current[cpu_id()];
-    f(s.tasks[cur].as_mut().expect("joriy vazifa yöq"))
+    let p = proc_slot(&s, cur);
+    f(s.tasks[p].as_mut().expect("joriy jarayon yöq"))
 }
 
 /// Joriy jarayonga yangi dastak qöşadi. Natija: dastak raqami.
 pub fn add_handle(h: Handle) -> Option<usize> {
-    with_current(|t| {
+    with_proc(|t| {
         if let Some(i) = t.handles.iter().position(|x| x.is_none()) {
             t.handles[i] = Some(h);
             Some(i)
@@ -805,11 +933,11 @@ pub fn add_handle(h: Handle) -> Option<usize> {
 }
 
 pub fn get_handle(i: usize) -> Option<Handle> {
-    with_current(|t| t.handles.get(i).copied().flatten())
+    with_proc(|t| t.handles.get(i).copied().flatten())
 }
 
 pub fn set_handle(i: usize, h: Handle) {
-    with_current(|t| {
+    with_proc(|t| {
         if let Some(slot) = t.handles.get_mut(i) {
             *slot = Some(h);
         }
@@ -817,7 +945,7 @@ pub fn set_handle(i: usize, h: Handle) {
 }
 
 pub fn close_handle(i: usize) -> bool {
-    match with_current(|t| t.handles.get_mut(i).and_then(|h| h.take())) {
+    match with_proc(|t| t.handles.get_mut(i).and_then(|h| h.take())) {
         Some(h) => {
             h.release();
             true
@@ -828,11 +956,11 @@ pub fn close_handle(i: usize) -> bool {
 
 /// Muhit özgaruvçisi.
 pub fn get_env(name: &str) -> Option<String> {
-    with_current(|t| t.env.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()))
+    with_proc(|t| t.env.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()))
 }
 
 pub fn set_env(name: &str, value: &str) {
-    with_current(|t| {
+    with_proc(|t| {
         t.env.retain(|(k, _)| k != name);
         if !value.is_empty() {
             t.env.push((String::from(name), String::from(value)));
@@ -841,25 +969,25 @@ pub fn set_env(name: &str, value: &str) {
 }
 
 pub fn current_env() -> Vec<(String, String)> {
-    with_current(|t| t.env.clone())
+    with_proc(|t| t.env.clone())
 }
 
 pub fn is_trusted() -> bool {
-    with_current(|t| t.trusted)
+    with_proc(|t| t.trusted)
 }
 
 pub fn cwd() -> String {
-    with_current(|t| t.cwd.clone())
+    with_proc(|t| t.cwd.clone())
 }
 
 pub fn set_cwd(path: &str) {
-    with_current(|t| t.cwd = String::from(path))
+    with_proc(|t| t.cwd = String::from(path))
 }
 
 /// Joriy jarayonga `size` bayt yangi (nollangan) xotira beradi. Natija: manzil.
 pub fn map_memory(size: usize) -> Option<usize> {
     let pages = size.div_ceil(PAGE_SIZE);
-    with_current(|t| {
+    with_proc(|t| {
         let start = t.heap_end;
         if pages == 0 || start + pages * PAGE_SIZE > t.heap_base + USER_HEAP_MAX {
             return None;

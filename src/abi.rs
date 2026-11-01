@@ -70,6 +70,20 @@ pub const SYS_ADMIN: u64 = 24;
 /// Joriy papkani özgartiradi. x0,x1 = yöl.
 pub const SYS_CHDIR: u64 = 25;
 
+// --- Oqimlar ---
+/// Yangi oqim. x0 = kiriş manzili, x1 = stek tepasi, x2 = argument. Natija: oqim raqami (TID).
+pub const SYS_THREAD_CREATE: u64 = 26;
+/// Faqat joriy oqimni tugatadi. x0 = kod. (SYS_EXIT — butun jarayonni.)
+pub const SYS_THREAD_EXIT: u64 = 27;
+/// Oqim tugaşini kutadi. x0 = TID. Natija: uning kodi.
+pub const SYS_THREAD_JOIN: u64 = 28;
+/// Futex: manzildagi u32 hali `x1` ga teng bölsa — uxlaydi. x0 = manzil, x1 = kutilgan qiymat.
+pub const SYS_FUTEX_WAIT: u64 = 29;
+/// Futex: şu manzilni kutayotgan oqimlarni uyğotadi. x0 = manzil.
+pub const SYS_FUTEX_WAKE: u64 = 30;
+/// Joriy oqim raqami (TID).
+pub const SYS_TID: u64 = 31;
+
 /// Standart dastaklar
 pub const STDIN: u64 = 0;
 pub const STDOUT: u64 = 1;
