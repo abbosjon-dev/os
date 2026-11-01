@@ -334,6 +334,7 @@ fn handle(num: u64, a: [u64; 6]) -> SysResult {
             Ok(0)
         }
         SYS_TID => Ok(task::current_tid() as i64),
+        SYS_DNS | SYS_PING | SYS_TCP_CONNECT if task::jail().is_some() => Err(ERR_DENIED),
         SYS_NET_INFO => {
             use crate::net;
             let mut b = [0u8; 23];

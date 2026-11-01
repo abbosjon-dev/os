@@ -648,10 +648,14 @@ pub fn exit_thread(code: i64) -> ! {
 fn exit_inner(code: i64, thread_only: bool) -> ! {
     irq_save();
     let handles;
+    let process_pid;
+    let close_net;
     {
         let mut s = SCHED.lock();
         let cur = s.current[cpu_id()];
         let pid = s.tasks[cur].as_ref().unwrap().pid;
+        process_pid = pid;
+        close_net = s.tasks[cur].as_ref().unwrap().user && s.tasks[cur].as_ref().unwrap().leader == 0;
         let me = s.tasks[cur].as_mut().unwrap();
         me.state = State::Dead(code);
         handles = core::mem::take(&mut me.handles); // oqimda böş: dastaklar yetakçida
@@ -686,6 +690,9 @@ fn exit_inner(code: i64, thread_only: bool) -> ! {
         }
     }
     release_handles(handles); // quvurlarning narigi tomoni EOF ni körsin
+    if close_net {
+        crate::net::tcp::close_owned(process_pid); // jarayon tugadi — TCP ulanişlari yopiladi
+    }
     kick_others();
     schedule();
     unreachable!("tugagan vazifa qayta işga tuşdi");

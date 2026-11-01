@@ -18,6 +18,8 @@ enum St {
 }
 
 struct Conn {
+    /// Egasi (jarayon PID): faqat u bu ulanişni öqiy/yoza oladi
+    owner: usize,
     local_port: u16,
     remote: Ip,
     remote_port: u16,
@@ -60,6 +62,7 @@ pub fn connect(remote: Ip, remote_port: u16) -> Option<usize> {
     let local_port = NEXT_PORT.fetch_add(1, core::sync::atomic::Ordering::Relaxed).max(49152);
     let seq = (crate::timer::uptime_ms() as u32).wrapping_mul(2654435761);
     let conn = Conn {
+        owner: task::current_pid(),
         local_port,
         remote,
         remote_port,
@@ -109,9 +112,10 @@ pub fn connect(remote: Ip, remote_port: u16) -> Option<usize> {
 }
 
 pub fn send(id: usize, data: &[u8]) -> bool {
+    let me = task::current_pid();
     let mut cs = CONNS.lock();
     let Some(c) = cs.get_mut(id).and_then(|c| c.as_mut()) else { return false };
-    if c.state != St::Open {
+    if c.owner != me || c.state != St::Open {
         return false;
     }
     for chunk in data.chunks(1400) {
@@ -123,11 +127,12 @@ pub fn send(id: usize, data: &[u8]) -> bool {
 
 /// Maʼlumot öqiydi (eng köpi `timeout_ms` kutadi). Böş — ulaniş yopildi.
 pub fn recv(id: usize, max: usize, timeout_ms: u64) -> Vec<u8> {
+    let me = task::current_pid();
     let start = crate::timer::uptime_ms();
     loop {
         {
             let mut cs = CONNS.lock();
-            if let Some(c) = cs.get_mut(id).and_then(|c| c.as_mut()) {
+            if let Some(c) = cs.get_mut(id).and_then(|c| c.as_mut()).filter(|c| c.owner == me) {
                 if !c.inbox.is_empty() {
                     let n = max.min(c.inbox.len());
                     return c.inbox.drain(..n).collect();
@@ -149,15 +154,29 @@ pub fn recv(id: usize, max: usize, timeout_ms: u64) -> Vec<u8> {
 }
 
 pub fn close(id: usize) {
+    let me = task::current_pid();
     let mut cs = CONNS.lock();
     if let Some(c) = cs.get_mut(id).and_then(|c| c.as_mut()) {
+        if c.owner != me {
+            return; // boşqaning ulanişini yopa olmaymiz
+        }
         if c.state == St::Open {
             send_segment(c, FIN | ACK, &[]);
         }
-        c.state = St::Closed;
-    }
-    if id < cs.len() {
         cs[id] = None;
+    }
+}
+
+/// Jarayon tugaganda uning barça ulanişlarini yopadi.
+pub fn close_owned(pid: usize) {
+    let mut cs = CONNS.lock();
+    for slot in cs.iter_mut() {
+        if let Some(c) = slot.as_mut().filter(|c| c.owner == pid) {
+            if c.state == St::Open {
+                send_segment(c, FIN | ACK, &[]);
+            }
+            *slot = None;
+        }
     }
 }
 

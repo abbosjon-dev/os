@@ -22,6 +22,8 @@ fn main() -> i64 {
     escapes += report("/vaqtinçalik", fs::write("/vaqtinçalik/qafas.txt", b"x").is_ok());
     escapes += report(tr(["dastur işga tuşiriş", "запуск программы", "starting a program"]), zamin::spawn("/dasturlar/salom", "").is_ok());
     escapes += report(tr(["nomli kanal", "именованный канал", "named channel"]), Channel::open("hisob").is_ok());
+    escapes += report(tr(["tarmoq (ping)", "сеть (ping)", "network (ping)"]), zamin::net::ping([10, 0, 2, 2], 0).is_ok());
+    escapes += report(tr(["tarmoq (TCP)", "сеть (TCP)", "network (TCP)"]), zamin::net::Tcp::connect([10, 0, 2, 2], 80).is_ok());
     if escapes == 0 {
         println!("  {}", tr(["Qafas mustahkam: heç qayerga çiqib bölmadi.", "Песочница надёжна: выйти не удалось.", "Sandbox holds: no way out."]));
         0
