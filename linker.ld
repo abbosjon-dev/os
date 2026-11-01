@@ -1,9 +1,11 @@
-/* QEMU virt: RAM 0x4000_0000 dan boshlanadi. */
+/* QEMU virt: RAM 0x4000_0000 dan boshlanadi.
+   Birinchi 2 MiB DTB uchun bo'sh qoldiriladi (QEMU uni RAM boshiga qo'yadi,
+   joy yetmasa — umuman qo'ymaydi). */
 ENTRY(_start)
 
 SECTIONS
 {
-    . = 0x40080000;
+    . = 0x40200000;
     __kernel_start = .;
 
     .text : {

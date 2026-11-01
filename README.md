@@ -21,19 +21,24 @@ QEMU'dan chiqish: `Ctrl+A`, keyin `X`.
 ## Tuzilma
 
 ```
-linker.ld            Xotira xaritasi (yadro 0x4008_0000 da)
+linker.ld            Xotira xaritasi (yadro 0x4020_0000 da, oldidagi 2 MiB — DTB uchun)
 src/arch/boot.s      Boot: core'larni ajratish, EL2->EL1, stek, .bss
 src/arch/vectors.s   Istisnolar vektor jadvali (16 ta kirish)
 src/main.rs          kernel_main, panic handler
 src/uart.rs          PL011 UART drayveri, print!/println!
 src/exceptions.rs    Istisnolarni qayta ishlash (ESR/ELR/FAR)
 src/power.rs         PSCI: o'chirish / qayta yuklash
+src/sync.rs          SpinLock
+src/dtb.rs           Device Tree o'quvchisi (RAM hajmi, model)
+src/memory/frame.rs  Fizik sahifa allokatori (bitmap)
+src/memory/mmu.rs    MMU, sahifa jadvallari, map/unmap/translate
+src/memory/heap.rs   Kernel heap (free list) — Box/Vec/String ishlaydi
 ```
 
 ## Yo'l xaritasi
 
 - [x] **1. Boot** — AArch64 entry, EL2→EL1, UART konsol, istisnolar vektori, PSCI
-- [ ] **2. Xotira** — fizik sahifa allokatori, MMU + sahifa jadvallari, kernel heap (`alloc`)
+- [x] **2. Xotira** — DTB, fizik sahifa allokatori, MMU + sahifa jadvallari, kernel heap (`alloc`)
 - [ ] **3. Uzilishlar** — GICv2/v3 drayveri, ARM generic timer
 - [ ] **4. Jarayonlar** — kontekst almashtirish, rejalashtiruvchi (scheduler), EL0 user mode
 - [ ] **5. Syscall'lar va IPC** — `svc`, xabar almashish (mach-port'larga o'xshash g'oya, o'z dizaynimiz)
@@ -43,3 +48,9 @@ src/power.rs         PSCI: o'chirish / qayta yuklash
 - [ ] **9. Grafika** — framebuffer, kompozitor, oyna menejeri, shriftlar
 - [ ] **10. Foydalanuvchi muhiti** — shell, dock, ilovalar
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
+
+## Versiyalash
+
+Joriy versiya: **0.0.1**. Versiya har bir o'zgarishda emas, faqat ishlaydigan
+bosqich (etap) yakunlanganda ko'tariladi. Versiya `Cargo.toml` da saqlanadi
+va yadro ishga tushganda ekranga chiqadi.
