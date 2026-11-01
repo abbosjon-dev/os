@@ -3,12 +3,18 @@
 //! Hozirça barça fayllar RAM da saqlanadi (qayta yuklanganda yöqoladi).
 //! Disk drayveri paydo bölgaç, şu interfeys orqali diskdagi fayl tizimi ulanadi.
 //!
-//! Boşlangʼiç tuzilma:
-//!   /dasturlar   — yadro bilan kelgan foydalanuvçi dasturlari (ELF)
-//!   /tizim       — tizim haqida maʼlumot
-//!   /uy          — foydalanuvçi fayllari
+//! Boşlangʼiç tuzilma (nomlar tizim tiliga qarab):
+//!   /dasturlar  (/программы, /programs)  — yadro bilan kelgan dasturlar (ELF)
+//!   /tizim      (/система,   /system)    — tizim haqida maʼlumot
+//!   /uy         (/дом,       /home)      — foydalanuvçilar papkalari
+//!   /uy/<login>/Hujjatlar, Yuklamalar, Rasmlar, Musiqa
+//!
+//! Tizim papkalarining "roli" bor: ular joriy tilda körsatiladi, lekin uç tildagi
+//! istalgan nomi bilan topiladi. Şuning uçun `/dasturlar/salom` dasturlarda hamişa işlaydi.
+//! `~` — joriy foydalanuvçining uy papkasi.
 
 use crate::abi::*;
+use crate::i18n::Lang;
 use crate::sync::SpinLock;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -51,12 +57,52 @@ enum Data {
     Dir(Vec<NodeId>),
 }
 
+/// Tizim papkalari va fayllarining roli: nomi tilga qarab özgaradi.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Programs,
+    System,
+    Home,
+    SysName,
+    SysVersion,
+    SysDeveloper,
+    Documents,
+    Downloads,
+    Pictures,
+    Music,
+}
+
+impl Role {
+    /// [uz, ru, en]
+    fn names(self) -> [&'static str; 3] {
+        match self {
+            Role::Programs => ["dasturlar", "программы", "programs"],
+            Role::System => ["tizim", "система", "system"],
+            Role::Home => ["uy", "дом", "home"],
+            Role::SysName => ["nomi", "название", "name"],
+            Role::SysVersion => ["versiya", "версия", "version"],
+            Role::SysDeveloper => ["dasturçi", "разработчик", "developer"],
+            Role::Documents => ["Hujjatlar", "Документы", "Documents"],
+            Role::Downloads => ["Yuklamalar", "Загрузки", "Downloads"],
+            Role::Pictures => ["Rasmlar", "Изображения", "Pictures"],
+            Role::Music => ["Musiqa", "Музыка", "Music"],
+        }
+    }
+
+    fn matches(self, name: &str) -> bool {
+        self.names().contains(&name)
+    }
+}
+
+const HOME_FOLDERS: [Role; 4] = [Role::Documents, Role::Downloads, Role::Pictures, Role::Music];
+
 struct Node {
     name: String,
     parent: NodeId,
     data: Data,
     /// Tizim fayllari (öçirib / özgartirib bölmaydi)
     readonly: bool,
+    role: Option<Role>,
 }
 
 pub struct Entry {
@@ -69,9 +115,11 @@ struct Vfs {
     /// Tugunlar; öçirilgan tugun örnida `None` (raqamlar qayta işlatilmaydi,
     /// şuning uçun eski dastak heç qaçon boşqa faylga tegmaydi).
     nodes: Vec<Option<Node>>,
+    /// `~` — joriy foydalanuvçining uy papkasi
+    home: Option<NodeId>,
 }
 
-static VFS: SpinLock<Vfs> = SpinLock::new(Vfs { nodes: Vec::new() });
+static VFS: SpinLock<Vfs> = SpinLock::new(Vfs { nodes: Vec::new(), home: None });
 
 impl Vfs {
     fn node(&self, id: NodeId) -> Result<&Node, FsError> {
@@ -87,15 +135,18 @@ impl Vfs {
             Data::Dir(children) => children
                 .iter()
                 .copied()
-                .find(|&c| self.node(c).is_ok_and(|n| n.name == name))
+                .find(|&c| self.node(c).is_ok_and(|n| n.name == name || n.role.is_some_and(|r| r.matches(name))))
                 .ok_or(FsError::NotFound),
             Data::File(_) => Err(FsError::NotDir),
         }
     }
 
     fn lookup(&self, path: &str) -> Result<NodeId, FsError> {
-        let mut cur = ROOT;
-        for part in path.split('/').filter(|p| !p.is_empty() && *p != ".") {
+        let (mut cur, rest) = match path.strip_prefix('~') {
+            Some(rest) => (self.home.ok_or(FsError::NotFound)?, rest),
+            None => (ROOT, path),
+        };
+        for part in rest.split('/').filter(|p| !p.is_empty() && *p != ".") {
             cur = if part == ".." { self.node(cur)?.parent } else { self.child(cur, part)? };
         }
         Ok(cur)
@@ -119,11 +170,22 @@ impl Vfs {
     }
 
     fn add(&mut self, parent: NodeId, name: &str, data: Data, readonly: bool) -> Result<NodeId, FsError> {
+        self.add_with_role(parent, name, data, readonly, None)
+    }
+
+    fn add_with_role(
+        &mut self,
+        parent: NodeId,
+        name: &str,
+        data: Data,
+        readonly: bool,
+        role: Option<Role>,
+    ) -> Result<NodeId, FsError> {
         if self.child(parent, name).is_ok() {
             return Err(FsError::Exists);
         }
         let id = self.nodes.len();
-        self.nodes.push(Some(Node { name: String::from(name), parent, data, readonly }));
+        self.nodes.push(Some(Node { name: String::from(name), parent, data, readonly, role }));
         if let Data::Dir(children) = &mut self.node_mut(parent)?.data {
             children.push(id);
         }
@@ -133,24 +195,64 @@ impl Vfs {
 
 pub fn init(programs: &[(&str, &[u8])]) {
     let mut v = VFS.lock();
-    v.nodes.push(Some(Node { name: String::new(), parent: ROOT, data: Data::Dir(Vec::new()), readonly: true }));
-    let progs = v.add(ROOT, "dasturlar", Data::Dir(Vec::new()), true).unwrap();
-    let sys = v.add(ROOT, "tizim", Data::Dir(Vec::new()), true).unwrap();
-    v.add(ROOT, "uy", Data::Dir(Vec::new()), false).unwrap();
+    let lang = crate::i18n::current() as usize;
+    v.nodes.push(Some(Node {
+        name: String::new(),
+        parent: ROOT,
+        data: Data::Dir(Vec::new()),
+        readonly: true,
+        role: None,
+    }));
+    let dir = |r: Role| (r.names()[lang], Data::Dir(Vec::new()), Some(r));
+    let (n, d, r) = dir(Role::Programs);
+    let progs = v.add_with_role(ROOT, n, d, true, r).unwrap();
+    let (n, d, r) = dir(Role::System);
+    let sys = v.add_with_role(ROOT, n, d, true, r).unwrap();
+    let (n, d, r) = dir(Role::Home);
+    v.add_with_role(ROOT, n, d, false, r).unwrap();
     for (name, image) in programs {
         v.add(progs, name, Data::File(image.to_vec()), true).unwrap();
     }
     let info = [
-        ("nomi", String::from("Zamin OS\n")),
-        ("versiya", alloc::format!("{}\n", env!("CARGO_PKG_VERSION"))),
-        ("dasturçi", String::from("Abbosjon Dev <info@zamin.app>\nhttps://zamin.app\n")),
+        (Role::SysName, String::from("Zamin OS\n")),
+        (Role::SysVersion, alloc::format!("{}\n", env!("CARGO_PKG_VERSION"))),
+        (Role::SysDeveloper, String::from("Abbosjon Dev <info@zamin.app>\nhttps://zamin.app\n")),
     ];
-    for (name, text) in info {
-        v.add(sys, name, Data::File(text.into_bytes()), true).unwrap();
+    for (role, text) in info {
+        v.add_with_role(sys, role.names()[lang], Data::File(text.into_bytes()), true, Some(role)).unwrap();
     }
 }
 
-/// Faylni oçadi (kerak bölsa yaratadi / tozalaydi) va uning raqamini qaytaradi.
+/// Tizim tili özgarganda tizim papkalari va fayllarini qayta nomlaydi.
+pub fn apply_language(lang: Lang) {
+    let mut v = VFS.lock();
+    for n in v.nodes.iter_mut().flatten() {
+        if let Some(r) = n.role {
+            n.name = String::from(r.names()[lang as usize]);
+        }
+    }
+}
+
+/// Foydalanuvçining uy papkasini (va standart içki papkalarini) yaratadi hamda
+/// `~` ni unga yönaltiradi. Allaqaçon bor bölsa — şunçaki yönaltiradi.
+pub fn setup_home(username: &str) -> Result<String, FsError> {
+    let mut v = VFS.lock();
+    let lang = crate::i18n::current() as usize;
+    let homes = v.lookup("/uy")?;
+    let home = match v.child(homes, username) {
+        Ok(id) => id,
+        Err(_) => v.add(homes, username, Data::Dir(Vec::new()), false)?,
+    };
+    for r in HOME_FOLDERS {
+        if v.child(home, r.names()[0]).is_err() {
+            v.add_with_role(home, r.names()[lang], Data::Dir(Vec::new()), false, Some(r))?;
+        }
+    }
+    v.home = Some(home);
+    let homes_name = v.node(homes)?.name.clone();
+    Ok(alloc::format!("/{}/{}", homes_name, username))
+}
+
 pub fn open(path: &str, flags: u64) -> Result<NodeId, FsError> {
     let mut v = VFS.lock();
     let id = match v.lookup(path) {

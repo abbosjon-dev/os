@@ -1,0 +1,117 @@
+//! Birinçi sozlaş (til, ism, login, parol) va keyingi yuklanişlarda kiriş (login).
+//!
+//! Birinçi işga tuşirişda tanlangan til butun tizimga qöllanadi: xabarlar,
+//! buyruqlar yordami va tizim papkalari nomlari (`/dasturlar` → `/programs`).
+
+use crate::i18n::{self, Lang, msg};
+use crate::line::read_line;
+use crate::{accounts, config, fs, print, println, task, tprint, tprintln};
+use alloc::string::String;
+
+const MAX_NAME: usize = 64;
+const MIN_PASSWORD: usize = 4;
+
+/// Terminal oçilişidan oldin çaqiriladi.
+pub fn run(disk: bool) {
+    match accounts::current() {
+        Some(account) => login(&account),
+        None => wizard(disk),
+    }
+}
+
+fn choose_language() -> Lang {
+    println!();
+    println!("  Zamin OS ga xush kelibsiz!");
+    println!("  Добро пожаловать в Zamin OS!");
+    println!("  Welcome to Zamin OS!");
+    println!();
+    loop {
+        println!("  Tilni tanlang · Выберите язык · Choose your language");
+        println!("    1) Özbekça");
+        println!("    2) Русский");
+        println!("    3) English");
+        print!("  > ");
+        match read_line(false).trim() {
+            "1" | "uz" => return Lang::Uz,
+            "2" | "ru" => return Lang::Ru,
+            "3" | "en" => return Lang::En,
+            _ => println!(),
+        }
+    }
+}
+
+fn wizard(disk: bool) {
+    let lang = choose_language();
+    i18n::set(lang);
+    fs::apply_language(lang);
+    println!();
+    tprintln!(msg::SETUP_TITLE);
+    println!();
+
+    let full_name = loop {
+        tprint!(msg::SETUP_NAME);
+        let n = String::from(read_line(false).trim());
+        if !n.is_empty() && n.chars().count() <= MAX_NAME {
+            break n;
+        }
+        tprintln!(msg::SETUP_NAME_BAD);
+    };
+
+    let suggested = accounts::suggest_username(&full_name);
+    tprintln!(msg::SETUP_USER_HINT);
+    let username = loop {
+        tprint!(msg::SETUP_USER, suggested);
+        let u = read_line(false);
+        let u = u.trim();
+        let u = if u.is_empty() { suggested.as_str() } else { u };
+        if accounts::valid_username(u) {
+            break String::from(u);
+        }
+        tprintln!(msg::SETUP_USER_HINT);
+    };
+
+    let password = loop {
+        tprint!(msg::SETUP_PASS);
+        let p1 = read_line(true);
+        if p1.chars().count() < MIN_PASSWORD {
+            tprintln!(msg::SETUP_PASS_SHORT);
+            continue;
+        }
+        tprint!(msg::SETUP_PASS2);
+        if read_line(true) == p1 {
+            break p1;
+        }
+        tprintln!(msg::SETUP_PASS_MISMATCH);
+    };
+
+    tprintln!(msg::SETUP_CREATING);
+    let account = accounts::create(&username, &full_name, &password);
+    accounts::set_current(Some(account));
+    let home = fs::setup_home(&username).unwrap_or_default();
+
+    println!();
+    tprintln!(msg::SETUP_DONE, username, full_name);
+    tprintln!(msg::SETUP_HOME, home);
+    if disk && config::save_current() {
+        tprintln!(msg::SETUP_SAVED);
+    } else {
+        tprintln!(msg::SETUP_NOT_SAVED);
+    }
+    println!();
+}
+
+fn login(account: &accounts::Account) {
+    println!();
+    tprintln!(msg::LOGIN_WELCOME, account.full_name);
+    loop {
+        tprint!(msg::LOGIN_PROMPT, account.username);
+        let p = read_line(true);
+        if accounts::verify(account, &p) {
+            break;
+        }
+        tprintln!(msg::LOGIN_FAIL);
+        task::sleep_ms(1000); // parolni tez-tez taxmin qilişni sekinlaştiradi
+    }
+    let _ = fs::setup_home(&account.username);
+    println!();
+}

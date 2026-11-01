@@ -331,4 +331,95 @@ pub mod msg {
         "  CHANNEL              QUEUED     SENT",
     ];
     pub const SH_NO_CHANNELS: Text = ["  hozirça kanallar yöq", "  каналов пока нет", "  no channels yet"];
+
+    // --- Disk va sozlamalar ---
+    pub const DISK_FOUND: Text = ["[disk] virtio-blk: {} MiB", "[disk] virtio-blk: {} МиБ", "[disk] virtio-blk: {} MiB"];
+    pub const DISK_NONE: Text = [
+        "[disk] disk topilmadi — sozlamalar saqlanmaydi",
+        "[disk] диск не найден — настройки не сохраняются",
+        "[disk] no disk — settings will not be saved",
+    ];
+    pub const CONFIG_LOADED: Text = [
+        "[conf] sozlamalar diskdan öqildi (hisob: {})",
+        "[conf] настройки загружены с диска (учётная запись: {})",
+        "[conf] settings loaded from disk (account: {})",
+    ];
+    pub const CONFIG_FRESH: Text = [
+        "[conf] birinçi işga tuşiriş — sozlaş boşlanadi",
+        "[conf] первый запуск — начинается настройка",
+        "[conf] first boot — setup will start",
+    ];
+    pub const TEST_SHA: Text = [
+        "[test] SHA-256: standart test vektorlari — OK",
+        "[test] SHA-256: стандартные тестовые векторы — OK",
+        "[test] SHA-256: standard test vectors — OK",
+    ];
+
+    // --- Birinçi sozlaş va kiriş ---
+    pub const SETUP_TITLE: Text = ["  Birinçi sozlaş", "  Первоначальная настройка", "  First-time setup"];
+    pub const SETUP_NAME: Text = ["  Töliq ismingiz: ", "  Ваше полное имя: ", "  Your full name: "];
+    pub const SETUP_NAME_BAD: Text = [
+        "  Ism böş bölmasligi kerak (64 belgigaça).",
+        "  Имя не может быть пустым (до 64 символов).",
+        "  Name must not be empty (up to 64 characters).",
+    ];
+    pub const SETUP_USER: Text = [
+        "  Foydalanuvçi nomi (login) [{}]: ",
+        "  Имя пользователя (логин) [{}]: ",
+        "  Username (login) [{}]: ",
+    ];
+    pub const SETUP_USER_HINT: Text = [
+        "  Login: kiçik lotin harflari, raqamlar, - va _ (2–32 belgi, harf bilan boşlanadi).",
+        "  Логин: строчные латинские буквы, цифры, - и _ (2–32 символа, начинается с буквы).",
+        "  Login: lowercase Latin letters, digits, - and _ (2–32 characters, starts with a letter).",
+    ];
+    pub const SETUP_PASS: Text = ["  Parol: ", "  Пароль: ", "  Password: "];
+    pub const SETUP_PASS2: Text = ["  Parolni takrorlang: ", "  Повторите пароль: ", "  Repeat password: "];
+    pub const SETUP_PASS_SHORT: Text = [
+        "  Parol kamida 4 belgidan iborat bölişi kerak.",
+        "  Пароль должен быть не короче 4 символов.",
+        "  Password must be at least 4 characters.",
+    ];
+    pub const SETUP_PASS_MISMATCH: Text = [
+        "  Parollar mos kelmadi, qaytadan kiriting.",
+        "  Пароли не совпадают, попробуйте снова.",
+        "  Passwords do not match, try again.",
+    ];
+    pub const SETUP_CREATING: Text = ["  Hisob yaratilmoqda...", "  Создание учётной записи...", "  Creating account..."];
+    pub const SETUP_DONE: Text = [
+        "  Tayyor! Hisob yaratildi: {} ({})",
+        "  Готово! Учётная запись создана: {} ({})",
+        "  Done! Account created: {} ({})",
+    ];
+    pub const SETUP_HOME: Text = ["  Uy papkasi: {}", "  Домашняя папка: {}", "  Home folder: {}"];
+    pub const SETUP_SAVED: Text = [
+        "  Sozlamalar diskka saqlandi — keyingi safar faqat parol söraladi.",
+        "  Настройки сохранены на диск — в следующий раз будет запрошен только пароль.",
+        "  Settings saved to disk — next time only your password will be asked.",
+    ];
+    pub const SETUP_NOT_SAVED: Text = [
+        "  Disk topilmadi: sozlamalar faqat şu seans uçun.",
+        "  Диск не найден: настройки действуют только в этом сеансе.",
+        "  No disk found: settings are kept for this session only.",
+    ];
+    pub const LOGIN_WELCOME: Text = ["  Xush kelibsiz, {}!", "  Добро пожаловать, {}!", "  Welcome, {}!"];
+    pub const LOGIN_PROMPT: Text = ["  {} — parol: ", "  {} — пароль: ", "  {} — password: "];
+    pub const LOGIN_FAIL: Text = ["  Notöğri parol.", "  Неверный пароль.", "  Wrong password."];
+
+    // --- Hisob buyruqlari ---
+    pub const SH_PASSWD_OLD: Text = ["  Joriy parol: ", "  Текущий пароль: ", "  Current password: "];
+    pub const SH_PASSWD_NEW: Text = ["  Yangi parol: ", "  Новый пароль: ", "  New password: "];
+    pub const SH_PASSWD_CHANGED: Text = ["  Parol özgartirildi.", "  Пароль изменён.", "  Password changed."];
+    pub const SH_RESET_CONFIRM: Text = [
+        "  Barça sozlamalar va hisob öçiriladi. Davom etilsinmi? (ha/yöq): ",
+        "  Все настройки и учётная запись будут удалены. Продолжить? (да/нет): ",
+        "  All settings and the account will be erased. Continue? (yes/no): ",
+    ];
+    pub const SH_RESET_DONE: Text = [
+        "  Sozlamalar öçirildi. Qayta yuklanmoqda...",
+        "  Настройки удалены. Перезагрузка...",
+        "  Settings erased. Rebooting...",
+    ];
+    pub const SH_CANCELLED: Text = ["  Bekor qilindi.", "  Отменено.", "  Cancelled."];
+    pub const SH_NO_ACCOUNT: Text = ["  Hisob yöq.", "  Нет учётной записи.", "  No account."];
 }

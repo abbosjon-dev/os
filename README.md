@@ -16,8 +16,41 @@ rustup target add aarch64-unknown-none-softfloat   # rust-toolchain.toml buni av
 cargo run                                # QEMU virt maşinasida işga tuşadi
 ```
 
+`cargo run` disk obrazini (`target/zamin-disk.img`, 32 MiB) birinçi marta özi yaratadi —
+unda tizim sozlamalari saqlanadi.
+
 Işga tuşgaç **Zamin terminali** oçiladi (`zamin>`). `yordam` buyruqlar röyxatini
 körsatadi, `öçir` (yoki `ochir`) tizimni öçiradi. Majburan çiqiş: `Ctrl+A`, keyin `X`.
+
+## Birinçi işga tuşiriş
+
+Tizim birinçi marta yoqilganda **birinçi sozlaş** boşlanadi:
+
+1. **Til** — özbekça, русский yoki English. Tanlangan til butun tizimga qöllanadi:
+   xabarlar, buyruqlar yordami va **tizim papkalari nomlari** ham.
+2. **Töliq ism** — masalan, "Abbosjon Dev".
+3. **Foydalanuvçi nomi (login)** — ismdan avtomatik taklif qilinadi ("Аббосжон" → `abbosjon`).
+4. **Parol** — ikki marta, ekranda yaşirin (`*`).
+
+Sozlamalar diskka yoziladi. Keyingi yuklanişlarda faqat parol söraladi.
+Parolning özi heç qayerda saqlanmaydi: tasodifiy tuz (salt) va SHA-256 xeşi (4096 marta takrorlangan).
+
+| Rol | özbekça | русский | English |
+|---|---|---|---|
+| Dasturlar | `/dasturlar` | `/программы` | `/programs` |
+| Tizim | `/tizim` | `/система` | `/system` |
+| Uy | `/uy/<login>` | `/дом/<login>` | `/home/<login>` |
+| Hujjatlar | `Hujjatlar` | `Документы` | `Documents` |
+| Yuklamalar | `Yuklamalar` | `Загрузки` | `Downloads` |
+| Rasmlar | `Rasmlar` | `Изображения` | `Pictures` |
+| Musiqa | `Musiqa` | `Музыка` | `Music` |
+
+Tizim papkalari joriy tilda körsatiladi, lekin uç tildagi istalgan nomi bilan topiladi —
+şuning uçun dasturlardagi yöllar (`/dasturlar/salom`) har qanday tilda işlaydi.
+`~` — joriy foydalanuvçining uy papkasi (`~/Hujjatlar`).
+
+Hisob buyruqlari: `kimman` (kimligingiz), `parol` (parolni özgartiriş),
+`tiklaş` (sozlamalarni öçirib, birinçi sozlaşga qaytiş).
 
 ## Tillar
 
@@ -108,6 +141,13 @@ user/src/lib.rs      `zamin` kutubxonasi: tizim çaqiruvlari, println!, tr(), Ch
 user/src/heap.rs     Foydalanuvçi xotira ajratuvçisi (Vec, String, format! işlaydi)
 user/src/fs.rs       Fayllar: File, read, write, list, mkdir, remove
 user/src/bin/        Dasturlar: salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz
+src/setup.rs         Birinçi sozlaş (til, ism, login, parol) va kiriş
+src/accounts.rs      Foydalanuvçi hisoblari, parol xeşi
+src/config.rs        Diskdagi sozlamalar
+src/crypto/sha256.rs SHA-256 (noldan)
+src/drivers/virtio_blk.rs  virtio-blk disk drayveri (v1 va v2)
+src/line.rs          Qator tahrirlovçisi (UTF-8, yaşirin parol kiritiş)
+scripts/qemu.sh      `cargo run` uçun: disk obrazini yaratadi va QEMU ni işga tuşiradi
 src/i18n.rs          Köp tillilik: özbekça (asosiy), русский, English
 src/shell.rs         Zamin terminali (yordam, jarayonlar, işlat, tugat, til, öçir...)
 ```
@@ -121,7 +161,8 @@ src/shell.rs         Zamin terminali (yordam, jarayonlar, işlat, tugat, til, ö
 - [x] **5. Syscallʼlar va IPC** — 20 ta tizim çaqiruvi; "Zamin kanallari" — nomli xabar kanallari
 - [x] **5½. Yadro markazi** — W^X himoya, foydalanuvçi heapʼi, dastur işga tuşiriş/kutiş, argumentlar, VFS + ramfs
 - [ ] **6. SMP** — barça coreʼlarni işga tuşiriş, spinlockʼlar
-- [ ] **7. Drayverlar** — virtio (blok, tarmoq, GPU, klaviatura/siçqonça), Device Tree parser
+- [ ] **7. Drayverlar** — virtio-blk disk tayyor; tarmoq, GPU, klaviatura/siçqonça — navbatda
+- [x] **7½. Birinçi sozlaş** — til, hisob (login + parol), tilga mos tizim papkalari, kiriş ekrani
 - [ ] **8. Fayl tizimi** — VFS va xotiradagi fayl tizimi tayyor; diskdagi öz fayl tizimimiz — navbatda
 - [ ] **9. Grafika** — framebuffer, kompozitor, oyna menejeri, şriftlar
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar

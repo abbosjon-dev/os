@@ -7,15 +7,21 @@
 extern crate alloc;
 
 mod abi;
+mod accounts;
+mod config;
+mod crypto;
+mod drivers;
 mod dtb;
 mod exceptions;
 mod fs;
 mod gic;
 mod i18n;
 mod ipc;
+mod line;
 mod irq;
 mod memory;
 mod power;
+mod setup;
 mod shell;
 mod sync;
 mod task;
@@ -120,9 +126,25 @@ pub extern "C" fn kernel_main() -> ! {
     irq::init();
     tprintln!(msg::IRQ_READY, gic::line_count(), timer::HZ, timer::frequency() / 1_000_000);
 
+    // 6) Disk va saqlangan sozlamalar (til, hisob)
+    let disk = drivers::virtio_blk::init();
+    match disk {
+        Some(bytes) => tprintln!(msg::DISK_FOUND, bytes >> 20),
+        None => tprintln!(msg::DISK_NONE),
+    }
+    match config::load() {
+        Some(s) => {
+            i18n::set(s.lang);
+            let who = s.account.as_ref().map_or(String::from("—"), |a| a.username.clone());
+            tprintln!(msg::CONFIG_LOADED, who);
+            accounts::set_current(s.account);
+        }
+        None => tprintln!(msg::CONFIG_FRESH),
+    }
+
     self_tests();
 
-    // 6) Jarayonlar: şu kod PID 0 ("yadro") bölib qoladi
+    // 7) Jarayonlar: şu kod PID 0 ("yadro") bölib qoladi
     task::init();
     fs::init(task::programs::PROGRAMS);
     let (files, dirs, _) = fs::stats();
@@ -171,7 +193,7 @@ extern "C" fn boot_tests(_: usize) {
     tprintln!(msg::TEST_USER, 42);
 
     println!();
-    task::spawn_kernel("terminal", shell::run, 0).expect("terminal");
+    task::spawn_kernel("terminal", shell::run, drivers::virtio_blk::present() as usize).expect("terminal");
 }
 
 /// Yuklaş parametrlaridan tilni öqiydi: `til=uz|ru|en` (yoki `lang=`).
@@ -188,7 +210,8 @@ fn self_tests() {
     // Istisnolar
     unsafe { asm!("brk #42") };
 
-    // Heap: Box, Vec, String
+    // Heap: Box, Vec, String (test boşidagi holatga qaytişi kerak)
+    let heap_base = heap::stats().0;
     let b = Box::new(0x5a5a_u64);
     let mut v: Vec<u32> = Vec::new();
     for i in 0..10_000 {
@@ -200,13 +223,13 @@ fn self_tests() {
     assert_eq!(sum, 333_283_335_000);
     assert_eq!(s, "Zamin OS");
     drop((b, v, s));
-    assert_eq!(heap::stats().0, 0, "heapʼda xotira oqib ketdi");
+    assert_eq!(heap::stats().0, heap_base, "heapʼda xotira oqib ketdi");
     // Köp kiçik ajratiş/böşatiş — bölaklaniş va birlaştiriş
     for round in 0..50 {
         let parts: Vec<Box<[u8]>> = (0..64).map(|i| alloc::vec![round as u8; 16 + i * 24].into_boxed_slice()).collect();
         assert!(parts.iter().all(|p| p.iter().all(|&x| x == round as u8)));
     }
-    assert_eq!(heap::stats().0, 0, "birlaştirişdan keyin heap böş bölişi kerak");
+    assert_eq!(heap::stats().0, heap_base, "birlaştirişdan keyin heap boşlangʼiç holatga qaytişi kerak");
     tprintln!(msg::TEST_HEAP);
 
     // MMU: yangi sahifani yuqori virtual manzilga xaritalaş
@@ -236,6 +259,9 @@ fn self_tests() {
     assert_eq!(mmu::kernel_access(&*heap as *const u8 as usize), Some((true, false)), "heap sahifasi");
     drop(heap);
     tprintln!(msg::TEST_WX);
+
+    assert!(crypto::sha256::self_test(), "SHA-256 notöğri");
+    tprintln!(msg::TEST_SHA);
 
     // Taymer uzilişlari: 50 ms içida kamida 3 ta tick kelişi kerak
     let start_ticks = timer::ticks();

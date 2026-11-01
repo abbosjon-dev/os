@@ -7,7 +7,7 @@ use zamin::{format, fs, println, tr};
 zamin::entry!(main);
 
 fn main() -> i64 {
-    let path = "/uy/eslatma.txt";
+    let path = "~/Hujjatlar/eslatma.txt"; // ~ — uy papkasi; "Hujjatlar" har qanday tilda topiladi
     let text = format!(
         "{}\n{}: {} ms\n",
         tr(["Bu faylni Zamin OS dasturi yozdi.", "Этот файл написала программа Zamin OS.", "This file was written by a Zamin OS program."]),
@@ -18,7 +18,8 @@ fn main() -> i64 {
         println!("  {}: {}", path, e);
         return 1;
     }
-    println!("  {} {}", tr(["Yozildi:", "Записано:", "Written:"]), path);
+    let shown = tr(["~/Hujjatlar/eslatma.txt", "~/Документы/eslatma.txt", "~/Documents/eslatma.txt"]);
+    println!("  {} {}", tr(["Yozildi:", "Записано:", "Written:"]), shown);
 
     match fs::read_to_string(path) {
         Ok(t) => {
@@ -30,8 +31,8 @@ fn main() -> i64 {
         Err(e) => println!("  {}", e),
     }
 
-    println!("  {}", tr(["/uy papkasi:", "Папка /uy:", "Directory /uy:"]));
-    for name in fs::list("/uy").unwrap_or_default() {
+    println!("  {}", tr(["~/Hujjatlar papkasi:", "Папка ~/Документы:", "Directory ~/Documents:"]));
+    for name in fs::list("~/Hujjatlar").unwrap_or_default() {
         println!("    {}", name);
     }
     0

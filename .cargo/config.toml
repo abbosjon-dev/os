@@ -5,5 +5,5 @@ target = "aarch64-unknown-none-softfloat"
 
 [target.aarch64-unknown-none-softfloat]
 rustflags = ["-C", "link-arg=-Tlinker.ld"]
-# `cargo run` yadroni QEMU "virt" maşinasida işga tuşiradi.
-runner = "qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 512M -smp 4 -nographic -kernel"
+# `cargo run` yadroni QEMU "virt" maşinasida disk bilan işga tuşiradi (scripts/qemu.sh).
+runner = ["sh", "scripts/qemu.sh"]

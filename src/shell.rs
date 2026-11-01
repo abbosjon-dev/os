@@ -2,15 +2,16 @@
 //! Buyruqlarni istalgan tilda yoziş mumkin: `yordam`, `помощь` yoki `help`.
 
 use crate::i18n::{self, Lang, Text, msg};
+use crate::line::{LineEditor, read_line};
 use crate::memory::{frame, heap};
+use crate::{accounts, config};
 use crate::fs::{self, FsError};
 use crate::task::{self, State};
-use crate::{print, println, power, timer, tprintln, uart};
+use crate::{print, println, power, timer, tprint, tprintln, uart};
 use alloc::string::String;
 use alloc::format;
 
 const PROMPT: &str = "zamin> ";
-const MAX_LINE: usize = 256;
 
 #[derive(Clone, Copy)]
 enum Cmd {
@@ -31,6 +32,9 @@ enum Cmd {
     Mkdir,
     Rm,
     Channels,
+    Whoami,
+    Passwd,
+    Reset,
     Reboot,
     Shutdown,
 }
@@ -62,6 +66,9 @@ const COMMANDS: &[Command] = &[
     Command { cmd: Cmd::Mkdir, names: ["papka", "папка", "mkdir"], aliases: &[], help: ["papka yaratiş: papka uy/rasmlar", "создать папку: папка uy/foto", "create a directory: mkdir uy/photos"] },
     Command { cmd: Cmd::Rm, names: ["taşla", "удалить", "rm"], aliases: &["tashla"], help: ["fayl yoki böş papkani öçiriş", "удалить файл или пустую папку", "remove a file or empty directory"] },
     Command { cmd: Cmd::Channels, names: ["kanallar", "каналы", "channels"], aliases: &[], help: ["Zamin kanallari (IPC)", "каналы Zamin (IPC)", "Zamin channels (IPC)"] },
+    Command { cmd: Cmd::Whoami, names: ["kimman", "кто", "whoami"], aliases: &[], help: ["joriy foydalanuvçi", "текущий пользователь", "current user"] },
+    Command { cmd: Cmd::Passwd, names: ["parol", "пароль", "passwd"], aliases: &[], help: ["parolni özgartiriş", "сменить пароль", "change password"] },
+    Command { cmd: Cmd::Reset, names: ["tiklaş", "сброс", "reset"], aliases: &["tiklash"], help: ["sozlamalarni öçirib, birinçi sozlaşga qaytiş", "стереть настройки и начать заново", "erase settings and start over"] },
     Command { cmd: Cmd::Reboot, names: ["qayta", "перезагрузка", "reboot"], aliases: &[], help: ["qayta yuklaş", "перезагрузить", "restart"] },
     Command { cmd: Cmd::Shutdown, names: ["öçir", "выкл", "shutdown"], aliases: &["ocir", "ochir"], help: ["tizimni öçiriş", "выключить систему", "power off"] },
 ];
@@ -133,13 +140,17 @@ fn abs_path(p: &str) -> String {
     if p.starts_with('/') { String::from(p) } else { format!("/{}", p) }
 }
 
-/// Terminal yadro oqimi sifatida işlaydi.
-pub extern "C" fn run(_: usize) {
+/// Terminal yadro oqimi sifatida işlaydi. Avval birinçi sozlaş yoki kiriş.
+pub extern "C" fn run(disk: usize) {
+    crate::setup::run(disk != 0);
     let mut shell = Shell::new();
     shell.start();
     loop {
         while let Some(b) = uart::read_byte() {
-            shell.feed(b);
+            if let Some(line) = shell.editor.feed(b) {
+                shell.execute(line.trim());
+                shell.prompt();
+            }
         }
         task::wait_input(uart::has_input);
     }
@@ -153,74 +164,23 @@ fn find(name: &str) -> Option<Cmd> {
 }
 
 pub struct Shell {
-    line: String,
-    /// Yarim kelgan UTF-8 belgi baytlari (ö, ş, кириллица...)
-    utf8: [u8; 4],
-    utf8_len: usize,
-    utf8_need: usize,
+    editor: LineEditor,
 }
 
 impl Shell {
     pub fn new() -> Self {
-        Self { line: String::new(), utf8: [0; 4], utf8_len: 0, utf8_need: 0 }
+        Self { editor: LineEditor::new() }
     }
 
     pub fn start(&self) {
         tprintln!(msg::SH_WELCOME);
-        print!("{}", PROMPT);
+        self.prompt();
     }
 
-    /// Klaviaturadan kelgan bitta baytni qayta işlaydi.
-    pub fn feed(&mut self, b: u8) {
-        if self.utf8_need > 0 {
-            if b & 0xc0 != 0x80 {
-                self.utf8_need = 0; // buzilgan ketma-ketlik — taşlab yuboramiz
-            } else {
-                self.utf8[self.utf8_len] = b;
-                self.utf8_len += 1;
-                if self.utf8_len == self.utf8_need {
-                    self.utf8_need = 0;
-                    let (buf, len) = (self.utf8, self.utf8_len);
-                    if let Ok(s) = core::str::from_utf8(&buf[..len]) {
-                        self.insert(s);
-                    }
-                }
-                return;
-            }
-        }
-        match b {
-            b'\r' | b'\n' => {
-                println!();
-                let line = core::mem::take(&mut self.line);
-                self.execute(line.trim());
-                print!("{}", PROMPT);
-            }
-            0x7f | 0x08 => {
-                if self.line.pop().is_some() {
-                    print!("\x08 \x08");
-                }
-            }
-            0x20..=0x7e => {
-                let buf = [b];
-                self.insert(unsafe { core::str::from_utf8_unchecked(&buf) });
-            }
-            0xc0..=0xf7 => {
-                self.utf8[0] = b;
-                self.utf8_len = 1;
-                self.utf8_need = match b {
-                    0xc0..=0xdf => 2,
-                    0xe0..=0xef => 3,
-                    _ => 4,
-                };
-            }
-            _ => {} // boşqaruv belgilari (strelkalar va h.k.) hozirça eʼtiborsiz
-        }
-    }
-
-    fn insert(&mut self, s: &str) {
-        if self.line.len() + s.len() <= MAX_LINE {
-            self.line.push_str(s);
-            print!("{}", s);
+    fn prompt(&self) {
+        match accounts::current() {
+            Some(a) => print!("{}@zamin> ", a.username),
+            None => print!("{}", PROMPT),
         }
     }
 
@@ -270,6 +230,8 @@ impl Shell {
             Cmd::Lang => match Lang::from_code(args) {
                 Some(l) => {
                     i18n::set(l);
+                    fs::apply_language(l); // tizim papkalari ham yangi tilda
+                    config::save_current();
                     tprintln!(msg::SH_LANG_SET, i18n::pick(&msg::LANG_NAME));
                 }
                 None => tprintln!(msg::SH_LANG_USAGE),
@@ -416,6 +378,47 @@ impl Shell {
                     let pad = 21usize.saturating_sub(name.chars().count());
                     println!("  {}{:pad$}{:<11}{}", name, "", queued, sent, pad = pad);
                 }
+            }
+            Cmd::Whoami => match accounts::current() {
+                Some(a) => println!("  {} ({})", a.username, a.full_name),
+                None => tprintln!(msg::SH_NO_ACCOUNT),
+            },
+            Cmd::Passwd => {
+                let Some(mut a) = accounts::current() else {
+                    tprintln!(msg::SH_NO_ACCOUNT);
+                    return;
+                };
+                tprint!(msg::SH_PASSWD_OLD);
+                if !accounts::verify(&a, &read_line(true)) {
+                    tprintln!(msg::LOGIN_FAIL);
+                    return;
+                }
+                tprint!(msg::SH_PASSWD_NEW);
+                let p1 = read_line(true);
+                if p1.chars().count() < 4 {
+                    tprintln!(msg::SETUP_PASS_SHORT);
+                    return;
+                }
+                tprint!(msg::SETUP_PASS2);
+                if read_line(true) != p1 {
+                    tprintln!(msg::SETUP_PASS_MISMATCH);
+                    return;
+                }
+                accounts::set_password(&mut a, &p1);
+                accounts::set_current(Some(a));
+                config::save_current();
+                tprintln!(msg::SH_PASSWD_CHANGED);
+            }
+            Cmd::Reset => {
+                tprint!(msg::SH_RESET_CONFIRM);
+                let answer = read_line(false);
+                if !matches!(answer.trim(), "ha" | "h" | "да" | "д" | "yes" | "y") {
+                    tprintln!(msg::SH_CANCELLED);
+                    return;
+                }
+                config::wipe();
+                tprintln!(msg::SH_RESET_DONE);
+                power::reboot();
             }
             Cmd::Reboot => {
                 tprintln!(msg::SH_REBOOT);
