@@ -1,6 +1,6 @@
-//! Flattened Device Tree (DTB) o'quvchisi — noldan yozilgan.
-//! QEMU yalang'och (bare-metal) ELF yadro uchun DTB ni RAM boshiga qo'yadi.
-//! Biz undan faqat RAM hajmini o'qiymiz.
+//! Flattened Device Tree (DTB) öquvçisi — noldan yozilgan.
+//! QEMU yalangʼoç (bare-metal) ELF yadro uçun DTB ni RAM boşiga qöyadi.
+//! Biz undan faqat RAM hajmini öqiymiz.
 
 use core::ffi::CStr;
 
@@ -36,7 +36,7 @@ const fn align4(x: usize) -> usize {
 
 impl Fdt {
     /// # Safety
-    /// `addr` o'qilishi mumkin bo'lgan xotiraga ishora qilishi kerak.
+    /// `addr` öqilişi mumkin bölgan xotiraga işora qilişi kerak.
     pub unsafe fn from_addr(addr: usize) -> Option<Self> {
         let base = addr as *const u8;
         let h = |i: usize| be32(unsafe { base.add(i * 4) });
@@ -62,7 +62,7 @@ impl Fdt {
             .unwrap_or("?")
     }
 
-    /// Daraxtdagi har bir xususiyat (property) uchun `f(chuqurlik, tugun_nomi, xususiyat, qiymat)`.
+    /// Daraxtdagi har bir xususiyat (property) uçun `f(çuqurlik, tugun_nomi, xususiyat, qiymat)`.
     pub fn for_each_prop(&self, mut f: impl FnMut(usize, &str, &str, &'static [u8])) {
         let mut names: [&str; MAX_DEPTH] = [""; MAX_DEPTH];
         let mut depth = 0usize;
@@ -98,7 +98,7 @@ impl Fdt {
         }
     }
 
-    /// Birinchi `memory` tugunidan (boshlanish, hajm).
+    /// Birinçi `memory` tugunidan (boşlaniş, hajm).
     pub fn memory(&self) -> Option<(usize, usize)> {
         let (mut addr_cells, mut size_cells) = (2, 1);
         let mut result = None;

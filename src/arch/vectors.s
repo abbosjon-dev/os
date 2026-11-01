@@ -1,5 +1,5 @@
 // Istisnolar (exception) vektor jadvali: 16 ta yozuv, har biri 0x80 bayt.
-// Har bir kirishda barcha umumiy registrlarni `TrapFrame` ga saqlaymiz.
+// Har bir kirişda barça umumiy registrlarni `TrapFrame` ga saqlaymiz.
 
 .macro SAVE_AND_CALL kind
     sub     sp, sp, #(34 * 8)

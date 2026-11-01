@@ -1,5 +1,5 @@
-//! PSCI orqali quvvat boshqaruvi.
-//! Chaqiruv usuli (HVC yoki SMC) DTB dagi `/psci` tugunidan aniqlanadi.
+//! PSCI orqali quvvat boşqaruvi.
+//! Çaqiruv usuli (HVC yoki SMC) DTB dagi `/psci` tugunidan aniqlanadi.
 
 use core::arch::asm;
 use core::sync::atomic::{AtomicBool, Ordering};

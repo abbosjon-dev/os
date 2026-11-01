@@ -1,4 +1,4 @@
-//! Uzilishlarni tarqatish: GIC dan raqamni olib, tegishli drayverga yuboradi.
+//! Uzilişlarni tarqatiş: GIC dan raqamni olib, tegişli drayverga yuboradi.
 
 use crate::{gic, timer, uart};
 
@@ -18,7 +18,7 @@ pub fn handle() {
         match id {
             timer::IRQ => timer::handle_irq(),
             uart::IRQ => uart::handle_irq(),
-            _ => crate::println!("[irq ] noma'lum uzilish: {}", id),
+            _ => crate::tprintln!(crate::i18n::msg::IRQ_UNKNOWN, id),
         }
         gic::end_of_interrupt(id);
     }

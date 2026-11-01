@@ -1,5 +1,5 @@
-//! PL011 UART drayveri (QEMU `virt` mashinasida 0x0900_0000 manzilda).
-//! Hech qanday tashqi crate yo'q — to'g'ridan-to'g'ri registrlar bilan ishlaymiz.
+//! PL011 UART drayveri (QEMU `virt` maşinasida 0x0900_0000 manzilda).
+//! Heç qanday taşqi crate yöq — töğridan-töğri registrlar bilan işlaymiz.
 
 use core::fmt;
 use core::ptr::{read_volatile, write_volatile};
@@ -16,13 +16,13 @@ const CR: usize = 0x30;
 const IMSC: usize = 0x38;
 const ICR: usize = 0x44;
 
-/// PL011 uzilishi: SPI 1 -> INTID 33.
+/// PL011 uzilişi: SPI 1 -> INTID 33.
 pub const IRQ: u32 = 33;
 const INT_RX: u32 = 1 << 4;
-const INT_RT: u32 = 1 << 6; // qabul qilish taym-auti
+const INT_RT: u32 = 1 << 6; // qabul qiliş taym-auti
 
-const FR_TXFF: u32 = 1 << 5; // TX FIFO to'la
-const FR_RXFE: u32 = 1 << 4; // RX FIFO bo'sh
+const FR_TXFF: u32 = 1 << 5; // TX FIFO töla
+const FR_RXFE: u32 = 1 << 4; // RX FIFO böş
 
 pub struct Uart {
     base: usize,
@@ -39,8 +39,8 @@ impl Uart {
 
     pub fn init(&self) {
         unsafe {
-            write_volatile(self.reg(CR), 0); // o'chiramiz
-            write_volatile(self.reg(ICR), 0x7ff); // uzilishlarni tozalaymiz
+            write_volatile(self.reg(CR), 0); // öçiramiz
+            write_volatile(self.reg(ICR), 0x7ff); // uzilişlarni tozalaymiz
             // 24 MHz soat, 115200 baud: 24e6 / (16 * 115200) = 13.02
             write_volatile(self.reg(IBRD), 13);
             write_volatile(self.reg(FBRD), 1);
@@ -81,22 +81,22 @@ impl fmt::Write for Uart {
     }
 }
 
-/// Kiruvchi baytlar uchun halqa bufer: uzilish yozadi, asosiy tsikl o'qiydi
-/// (bitta yozuvchi, bitta o'quvchi — qulfsiz).
+/// Kiruvçi baytlar uçun halqa bufer: uziliş yozadi, asosiy tsikl öqiydi
+/// (bitta yozuvçi, bitta öquvçi — qulfsiz).
 mod rx {
     use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
     const SIZE: usize = 256;
     static BUF: [AtomicU8; SIZE] = [const { AtomicU8::new(0) }; SIZE];
-    static HEAD: AtomicUsize = AtomicUsize::new(0); // yozish
-    static TAIL: AtomicUsize = AtomicUsize::new(0); // o'qish
+    static HEAD: AtomicUsize = AtomicUsize::new(0); // yoziş
+    static TAIL: AtomicUsize = AtomicUsize::new(0); // öqiş
 
     pub fn push(b: u8) {
         let h = HEAD.load(Ordering::Relaxed);
         if h.wrapping_sub(TAIL.load(Ordering::Acquire)) < SIZE {
             BUF[h % SIZE].store(b, Ordering::Relaxed);
             HEAD.store(h.wrapping_add(1), Ordering::Release);
-        } // to'la bo'lsa — bayt tashlab yuboriladi
+        } // töla bölsa — bayt taşlab yuboriladi
     }
 
     pub fn pop() -> Option<u8> {
@@ -128,7 +128,7 @@ pub fn handle_irq() {
     unsafe { write_volatile(u.reg(ICR), INT_RX | INT_RT) };
 }
 
-/// Klaviaturadan kelgan keyingi bayt (bo'lmasa — None).
+/// Klaviaturadan kelgan keyingi bayt (bölmasa — None).
 pub fn read_byte() -> Option<u8> {
     rx::pop()
 }
@@ -137,8 +137,8 @@ pub fn has_input() -> bool {
     !rx::is_empty()
 }
 
-/// Global konsol. Hozircha bitta yadro ishlaydi, shuning uchun qulf kerak emas;
-/// SMP qo'shilganda bu yerga o'zimizning spinlock'imizni qo'yamiz.
+/// Global konsol. Hozirça bitta yadro işlaydi, şuning uçun qulf kerak emas;
+/// SMP qöşilganda bu yerga özimizning spinlockʼimizni qöyamiz.
 pub fn console() -> Uart {
     Uart::new(UART0_BASE)
 }

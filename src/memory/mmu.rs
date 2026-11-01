@@ -1,8 +1,8 @@
 //! MMU va sahifa jadvallari (4 KiB granula, 39-bit virtual manzil, 3 daraja: L1→L2→L3).
 //!
-//! Boshlang'ich xarita (identity: VA == PA):
-//!   0x0000_0000..0x4000_0000  — qurilmalar (UART, GIC...) — Device-nGnRnE, bajarib bo'lmaydi
-//!   RAM (1 GiB bloklar)       — oddiy, keshlanadigan xotira
+//! Boşlangʼiç xarita (identity: VA == PA):
+//!   0x0000_0000..0x4000_0000  — qurilmalar (UART, GIC...) — Device-nGnRnE, bajarib bölmaydi
+//!   RAM (1 GiB bloklar)       — oddiy, keşlanadigan xotira
 
 use super::frame;
 use core::arch::asm;
@@ -33,11 +33,11 @@ const ADDR_MASK: u64 = 0x0000_ffff_ffff_f000;
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 pub enum Kind {
-    /// Kernel ma'lumotlari: o'qish/yozish, bajarib bo'lmaydi.
+    /// Kernel maʼlumotlari: öqiş/yoziş, bajarib bölmaydi.
     KernelData,
-    /// Kernel kodi: faqat o'qish, bajariladi.
+    /// Kernel kodi: faqat öqiş, bajariladi.
     KernelCode,
-    /// Faqat o'qish.
+    /// Faqat öqiş.
     KernelRo,
     /// Qurilma registrlari (MMIO).
     Device,
@@ -70,12 +70,12 @@ const fn index(va: usize, level: usize) -> usize {
     (va >> (12 + 9 * (3 - level))) & (ENTRIES - 1)
 }
 
-/// Identity xaritani quradi va MMU + keshlarni yoqadi.
+/// Identity xaritani quradi va MMU + keşlarni yoqadi.
 pub fn init(ram_start: usize, ram_size: usize) {
     unsafe {
-        // Qurilmalar oynasi: birinchi 1 GiB.
+        // Qurilmalar oynasi: birinçi 1 GiB.
         write_volatile(l1(), VALID | AF | Kind::Device.bits());
-        // RAM: uni qoplaydigan 1 GiB bloklar (kod ham shu yerda — hozircha RWX).
+        // RAM: uni qoplaydigan 1 GiB bloklar (kod ham şu yerda — hozirça RWX).
         let first = ram_start / GIB;
         let last = (ram_start + ram_size - 1) / GIB;
         for i in first..=last {
@@ -91,7 +91,7 @@ pub fn init(ram_start: usize, ram_size: usize) {
             | (1 << 10)  // ORGN0: WB/WA
             | (3 << 12)  // SH0: inner shareable
             | (0 << 14)  // TG0: 4 KiB
-            | (1 << 23)  // EPD1: TTBR1 hozircha ishlatilmaydi
+            | (1 << 23)  // EPD1: TTBR1 hozirça işlatilmaydi
             | (ips << 32);
 
         asm!(
@@ -105,8 +105,8 @@ pub fn init(ram_start: usize, ram_size: usize) {
             "isb",
             "mrs {tmp}, sctlr_el1",
             "orr {tmp}, {tmp}, #(1 << 0)",  // M: MMU
-            "orr {tmp}, {tmp}, #(1 << 2)",  // C: data kesh
-            "orr {tmp}, {tmp}, #(1 << 12)", // I: instruksiya kesh
+            "orr {tmp}, {tmp}, #(1 << 2)",  // C: data keş
+            "orr {tmp}, {tmp}, #(1 << 12)", // I: instruksiya keş
             "msr sctlr_el1, {tmp}",
             "isb",
             mair = in(reg) mair,
@@ -129,7 +129,7 @@ pub fn map_page(va: usize, pa: usize, kind: Kind) -> Result<(), MapError> {
             let e = table.add(index(va, level));
             let v = read_volatile(e);
             table = if v & VALID == 0 {
-                // Jadvallar identity xaritalangan RAM'da, shuning uchun PA == VA.
+                // Jadvallar identity xaritalangan RAMʼda, şuning uçun PA == VA.
                 let next = frame::alloc_zeroed().ok_or(MapError::OutOfMemory)?;
                 asm!("dsb ishst");
                 write_volatile(e, next as u64 | VALID | TABLE_OR_PAGE);
@@ -150,7 +150,7 @@ pub fn map_page(va: usize, pa: usize, kind: Kind) -> Result<(), MapError> {
     Ok(())
 }
 
-/// Sahifani xaritadan olib tashlaydi va uning fizik manzilini qaytaradi.
+/// Sahifani xaritadan olib taşlaydi va uning fizik manzilini qaytaradi.
 pub fn unmap_page(va: usize) -> Option<usize> {
     let e = leaf_entry(va)?;
     unsafe {
@@ -161,7 +161,7 @@ pub fn unmap_page(va: usize) -> Option<usize> {
     }
 }
 
-/// Virtual manzilni fizikka tarjima qiladi (dasturiy jadval yurish).
+/// Virtual manzilni fizikka tarjima qiladi (dasturiy jadval yuriş).
 pub fn translate(va: usize) -> Option<usize> {
     if va >= 1 << VA_BITS {
         return None;

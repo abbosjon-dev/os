@@ -1,4 +1,4 @@
-//! Xotira boshqaruvi: fizik sahifalar, MMU (virtual xotira) va kernel heap.
+//! Xotira boşqaruvi: fizik sahifalar, MMU (virtual xotira) va kernel heap.
 
 pub mod frame;
 pub mod heap;

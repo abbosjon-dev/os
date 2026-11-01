@@ -1,5 +1,5 @@
 //! ARM generic timer (EL1 fizik taymer, PPI 14 -> INTID 30).
-//! Har 10 ms da uzilish beradi (100 Hz) — kelajakda rejalashtiruvchi shu "tick"da ishlaydi.
+//! Har 10 ms da uziliş beradi (100 Hz) — kelajakda rejalaştiruvçi şu "tick"da işlaydi.
 
 use core::arch::asm;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -43,7 +43,7 @@ pub fn ticks() -> u64 {
     TICKS.load(Ordering::Relaxed)
 }
 
-/// Tizim ishga tushganidan beri o'tgan vaqt (millisekund).
+/// Tizim işga tuşganidan beri ötgan vaqt (millisekund).
 pub fn uptime_ms() -> u64 {
     counter() / (frequency() / 1000)
 }

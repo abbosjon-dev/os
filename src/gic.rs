@@ -1,4 +1,4 @@
-//! GICv2 uzilishlar boshqaruvchisi drayveri.
+//! GICv2 uzilişlar boşqaruvçisi drayveri.
 //! QEMU virt: distributor 0x0800_0000, CPU interfeysi 0x0801_0000.
 
 use core::arch::asm;
@@ -37,7 +37,7 @@ fn wr8(addr: usize, v: u8) {
     unsafe { write_volatile(addr as *mut u8, v) }
 }
 
-/// Uzilishlar soni (32 ga karrali).
+/// Uzilişlar soni (32 ga karrali).
 pub fn line_count() -> u32 {
     ((rd(GICD + GICD_TYPER) & 0x1f) + 1) * 32
 }
@@ -57,7 +57,7 @@ pub fn init() {
     }
     wr(GICD + GICD_CTLR, 1);
 
-    wr(GICC + GICC_PMR, 0xff); // barcha ustuvorliklarni qabul qilamiz
+    wr(GICC + GICC_PMR, 0xff); // barça ustuvorliklarni qabul qilamiz
     wr(GICC + GICC_BPR, 0);
     wr(GICC + GICC_CTLR, 1);
 }
@@ -66,7 +66,7 @@ pub fn enable(id: u32) {
     wr(GICD + GICD_ISENABLER + 4 * (id / 32) as usize, 1 << (id % 32));
 }
 
-/// Kelgan uzilishni tasdiqlaydi va uning raqamini qaytaradi.
+/// Kelgan uzilişni tasdiqlaydi va uning raqamini qaytaradi.
 pub fn acknowledge() -> u32 {
     rd(GICC + GICC_IAR) & 0x3ff
 }
@@ -83,9 +83,9 @@ pub fn irqs_disable() {
     unsafe { asm!("msr daifset, #2", options(nomem, nostack)) };
 }
 
-/// Uzilishlar kelmaguncha protsessorni uxlatadi (quvvatni tejash).
-/// Avval tekshiruv bajariladi — shunda "tekshirdik, keyin uzilish keldi, keyin uxladik"
-/// poygasi bo'lmaydi: WFI maskalangan uzilishda ham uyg'onadi.
+/// Uzilişlar kelmagunça protsessorni uxlatadi (quvvatni tejaş).
+/// Avval tekşiruv bajariladi — şunda "tekşirdik, keyin uziliş keldi, keyin uxladik"
+/// poygasi bölmaydi: WFI maskalangan uzilişda ham uyğonadi.
 pub fn wait_for_interrupt_unless(ready: impl Fn() -> bool) {
     irqs_disable();
     if !ready() {

@@ -1,4 +1,4 @@
-//! Istisnolarni (exception) qayta ishlash.
+//! Istisnolarni (exception) qayta işlaş.
 
 use core::arch::asm;
 
@@ -39,12 +39,12 @@ extern "C" fn handle_exception(frame: &mut TrapFrame, kind: u64) {
     let ec = (esr >> 26) & 0x3f;
 
     match (kind % 4, ec) {
-        // BRK — dasturiy breakpoint: xabar beramiz va keyingi instruksiyaga o'tamiz.
+        // BRK — dasturiy breakpoint: xabar beramiz va keyingi instruksiyaga ötamiz.
         (0, 0x3c) => {
-            crate::println!(
-                "[exc ] BRK #{} @ {:#x} — qayta ishlandi, davom etamiz",
+            crate::tprintln!(
+                crate::i18n::msg::EXC_BRK,
                 esr & 0xffff,
-                frame.elr
+                format_args!("{:#x}", frame.elr)
             );
             frame.elr += 4;
         }

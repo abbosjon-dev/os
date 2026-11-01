@@ -1,9 +1,9 @@
 [build]
 target = "aarch64-unknown-none-softfloat"
-# softfloat: yadro FP/SIMD registrlariga tegmaydi, shuning uchun uzilishlarda
-# ularni saqlash shart emas (foydalanuvchi dasturlari uchun keyinroq saqlaymiz).
+# softfloat: yadro FP/SIMD registrlariga tegmaydi, şuning uçun uzilişlarda
+# ularni saqlaş şart emas (foydalanuvçi dasturlari uçun keyinroq saqlaymiz).
 
 [target.aarch64-unknown-none-softfloat]
 rustflags = ["-C", "link-arg=-Tlinker.ld"]
-# `cargo run` yadroni QEMU "virt" mashinasida ishga tushiradi.
+# `cargo run` yadroni QEMU "virt" maşinasida işga tuşiradi.
 runner = "qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 512M -smp 4 -nographic -kernel"

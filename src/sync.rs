@@ -1,6 +1,6 @@
-//! Sinxronizatsiya primitivlari (o'zimizning spinlock).
+//! Sinxronizatsiya primitivlari (özimizning spinlock).
 //! Eslatma: AArch64 da atomik buyruqlar (ldxr/stxr) faqat MMU yoqilgandan keyin
-//! (oddiy, keshlanadigan xotirada) ishonchli ishlaydi.
+//! (oddiy, keşlanadigan xotirada) işonçli işlaydi.
 
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};

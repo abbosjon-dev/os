@@ -1,6 +1,6 @@
 //! Fizik sahifa (frame) allokatori — bitmap asosida.
-//! Har bir bit bitta 4 KiB sahifani bildiradi: 0 = bo'sh, 1 = band.
-//! Bitmapning o'zi yadrodan keyingi birinchi bo'sh joyga joylashtiriladi.
+//! Har bir bit bitta 4 KiB sahifani bildiradi: 0 = böş, 1 = band.
+//! Bitmapning özi yadrodan keyingi birinçi böş joyga joylaştiriladi.
 
 use super::{PAGE_SIZE, align_up};
 use crate::sync::SpinLock;
@@ -71,15 +71,15 @@ impl FrameAllocator {
     }
 
     fn free(&mut self, pa: usize) {
-        assert!(pa >= self.base && pa % PAGE_SIZE == 0, "noto'g'ri frame: {:#x}", pa);
+        assert!(pa >= self.base && pa % PAGE_SIZE == 0, "notöğri frame: {:#x}", pa);
         let i = (pa - self.base) / PAGE_SIZE;
-        assert!(i < self.pages && self.is_used(i), "ikki marta bo'shatish: {:#x}", pa);
+        assert!(i < self.pages && self.is_used(i), "ikki marta böşatiş: {:#x}", pa);
         self.set(i, false);
         self.free += 1;
     }
 }
 
-/// `reserved_end` gacha bo'lgan hamma narsa (DTB, yadro) band deb belgilanadi.
+/// `reserved_end` gaça bölgan hamma narsa (DTB, yadro) band deb belgilanadi.
 pub fn init(ram_start: usize, ram_size: usize, reserved_end: usize) {
     let pages = ram_size / PAGE_SIZE;
     let words = pages.div_ceil(64);
@@ -92,7 +92,7 @@ pub fn init(ram_start: usize, ram_size: usize, reserved_end: usize) {
         fa.set(i, true);
         fa.free -= 1;
     }
-    // Oxirgi so'zdagi mavjud bo'lmagan sahifalar ham "band".
+    // Oxirgi sözdagi mavjud bölmagan sahifalar ham "band".
     for i in pages..words * 64 {
         fa.set(i, true);
     }
@@ -100,7 +100,7 @@ pub fn init(ram_start: usize, ram_size: usize, reserved_end: usize) {
 }
 
 fn with<R>(f: impl FnOnce(&mut FrameAllocator) -> R) -> R {
-    f(FRAMES.lock().as_mut().expect("frame allokatori ishga tushirilmagan"))
+    f(FRAMES.lock().as_mut().expect("frame allokatori işga tuşirilmagan"))
 }
 
 /// Bitta nollangan 4 KiB sahifa.
@@ -118,7 +118,7 @@ pub fn free(pa: usize) {
     with(|fa| fa.free(pa))
 }
 
-/// (bo'sh sahifalar, jami sahifalar)
+/// (böş sahifalar, jami sahifalar)
 pub fn stats() -> (usize, usize) {
     with(|fa| (fa.free, fa.pages))
 }

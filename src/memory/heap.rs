@@ -1,7 +1,7 @@
-//! Kernel heap: bo'sh bloklar ro'yxati (free list) allokatori.
-//! Bloklar manzil bo'yicha tartiblangan, bo'shatilganda qo'shnilar bilan birlashtiriladi.
-//! Bu `alloc` crate'ini (Box, Vec, String...) ishlatish imkonini beradi —
-//! `alloc` Rust'ning o'z standart qismi, tashqi kutubxona emas.
+//! Kernel heap: böş bloklar röyxati (free list) allokatori.
+//! Bloklar manzil böyiça tartiblangan, böşatilganda qöşnilar bilan birlaştiriladi.
+//! Bu `alloc` crateʼini (Box, Vec, String...) işlatiş imkonini beradi —
+//! `alloc` Rustʼning öz standart qismi, taşqi kutubxona emas.
 
 use super::{PAGE_SIZE, align_up, frame};
 use crate::sync::SpinLock;
@@ -35,7 +35,7 @@ fn block_size(layout: &Layout) -> usize {
 }
 
 impl FreeList {
-    /// [addr, addr+size) ni ro'yxatga qo'shadi va qo'shnilar bilan birlashtiradi.
+    /// [addr, addr+size) ni röyxatga qöşadi va qöşnilar bilan birlaştiradi.
     unsafe fn insert(&mut self, addr: usize, size: usize) {
         unsafe {
             let mut prev: *mut Node = null_mut();
@@ -48,12 +48,12 @@ impl FreeList {
             let node = addr as *mut Node;
             node.write(Node { size, next: cur });
 
-            // Keyingisi bilan birlashtirish
+            // Keyingisi bilan birlaştiriş
             if !cur.is_null() && addr + size == cur as usize {
                 (*node).size += (*cur).size;
                 (*node).next = (*cur).next;
             }
-            // Oldingisi bilan birlashtirish
+            // Oldingisi bilan birlaştiriş
             if !prev.is_null() && prev as usize + (*prev).size == addr {
                 (*prev).size += (*node).size;
                 (*prev).next = (*node).next;
@@ -77,7 +77,7 @@ impl FreeList {
                 let aligned = align_up(start, align);
                 if aligned + size <= end {
                     let next = (*cur).next;
-                    // Blokni ro'yxatdan olib tashlaymiz
+                    // Blokni röyxatdan olib taşlaymiz
                     if prev.is_null() {
                         self.head = next;
                     } else {
@@ -115,7 +115,7 @@ unsafe impl GlobalAlloc for KernelHeap {
 }
 
 pub fn init() {
-    let base = frame::alloc_contiguous(HEAP_PAGES).expect("heap uchun xotira yetmadi");
+    let base = frame::alloc_contiguous(HEAP_PAGES).expect("heap uçun xotira yetmadi");
     let size = HEAP_PAGES * PAGE_SIZE;
     let mut h = HEAP.0.lock();
     h.total = size;
@@ -125,7 +125,7 @@ pub fn init() {
     }
 }
 
-/// (ishlatilgan, jami) baytlarda
+/// (işlatilgan, jami) baytlarda
 pub fn stats() -> (usize, usize) {
     let h = HEAP.0.lock();
     (h.used, h.total)

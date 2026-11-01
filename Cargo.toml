@@ -13,7 +13,7 @@ test = false
 bench = false
 
 [dependencies]
-# Ataylab bo'sh: hamma narsani o'zimiz yozamiz.
+# Ataylab böş: hamma narsani özimiz yozamiz.
 
 [profile.dev]
 panic = "abort"

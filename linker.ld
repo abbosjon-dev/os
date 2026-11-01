@@ -1,6 +1,6 @@
-/* QEMU virt: RAM 0x4000_0000 dan boshlanadi.
+/* QEMU virt: RAM 0x4000_0000 dan boşlanadi.
    Birinchi 2 MiB DTB uchun bo'sh qoldiriladi (QEMU uni RAM boshiga qo'yadi,
-   joy yetmasa — umuman qo'ymaydi). */
+   joy yetmasa — umuman qöymaydi). */
 ENTRY(_start)
 
 SECTIONS
@@ -23,7 +23,7 @@ SECTIONS
         __bss_end = .;
     }
 
-    /* Har bir yadro (core) uchun 64 KiB stek; hozircha faqat core 0 ishlaydi. */
+    /* Har bir yadro (core) uçun 64 KiB stek; hozirça faqat core 0 işlaydi. */
     . = ALIGN(4096);
     __stack_bottom = .;
     . += 0x10000;
