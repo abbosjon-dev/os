@@ -33,7 +33,21 @@ Tizim birinçi marta yoqilganda **birinçi sozlaş** boşlanadi:
 4. **Parol** — ikki marta, ekranda yaşirin (`*`).
 
 Sozlamalar diskka yoziladi. Keyingi yuklanişlarda faqat parol söraladi.
-Parolning özi heç qayerda saqlanmaydi: tasodifiy tuz (salt) va SHA-256 xeşi (4096 marta takrorlangan).
+
+## Xavfsizlik va şifrlaş
+
+- **ZaminFS** — diskdagi fayl tizimi, töliq şifrlangan (ChaCha20-Poly1305). Fayllar har 2 soniyada,
+  `saqla` buyruği bilan yoki öçirişdan oldin saqlanadi. Diskda ikki nusxa (A/B): yoziş yarmida tok
+  öçsa ham oxirgi butun nusxa qoladi. Bitta bayt özgartirilsa ham nusxa rad etiladi; ikkala nusxa
+  oçilmasa, ular ustidan heç narsa yozilmaydi.
+- **Kalitlar** — har bir hisobga tasodifiy 256-bitli asosiy kalit. U paroldan PBKDF2-HMAC-SHA256
+  (300 000 takror) bilan olingan kalit orqali "öralib" saqlanadi. Parol heç qayerda saqlanmaydi;
+  parol özgarganda maʼlumotlar qayta şifrlanmaydi; `tiklaş` kalitni öçiradi — maʼlumotlar abadiy oçilmaydi.
+- **Kriptografiya noldan** — SHA-256, HMAC, PBKDF2, ChaCha20, Poly1305; har yuklanişda standart
+  test vektorlari bilan tekşiriladi.
+- **Tasodifiy sonlar** — ChaCha20 asosidagi CSPRNG; manbalar: virtio-rng, RNDR (bölsa), taymer tebranişi.
+- **Kiriş** — notöğri paroldan keyin kutiş ikki baravar östiriladi (eng köpi 30 s).
+- `xavfsizlik` buyruği himoya holatini körsatadi.
 
 | Rol | özbekça | русский | English |
 |---|---|---|---|
@@ -144,7 +158,12 @@ user/src/bin/        Dasturlar: salom, hisobla, soat, buzuq, sinov, fayl, kalkul
 src/setup.rs         Birinçi sozlaş (til, ism, login, parol) va kiriş
 src/accounts.rs      Foydalanuvçi hisoblari, parol xeşi
 src/config.rs        Diskdagi sozlamalar
-src/crypto/sha256.rs SHA-256 (noldan)
+src/crypto/          SHA-256, HMAC, PBKDF2, ChaCha20, Poly1305, AEAD (noldan)
+src/random.rs        Kriptografik tasodifiy sonlar generatori
+src/fs/zaminfs.rs    ZaminFS — şifrlangan diskdagi fayl tizimi
+src/security.rs      `xavfsizlik` buyruği
+src/drivers/virtio.rs      virtio-mmio transporti
+src/drivers/virtio_rng.rs  virtio-rng drayveri
 src/drivers/virtio_blk.rs  virtio-blk disk drayveri (v1 va v2)
 src/line.rs          Qator tahrirlovçisi (UTF-8, yaşirin parol kiritiş)
 scripts/qemu.sh      `cargo run` uçun: disk obrazini yaratadi va QEMU ni işga tuşiradi
@@ -163,7 +182,8 @@ src/shell.rs         Zamin terminali (yordam, jarayonlar, işlat, tugat, til, ö
 - [ ] **6. SMP** — barça coreʼlarni işga tuşiriş, spinlockʼlar
 - [ ] **7. Drayverlar** — virtio-blk disk tayyor; tarmoq, GPU, klaviatura/siçqonça — navbatda
 - [x] **7½. Birinçi sozlaş** — til, hisob (login + parol), tilga mos tizim papkalari, kiriş ekrani
-- [ ] **8. Fayl tizimi** — VFS va xotiradagi fayl tizimi tayyor; diskdagi öz fayl tizimimiz — navbatda
+- [x] **8. Fayl tizimi** — VFS + ZaminFS (diskda, şifrlangan); bloklarga asoslangan 2-versiya — navbatda
+- [ ] **8½. Yadro himoyasi** — qörğon sahifali yadro steklari, PAN, WXN, böşatilgan xotirani nollaş, ASLR — navbatda
 - [ ] **9. Grafika** — framebuffer, kompozitor, oyna menejeri, şriftlar
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti

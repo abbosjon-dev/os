@@ -35,6 +35,8 @@ enum Cmd {
     Whoami,
     Passwd,
     Reset,
+    Save,
+    Security,
     Reboot,
     Shutdown,
 }
@@ -69,6 +71,8 @@ const COMMANDS: &[Command] = &[
     Command { cmd: Cmd::Whoami, names: ["kimman", "кто", "whoami"], aliases: &[], help: ["joriy foydalanuvçi", "текущий пользователь", "current user"] },
     Command { cmd: Cmd::Passwd, names: ["parol", "пароль", "passwd"], aliases: &[], help: ["parolni özgartiriş", "сменить пароль", "change password"] },
     Command { cmd: Cmd::Reset, names: ["tiklaş", "сброс", "reset"], aliases: &["tiklash"], help: ["sozlamalarni öçirib, birinçi sozlaşga qaytiş", "стереть настройки и начать заново", "erase settings and start over"] },
+    Command { cmd: Cmd::Save, names: ["saqla", "сохранить", "sync"], aliases: &[], help: ["fayllarni hozir diskka saqlaş (şifrlangan)", "сохранить файлы на диск сейчас (зашифровано)", "save files to disk now (encrypted)"] },
+    Command { cmd: Cmd::Security, names: ["xavfsizlik", "безопасность", "security"], aliases: &[], help: ["himoya holati", "состояние защиты", "protection status"] },
     Command { cmd: Cmd::Reboot, names: ["qayta", "перезагрузка", "reboot"], aliases: &[], help: ["qayta yuklaş", "перезагрузить", "restart"] },
     Command { cmd: Cmd::Shutdown, names: ["öçir", "выкл", "shutdown"], aliases: &["ocir", "ochir"], help: ["tizimni öçiriş", "выключить систему", "power off"] },
 ];
@@ -135,9 +139,16 @@ fn fs_error_text(e: FsError) -> &'static str {
     })
 }
 
-/// Terminalda yöllar ildizga nisbatan: `uy/a.txt` == `/uy/a.txt`.
+/// Fayllarni darhol diskka saqlaydi. Natija: şifrlangan tasvir hajmi.
+pub fn flush() -> Result<usize, fs::zaminfs::ZfsError> {
+    let key = accounts::master_key().ok_or(fs::zaminfs::ZfsError::NoDisk)?;
+    fs::take_dirty();
+    fs::zaminfs::sync(&key)
+}
+
+/// Terminalda yöllar ildizga nisbatan: `uy/a.txt` == `/uy/a.txt`; `~` — uy papkasi.
 fn abs_path(p: &str) -> String {
-    if p.starts_with('/') { String::from(p) } else { format!("/{}", p) }
+    if p.starts_with('/') || p.starts_with('~') { String::from(p) } else { format!("/{}", p) }
 }
 
 /// Terminal yadro oqimi sifatida işlaydi. Avval birinçi sozlaş yoki kiriş.
@@ -404,7 +415,13 @@ impl Shell {
                     tprintln!(msg::SETUP_PASS_MISMATCH);
                     return;
                 }
-                accounts::set_password(&mut a, &p1);
+                let Some(key) = accounts::master_key() else {
+                    tprintln!(msg::SH_NO_ACCOUNT);
+                    return;
+                };
+                tprintln!(msg::SETUP_CREATING);
+                accounts::set_password(&mut a, &key, &p1);
+                accounts::forget(p1);
                 accounts::set_current(Some(a));
                 config::save_current();
                 tprintln!(msg::SH_PASSWD_CHANGED);
@@ -417,14 +434,22 @@ impl Shell {
                     return;
                 }
                 config::wipe();
+                accounts::set_master_key(None);
                 tprintln!(msg::SH_RESET_DONE);
                 power::reboot();
             }
+            Cmd::Save => match flush() {
+                Ok(n) => tprintln!(msg::SH_SAVED, n),
+                Err(e) => tprintln!(msg::SH_SAVE_FAIL, format_args!("{:?}", e)),
+            },
+            Cmd::Security => crate::security::report(),
             Cmd::Reboot => {
+                let _ = flush();
                 tprintln!(msg::SH_REBOOT);
                 power::reboot();
             }
             Cmd::Shutdown => {
+                let _ = flush();
                 tprintln!(msg::SH_SHUTDOWN);
                 power::shutdown();
             }

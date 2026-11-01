@@ -21,6 +21,8 @@ mod line;
 mod irq;
 mod memory;
 mod power;
+mod random;
+mod security;
 mod setup;
 mod shell;
 mod sync;
@@ -126,7 +128,15 @@ pub extern "C" fn kernel_main() -> ! {
     irq::init();
     tprintln!(msg::IRQ_READY, gic::line_count(), timer::HZ, timer::frequency() / 1_000_000);
 
-    // 6) Disk va saqlangan sozlamalar (til, hisob)
+    // 6) Tasodifiy sonlar generatori (kalitlar, nonce, tuz uçun)
+    random::init();
+    let (virtio, rndr) = random::sources();
+    tprintln!(
+        msg::RNG_READY,
+        format_args!("{}{}timer", if virtio { "virtio-rng, " } else { "" }, if rndr { "RNDR, " } else { "" })
+    );
+
+    // 7) Disk va saqlangan sozlamalar (til, hisob)
     let disk = drivers::virtio_blk::init();
     match disk {
         Some(bytes) => tprintln!(msg::DISK_FOUND, bytes >> 20),
@@ -144,18 +154,36 @@ pub extern "C" fn kernel_main() -> ! {
 
     self_tests();
 
-    // 7) Jarayonlar: şu kod PID 0 ("yadro") bölib qoladi
+    // 8) Jarayonlar: şu kod PID 0 ("yadro") bölib qoladi
     task::init();
     fs::init(task::programs::PROGRAMS);
     let (files, dirs, _) = fs::stats();
     tprintln!(msg::FS_READY, files, dirs);
     tprintln!(msg::SCHED_READY, 1000 / timer::HZ, task::programs::PROGRAMS.len());
     task::spawn_kernel("tekşiruv", boot_tests, 0).expect("tekşiruv oqimi");
+    task::spawn_kernel("saqlovçi", saver, 0).expect("saqlovçi oqimi");
 
     // PID 0: boşqa iş bölmaganda — tugagan vazifalarni tozalaş va uxlaş
     loop {
         task::reap_detached();
         unsafe { asm!("wfi") };
+    }
+}
+
+/// Fon oqimi: har 2 soniyada özgarişlarni şifrlab diskka yozadi.
+extern "C" fn saver(_: usize) {
+    loop {
+        task::sleep_ms(2000);
+        if fs::take_dirty() {
+            match accounts::master_key() {
+                Some(key) => {
+                    if fs::zaminfs::sync(&key).is_err() {
+                        fs::set_dirty(); // keyinroq qayta urinamiz
+                    }
+                }
+                None => fs::set_dirty(),
+            }
+        }
     }
 }
 
@@ -260,7 +288,9 @@ fn self_tests() {
     drop(heap);
     tprintln!(msg::TEST_WX);
 
-    assert!(crypto::sha256::self_test(), "SHA-256 notöğri");
+    if let Err(alg) = crypto::self_test() {
+        panic!("kriptografiya tekşiruvi yiqildi: {}", alg);
+    }
     tprintln!(msg::TEST_SHA);
 
     // Taymer uzilişlari: 50 ms içida kamida 3 ta tick kelişi kerak

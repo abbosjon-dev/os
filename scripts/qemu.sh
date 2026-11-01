@@ -15,4 +15,5 @@ if [ ! -f "$DISK" ]; then
 fi
 exec qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 512M -smp 4 -nographic \
     -drive "file=$DISK,if=none,format=raw,id=zdisk" -device virtio-blk-device,drive=zdisk \
+    -device virtio-rng-device \
     -kernel "$KERNEL" "$@"

@@ -350,9 +350,9 @@ pub mod msg {
         "[conf] first boot — setup will start",
     ];
     pub const TEST_SHA: Text = [
-        "[test] SHA-256: standart test vektorlari — OK",
-        "[test] SHA-256: стандартные тестовые векторы — OK",
-        "[test] SHA-256: standard test vectors — OK",
+        "[test] kripto: SHA-256, HMAC, PBKDF2, ChaCha20-Poly1305 — standart vektorlar — OK",
+        "[test] крипто: SHA-256, HMAC, PBKDF2, ChaCha20-Poly1305 — стандартные векторы — OK",
+        "[test] crypto: SHA-256, HMAC, PBKDF2, ChaCha20-Poly1305 — standard vectors — OK",
     ];
 
     // --- Birinçi sozlaş va kiriş ---
@@ -422,4 +422,52 @@ pub mod msg {
     ];
     pub const SH_CANCELLED: Text = ["  Bekor qilindi.", "  Отменено.", "  Cancelled."];
     pub const SH_NO_ACCOUNT: Text = ["  Hisob yöq.", "  Нет учётной записи.", "  No account."];
+
+    // --- Xavfsizlik va ZaminFS ---
+    pub const RNG_READY: Text = [
+        "[rand] tasodifiy sonlar generatori: ChaCha20, manbalar: {}",
+        "[rand] генератор случайных чисел: ChaCha20, источники: {}",
+        "[rand] random number generator: ChaCha20, sources: {}",
+    ];
+    pub const SETUP_ENCRYPTED: Text = [
+        "  Fayllaringiz diskda şifrlanadi (ChaCha20-Poly1305); kalit parolingizdan olinadi.",
+        "  Ваши файлы шифруются на диске (ChaCha20-Poly1305); ключ получается из пароля.",
+        "  Your files are encrypted on disk (ChaCha20-Poly1305); the key is derived from your password.",
+    ];
+    pub const LOGIN_CHECKING: Text = ["  Tekşirilmoqda...", "  Проверка...", "  Checking..."];
+    pub const ZFS_RESTORED: Text = [
+        "  Fayllar diskdan tiklandi: {} ta yozuv (ZaminFS, şifrlangan)",
+        "  Файлы восстановлены с диска: записей — {} (ZaminFS, зашифровано)",
+        "  Files restored from disk: {} entries (ZaminFS, encrypted)",
+    ];
+    pub const ZFS_ERROR: Text = [
+        "  Diskdagi fayllarni oçib bölmadi: {} — ular ustidan yozilmasligi uçun saqlaş töxtatildi",
+        "  Не удалось открыть файлы на диске: {} — сохранение остановлено, чтобы их не перезаписать",
+        "  Could not open files on disk: {} — saving is paused so they are not overwritten",
+    ];
+    pub const SH_SAVED: Text = [
+        "  Saqlandi: {} bayt (şifrlangan)",
+        "  Сохранено: {} байт (зашифровано)",
+        "  Saved: {} bytes (encrypted)",
+    ];
+    pub const SH_SAVE_FAIL: Text = ["  Saqlab bölmadi: {}", "  Не удалось сохранить: {}", "  Save failed: {}"];
+    pub const SEC_TITLE: Text = ["  Zamin OS himoyasi:", "  Защита Zamin OS:", "  Zamin OS protection:"];
+    pub const SEC_ON: Text = ["yoqiq", "включено", "on"];
+    pub const SEC_OFF: Text = ["yöq (protsessor qöllamaydi)", "нет (не поддерживается процессором)", "off (not supported by CPU)"];
+    pub const SEC_WX: Text = ["W^X (yadro kodi yozilmaydi, maʼlumot bajarilmaydi)", "W^X (код ядра не записывается, данные не исполняются)", "W^X (kernel code not writable, data not executable)"];
+    pub const SEC_ISOLATION: Text = ["Jarayonlar: alohida manzil maydoni, EL0", "Процессы: отдельное адресное пространство, EL0", "Processes: separate address spaces, EL0"];
+    pub const SEC_UCOPY: Text = [
+        "Foydalanuvçi bergan har bir manzil sahifa jadvali böyiça tekşiriladi",
+        "Каждый адрес от пользователя проверяется по таблице страниц",
+        "Every user pointer is checked against the page tables",
+    ];
+    pub const SEC_RNG: Text = ["Tasodifiy sonlar (CSPRNG)", "Случайные числа (CSPRNG)", "Random numbers (CSPRNG)"];
+    pub const SEC_DISK: Text = ["Disk şifrlaş", "Шифрование диска", "Disk encryption"];
+    pub const SEC_DISK_ON: Text = [
+        "ChaCha20-Poly1305, kalit: PBKDF2-SHA256 ({} takror)",
+        "ChaCha20-Poly1305, ключ: PBKDF2-SHA256 ({} итераций)",
+        "ChaCha20-Poly1305, key: PBKDF2-SHA256 ({} iterations)",
+    ];
+    pub const SEC_DISK_STATE: Text = ["ZaminFS: avlod {}, nusxa {}", "ZaminFS: поколение {}, копия {}", "ZaminFS: generation {}, copy {}"];
+    pub const SEC_PASSWORD: Text = ["Parol diskda saqlanmaydi", "Пароль на диске не хранится", "Password is never stored"];
 }

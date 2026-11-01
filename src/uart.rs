@@ -126,6 +126,7 @@ pub fn handle_irq() {
         rx::push(b);
     }
     unsafe { write_volatile(u.reg(ICR), INT_RX | INT_RT) };
+    crate::random::mix_event(); // bosiş vaqtlari — qöşimça entropiya
     crate::task::wake_input();
 }
 

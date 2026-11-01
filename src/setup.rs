@@ -5,6 +5,7 @@
 
 use crate::i18n::{self, Lang, msg};
 use crate::line::read_line;
+use crate::fs::zaminfs;
 use crate::{accounts, config, fs, print, println, task, tprint, tprintln};
 use alloc::string::String;
 
@@ -78,22 +79,33 @@ fn wizard(disk: bool) {
             continue;
         }
         tprint!(msg::SETUP_PASS2);
-        if read_line(true) == p1 {
+        let p2 = read_line(true);
+        let same = p2 == p1;
+        accounts::forget(p2);
+        if same {
             break p1;
         }
+        accounts::forget(p1);
         tprintln!(msg::SETUP_PASS_MISMATCH);
     };
 
     tprintln!(msg::SETUP_CREATING);
-    let account = accounts::create(&username, &full_name, &password);
+    let (account, master) = accounts::create(&username, &full_name, &password);
+    accounts::forget(password);
     accounts::set_current(Some(account));
+    accounts::set_master_key(Some(master));
     let home = fs::setup_home(&username).unwrap_or_default();
+    if disk {
+        zaminfs::wipe(); // eski (boşqa kalit bilan şifrlangan) nusxalar qolmasin
+        let _ = zaminfs::sync(&master);
+    }
 
     println!();
     tprintln!(msg::SETUP_DONE, username, full_name);
     tprintln!(msg::SETUP_HOME, home);
     if disk && config::save_current() {
         tprintln!(msg::SETUP_SAVED);
+        tprintln!(msg::SETUP_ENCRYPTED);
     } else {
         tprintln!(msg::SETUP_NOT_SAVED);
     }
@@ -103,15 +115,27 @@ fn wizard(disk: bool) {
 fn login(account: &accounts::Account) {
     println!();
     tprintln!(msg::LOGIN_WELCOME, account.full_name);
-    loop {
+    let mut failures = 0u32;
+    let key = loop {
         tprint!(msg::LOGIN_PROMPT, account.username);
         let p = read_line(true);
-        if accounts::verify(account, &p) {
-            break;
+        tprintln!(msg::LOGIN_CHECKING);
+        let key = accounts::unlock(account, &p);
+        accounts::forget(p);
+        if let Some(k) = key {
+            break k;
         }
+        failures += 1;
         tprintln!(msg::LOGIN_FAIL);
-        task::sleep_ms(1000); // parolni tez-tez taxmin qilişni sekinlaştiradi
-    }
+        // Har bir xatodan keyin kutiş ikki baravar östiriladi (eng köpi 30 s)
+        task::sleep_ms((1000u64 << failures.min(5)).min(30_000));
+    };
+    accounts::set_master_key(Some(key));
     let _ = fs::setup_home(&account.username);
+    match zaminfs::load(&key) {
+        Ok(Some(n)) => tprintln!(msg::ZFS_RESTORED, n),
+        Ok(None) => {}
+        Err(e) => tprintln!(msg::ZFS_ERROR, format_args!("{:?}", e)),
+    }
     println!();
 }

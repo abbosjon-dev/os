@@ -13,8 +13,11 @@
 //! istalgan nomi bilan topiladi. Şuning uçun `/dasturlar/salom` dasturlarda hamişa işlaydi.
 //! `~` — joriy foydalanuvçining uy papkasi.
 
+pub mod zaminfs;
+
 use crate::abi::*;
 use crate::i18n::Lang;
+use core::sync::atomic::{AtomicBool, Ordering};
 use crate::sync::SpinLock;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -120,6 +123,22 @@ struct Vfs {
 }
 
 static VFS: SpinLock<Vfs> = SpinLock::new(Vfs { nodes: Vec::new(), home: None });
+
+/// Foydalanuvçi fayllari özgardi — diskka saqlaş kerak.
+static DIRTY: AtomicBool = AtomicBool::new(false);
+
+fn mark_dirty() {
+    DIRTY.store(true, Ordering::Release);
+}
+
+/// Özgariş bölganmi (va belgini tozalaydi).
+pub fn take_dirty() -> bool {
+    DIRTY.swap(false, Ordering::AcqRel)
+}
+
+pub fn set_dirty() {
+    mark_dirty();
+}
 
 impl Vfs {
     fn node(&self, id: NodeId) -> Result<&Node, FsError> {
@@ -262,6 +281,7 @@ pub fn open(path: &str, flags: u64) -> Result<NodeId, FsError> {
             if v.node(parent)?.readonly {
                 return Err(FsError::Denied);
             }
+            mark_dirty();
             v.add(parent, name, Data::File(Vec::new()), false)?
         }
         Err(e) => return Err(e),
@@ -274,6 +294,7 @@ pub fn open(path: &str, flags: u64) -> Result<NodeId, FsError> {
                 return Err(FsError::Denied);
             }
             d.clear();
+            mark_dirty();
         }
         Data::File(_) => {}
     }
@@ -319,6 +340,7 @@ pub fn write(id: NodeId, offset: Option<usize>, data: &[u8]) -> Result<usize, Fs
                 d.resize(end, 0);
             }
             d[off..end].copy_from_slice(data);
+            mark_dirty();
             Ok(data.len())
         }
         Data::Dir(_) => Err(FsError::IsDir),
@@ -331,6 +353,7 @@ pub fn mkdir(path: &str) -> Result<NodeId, FsError> {
     if v.node(parent)?.readonly {
         return Err(FsError::Denied);
     }
+    mark_dirty();
     v.add(parent, name, Data::Dir(Vec::new()), false)
 }
 
@@ -351,6 +374,7 @@ pub fn remove(path: &str) -> Result<(), FsError> {
         children.retain(|&c| c != id);
     }
     v.nodes[id] = None;
+    mark_dirty();
     Ok(())
 }
 
@@ -388,4 +412,89 @@ pub fn stats() -> (usize, usize, usize) {
         }
     }
     (files, dirs, bytes)
+}
+
+// --- ZaminFS uçun: foydalanuvçi fayllarini tasvirga yigʼiş va tiklaş ---
+//
+// Format: yozuvlar ketma-ketligi
+//   [tur: 1 = papka, 2 = fayl] [yöl uzunligi: u16] [yöl] ([maʼlumot uzunligi: u32] [maʼlumot])
+// Rolli tugunlar yölda kanonik (özbekça) nom bilan yoziladi — til özgarsa ham tiklanadi.
+
+const REC_DIR: u8 = 1;
+const REC_FILE: u8 = 2;
+
+impl Vfs {
+    fn canonical_path(&self, mut id: NodeId) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        while id != ROOT {
+            let Ok(n) = self.node(id) else { break };
+            parts.push(n.role.map_or(n.name.as_str(), |r| r.names()[0]));
+            id = n.parent;
+        }
+        parts.reverse();
+        alloc::format!("/{}", parts.join("/"))
+    }
+
+    fn export_node(&self, id: NodeId, out: &mut Vec<u8>) {
+        let Ok(n) = self.node(id) else { return };
+        let persist = id != ROOT && !n.readonly && n.role != Some(Role::Home);
+        if persist {
+            let path = self.canonical_path(id);
+            out.push(if matches!(n.data, Data::Dir(_)) { REC_DIR } else { REC_FILE });
+            out.extend_from_slice(&(path.len() as u16).to_le_bytes());
+            out.extend_from_slice(path.as_bytes());
+            if let Data::File(d) = &n.data {
+                out.extend_from_slice(&(d.len() as u32).to_le_bytes());
+                out.extend_from_slice(d);
+            }
+        }
+        if let Data::Dir(children) = &n.data {
+            for &c in children {
+                self.export_node(c, out);
+            }
+        }
+    }
+}
+
+/// Barça foydalanuvçi papka va fayllarini bitta tasvirga yigʼadi.
+pub fn export() -> Vec<u8> {
+    let v = VFS.lock();
+    let mut out = Vec::from(&b"ZFS-TASVIR-1"[..]);
+    v.export_node(ROOT, &mut out);
+    out
+}
+
+/// Tasvirdan papka va fayllarni tiklaydi. Natija: yozuvlar soni.
+pub fn import(data: &[u8]) -> Result<usize, FsError> {
+    let mut rest = data.strip_prefix(&b"ZFS-TASVIR-1"[..]).ok_or(FsError::Invalid)?;
+    let mut count = 0;
+    let take = |rest: &mut &[u8], n: usize| -> Result<Vec<u8>, FsError> {
+        if rest.len() < n {
+            return Err(FsError::Invalid);
+        }
+        let (a, b) = rest.split_at(n);
+        *rest = b;
+        Ok(a.to_vec())
+    };
+    while !rest.is_empty() {
+        let kind = take(&mut rest, 1)?[0];
+        let plen = u16::from_le_bytes(take(&mut rest, 2)?.try_into().unwrap()) as usize;
+        let path = String::from_utf8(take(&mut rest, plen)?).map_err(|_| FsError::Invalid)?;
+        match kind {
+            REC_DIR => match mkdir(&path) {
+                Ok(_) | Err(FsError::Exists) => {}
+                Err(e) => return Err(e),
+            },
+            REC_FILE => {
+                let dlen = u32::from_le_bytes(take(&mut rest, 4)?.try_into().unwrap()) as usize;
+                let content = take(&mut rest, dlen)?;
+                let id = open(&path, OPEN_CREATE | OPEN_TRUNCATE)?;
+                write(id, Some(0), &content)?;
+            }
+            _ => return Err(FsError::Invalid),
+        }
+        count += 1;
+    }
+    DIRTY.store(false, Ordering::Release);
+    Ok(count)
 }

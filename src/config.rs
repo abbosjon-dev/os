@@ -1,9 +1,10 @@
 //! Diskdagi tizim sozlamalari: til va foydalanuvçi hisobi.
 //!
-//! Disk tuzilişi (hozirça):
+//! Disk tuzilişi:
 //!   sektor 0      — sarlavha: "ZAMINDSK", versiya, sozlamalar uzunligi
-//!   sektor 1..16  — sozlamalar matni ("kalit=qiymat" qatorlari)
-//!   qolgani       — kelajakdagi fayl tizimi uçun
+//!   sektor 1..16  — sozlamalar matni ("kalit=qiymat" qatorlari): til, login, ism,
+//!                   PBKDF2 tuzi va takrorlar soni, örangan asosiy kalit
+//!   sektor 64..   — ZaminFS (şifrlangan fayl tizimi), ikki nusxa (A/B)
 //!
 //! Disk bölmasa, sozlamalar faqat xotirada turadi (keyingi yuklanişda yöqoladi).
 
@@ -15,7 +16,7 @@ use alloc::string::String;
 use alloc::vec;
 
 const MAGIC: &[u8; 8] = b"ZAMINDSK";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const CONFIG_SECTOR: u64 = 1;
 const CONFIG_SECTORS: usize = 16;
 
@@ -60,7 +61,7 @@ pub fn load() -> Option<Settings> {
     let text = core::str::from_utf8(&buf[..len]).ok()?;
 
     let mut lang = Lang::Uz;
-    let (mut user, mut name, mut salt, mut hash) = (None, None, None, None);
+    let (mut user, mut name, mut salt, mut iters, mut key) = (None, None, None, None, None);
     for line in text.lines() {
         let Some((k, v)) = line.split_once('=') else { continue };
         match k {
@@ -68,12 +69,15 @@ pub fn load() -> Option<Settings> {
             "login" => user = Some(String::from(v)),
             "ism" => name = Some(String::from(v)),
             "tuz" => salt = unhex::<16>(v),
-            "parol" => hash = unhex::<32>(v),
+            "takror" => iters = v.parse::<u32>().ok(),
+            "kalit" => key = unhex::<{ crate::accounts::WRAPPED_LEN }>(v),
             _ => {}
         }
     }
-    let account = match (user, name, salt, hash) {
-        (Some(username), Some(full_name), Some(salt), Some(hash)) => Some(Account { username, full_name, salt, hash }),
+    let account = match (user, name, salt, iters, key) {
+        (Some(username), Some(full_name), Some(salt), Some(iterations), Some(wrapped_key)) if iterations > 0 => {
+            Some(Account { username, full_name, salt, iterations, wrapped_key })
+        }
         _ => None,
     };
     Some(Settings { lang, account })
@@ -86,7 +90,14 @@ pub fn save(s: &Settings) -> bool {
     }
     let mut text = format!("# Zamin OS sozlamalari\ntil={}\n", lang_code(s.lang));
     if let Some(a) = &s.account {
-        text += &format!("login={}\nism={}\ntuz={}\nparol={}\n", a.username, a.full_name, hex(&a.salt), hex(&a.hash));
+        text += &format!(
+            "login={}\nism={}\nkdf=pbkdf2-sha256\ntakror={}\ntuz={}\nkalit={}\n",
+            a.username,
+            a.full_name,
+            a.iterations,
+            hex(&a.salt),
+            hex(&a.wrapped_key)
+        );
     }
     if text.len() > CONFIG_SECTORS * SECTOR {
         return false;
@@ -102,8 +113,13 @@ pub fn save(s: &Settings) -> bool {
 }
 
 /// Sozlamalarni öçiradi: keyingi yuklanişda birinçi sozlaş qayta boşlanadi.
+/// Örangan kalit ham öçadi — ZaminFS dagi maʼlumotlar endi heç qaçon oçilmaydi ("kripto-öçiriş").
 pub fn wipe() -> bool {
-    disk::present() && disk::write(0, &[0u8; SECTOR]).is_ok()
+    if !disk::present() {
+        return false;
+    }
+    let zeros = vec![0u8; CONFIG_SECTORS * SECTOR];
+    disk::write(CONFIG_SECTOR, &zeros).is_ok() && disk::write(0, &[0u8; SECTOR]).is_ok() && crate::fs::zaminfs::wipe()
 }
 
 /// Joriy sozlamalar (til + hisob) ni saqlaydi.
