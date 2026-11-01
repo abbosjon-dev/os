@@ -202,7 +202,7 @@ pub fn send_ipv4(dst: Ip, proto: u8, payload: &[u8]) -> bool {
     h.extend_from_slice(&[0x45, 0x00]);
     h.extend_from_slice(&(total as u16).to_be_bytes());
     h.extend_from_slice(&id.to_be_bytes());
-    h.extend_from_slice(&[0x40, 0x00]); // Donʼt fragment
+    h.extend_from_slice(&[0x40, 0x00]); // Don't fragment
     h.extend_from_slice(&[64, proto]);
     h.extend_from_slice(&[0, 0]); // checksum keyin
     h.extend_from_slice(&our_ip());
