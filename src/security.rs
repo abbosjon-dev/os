@@ -11,7 +11,12 @@ fn line(label: &i18n::Text, on: bool) {
 pub fn report() {
     tprintln!(msg::SEC_TITLE);
     line(&msg::SEC_WX, true);
+    line(&msg::SEC_WXN, true);
+    line(&msg::SEC_PAN, crate::memory::mmu::pan_enabled());
+    line(&msg::SEC_GUARD, true);
+    line(&msg::SEC_ZERO, true);
     line(&msg::SEC_ISOLATION, true);
+    line(&msg::SEC_ASLR, true);
     line(&msg::SEC_UCOPY, true);
     line(&msg::SEC_PASSWORD, true);
     let (virtio, rndr) = random::sources();

@@ -451,10 +451,50 @@ pub mod msg {
         "  Saved: {} bytes (encrypted)",
     ];
     pub const SH_SAVE_FAIL: Text = ["  Saqlab bölmadi: {}", "  Не удалось сохранить: {}", "  Save failed: {}"];
+    pub const TEST_STACK_GUARD: Text = [
+        "[test] yadro steki qörğoni: töliş aniqlandi, faqat aybdor oqim tugatildi — OK",
+        "[test] защита стека ядра: переполнение обнаружено, завершён только виновный поток — OK",
+        "[test] kernel stack guard: overflow detected, only the faulty thread terminated — OK",
+    ];
+    pub const STACK_OVERFLOW: Text = [
+        "[xavf] yadro steki töldi (PID {}) — oqim tugatildi",
+        "[угр.] переполнение стека ядра (PID {}) — поток завершён",
+        "[risk] kernel stack overflow (PID {}) — thread terminated",
+    ];
+    pub const TEST_PAN: Text = [
+        "[test] PAN: yadro foydalanuvçi xotirasiga faqat nusxalaş orqali tegadi — OK",
+        "[test] PAN: ядро обращается к памяти пользователя только через копирование — OK",
+        "[test] PAN: kernel touches user memory only through copy routines — OK",
+    ];
     pub const SEC_TITLE: Text = ["  Zamin OS himoyasi:", "  Защита Zamin OS:", "  Zamin OS protection:"];
     pub const SEC_ON: Text = ["yoqiq", "включено", "on"];
     pub const SEC_OFF: Text = ["yöq (protsessor qöllamaydi)", "нет (не поддерживается процессором)", "off (not supported by CPU)"];
     pub const SEC_WX: Text = ["W^X (yadro kodi yozilmaydi, maʼlumot bajarilmaydi)", "W^X (код ядра не записывается, данные не исполняются)", "W^X (kernel code not writable, data not executable)"];
+    pub const SEC_WXN: Text = [
+        "WXN (apparat: yoziladigan xotira bajarilmaydi)",
+        "WXN (аппаратно: записываемая память не исполняется)",
+        "WXN (hardware: writable memory never executes)",
+    ];
+    pub const SEC_PAN: Text = [
+        "PAN (yadro foydalanuvçi xotirasiga faqat nusxalaş orqali tegadi)",
+        "PAN (ядро обращается к памяти пользователя только через копирование)",
+        "PAN (kernel touches user memory only through copy routines)",
+    ];
+    pub const SEC_GUARD: Text = [
+        "Yadro steklari qörğon bilan (töliş aniqlanadi)",
+        "Стеки ядра с охранной зоной (переполнение обнаруживается)",
+        "Kernel stacks with guard zones (overflow detected)",
+    ];
+    pub const SEC_ASLR: Text = [
+        "ASLR (dastur steki va heap manzili tasodifiy)",
+        "ASLR (адреса стека и кучи программ случайны)",
+        "ASLR (program stack and heap addresses randomized)",
+    ];
+    pub const SEC_ZERO: Text = [
+        "Böşatilgan xotira nollanadi",
+        "Освобождённая память обнуляется",
+        "Freed memory is zeroed",
+    ];
     pub const SEC_ISOLATION: Text = ["Jarayonlar: alohida manzil maydoni, EL0", "Процессы: отдельное адресное пространство, EL0", "Processes: separate address spaces, EL0"];
     pub const SEC_UCOPY: Text = [
         "Foydalanuvçi bergan har bir manzil sahifa jadvali böyiça tekşiriladi",

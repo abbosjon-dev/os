@@ -114,7 +114,10 @@ pub fn alloc_contiguous(count: usize) -> Option<usize> {
     with(|fa| fa.alloc_contiguous(count))
 }
 
+/// Sahifani qaytaradi. Avval u nollanadi: jarayon maʼlumotlari, kalitlar va
+/// parollar keyingi egasiga (boşqa jarayonga) ötib qolmasin.
 pub fn free(pa: usize) {
+    unsafe { core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE) };
     with(|fa| fa.free(pa))
 }
 

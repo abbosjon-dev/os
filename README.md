@@ -47,7 +47,18 @@ Sozlamalar diskka yoziladi. Keyingi yuklanişlarda faqat parol söraladi.
   test vektorlari bilan tekşiriladi.
 - **Tasodifiy sonlar** — ChaCha20 asosidagi CSPRNG; manbalar: virtio-rng, RNDR (bölsa), taymer tebranişi.
 - **Kiriş** — notöğri paroldan keyin kutiş ikki baravar östiriladi (eng köpi 30 s).
-- `xavfsizlik` buyruği himoya holatini körsatadi.
+- **Yadro xotirasi himoyasi**:
+  - **W^X + WXN** — yadro kodi yozilmaydi, yoziladigan xotira (apparat darajasida) bajarilmaydi;
+  - **PAN** — yadro foydalanuvçi xotirasiga faqat `uaccess` nusxalaş funksiyalari orqali tegadi;
+    har bir manzil sahifa jadvali böyiça tekşiriladi va yadro buferiga nusxalanadi (TOCTOU yöq);
+  - **Qörğonli yadro steklari** — har bir stek 64 KiB oynaning yuqori yarmida, pastki yarmi
+    xaritalanmagan. Töliş istisno vektorida aniqlanadi (registrlarni buzmasdan), favqulodda stekka
+    ötiladi va faqat aybdor oqim tugatiladi;
+  - **Böşatilgan xotira nollanadi** — kalitlar va maʼlumotlar boşqa jarayonga ötmaydi;
+  - **ASLR** — har bir dasturning steki va heapʼi tasodifiy manzilda.
+- Har yuklanişda bu himoyalar ham tekşiriladi (`[test]` qatorlari).
+- `xavfsizlik` buyruği himoya holatini körsatadi. PAN va RNDR uçun `-cpu max` kerak
+  (`cargo run` şuni işlatadi); eski protsessorlarda bular avtomatik öçiriladi.
 
 | Rol | özbekça | русский | English |
 |---|---|---|---|
@@ -146,7 +157,8 @@ src/timer.rs         ARM taymeri (100 Hz)
 src/irq.rs           Uzilişlarni drayverlarga tarqatiş
 src/task/mod.rs      Jarayonlar va rejalaştiruvçi (round-robin, 10 ms)
 src/task/elf.rs      ELF64 yuklovçi
-src/task/syscall.rs  Tizim çaqiruvlari (har bir foydalanuvçi manzili tekşiriladi)
+src/task/syscall.rs  Tizim çaqiruvlari
+src/task/uaccess.rs  Foydalanuvçi xotirasi: tekşiriş + nusxalaş (PAN bilan)
 src/fs/mod.rs        VFS + ramfs: /dasturlar, /tizim, /uy
 src/ipc.rs           Zamin kanallari — jarayonlararo xabar almaşiş
 src/abi.rs           Tizim çaqiruvlari raqamlari (yadro va dasturlar uçun umumiy)
@@ -183,7 +195,7 @@ src/shell.rs         Zamin terminali (yordam, jarayonlar, işlat, tugat, til, ö
 - [ ] **7. Drayverlar** — virtio-blk disk tayyor; tarmoq, GPU, klaviatura/siçqonça — navbatda
 - [x] **7½. Birinçi sozlaş** — til, hisob (login + parol), tilga mos tizim papkalari, kiriş ekrani
 - [x] **8. Fayl tizimi** — VFS + ZaminFS (diskda, şifrlangan); bloklarga asoslangan 2-versiya — navbatda
-- [ ] **8½. Yadro himoyasi** — qörğon sahifali yadro steklari, PAN, WXN, böşatilgan xotirani nollaş, ASLR — navbatda
+- [x] **8½. Yadro himoyasi** — qörğonli yadro steklari, PAN, WXN, böşatilgan xotirani nollaş, ASLR
 - [ ] **9. Grafika** — framebuffer, kompozitor, oyna menejeri, şriftlar
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti

@@ -9,6 +9,7 @@
 pub mod elf;
 pub mod programs;
 pub mod syscall;
+pub mod uaccess;
 
 use crate::exceptions::TrapFrame;
 use crate::memory::mmu::{self, AddressSpace, Kind};
@@ -25,7 +26,13 @@ pub type Pid = usize;
 
 const MAX_TASKS: usize = 64;
 const KSTACK_PAGES: usize = 8; // 32 KiB
-pub const USER_STACK_TOP: usize = mmu::USER_END - PAGE_SIZE; // ostida böş "qörğon" sahifa
+/// Stek oynasi: 64 KiB (pastki yarmi — qörğon). Qarang: arch/vectors.s
+const KSTACK_WINDOW: usize = 64 * 1024;
+/// Foydalanuvçi steki tepasining eng yuqori qiymati; haqiqiy tepa tasodifiy (ASLR).
+pub const USER_STACK_TOP: usize = mmu::USER_END - PAGE_SIZE;
+/// ASLR: stek tepasi 0..16 MiB pastga, heap boşi 0..1 GiB yuqoriga tasodifiy suriladi.
+const STACK_RANDOM_PAGES: u64 = 4096;
+const HEAP_RANDOM_PAGES: u64 = 262_144;
 const USER_STACK_PAGES: usize = 16; // 64 KiB
 /// Foydalanuvçi heapʼi şu manzildan boşlab yuqoriga östiriladi (SYS_MAP).
 pub const USER_HEAP_BASE: usize = 0x60_0000_0000;
@@ -71,6 +78,7 @@ pub struct Task {
     /// Heç kim kutmaydi — tugagaç avtomatik tozalanadi.
     detached: bool,
     handles: Vec<Option<Handle>>,
+    heap_base: usize,
     heap_end: usize,
     ctx: Context,
     kstack: Option<usize>,
@@ -79,13 +87,67 @@ pub struct Task {
 
 impl Drop for Task {
     fn drop(&mut self) {
-        if let Some(base) = self.kstack {
-            for i in 0..KSTACK_PAGES {
-                frame::free(base + i * PAGE_SIZE);
-            }
+        if let Some(slot) = self.kstack {
+            free_kstack(slot);
         }
         // aspace özi böşatiladi (AddressSpace::drop)
     }
+}
+
+/// Band yadro stek oynalari (bit = oyna raqami).
+static KSTACK_SLOTS: SpinLock<u64> = SpinLock::new(0);
+
+fn kstack_window(slot: usize) -> usize {
+    mmu::KSTACK_BASE + slot * KSTACK_WINDOW
+}
+
+/// Stek tepasi (SP boşlangʼiç qiymati).
+fn kstack_top(slot: usize) -> usize {
+    kstack_window(slot) + KSTACK_WINDOW
+}
+
+/// Yadro steki: böş oyna topiladi, uning yuqori yarmiga sahifalar xaritalanadi.
+/// Pastki yarmi xaritalanmaydi — stek tölib ketsa, apparat xatosi yuz beradi.
+fn alloc_kstack() -> Result<usize, SpawnError> {
+    let slot = {
+        let mut used = KSTACK_SLOTS.lock();
+        let slot = (!*used).trailing_zeros() as usize;
+        if slot >= MAX_TASKS {
+            return Err(SpawnError::TooManyTasks);
+        }
+        *used |= 1 << slot;
+        slot
+    };
+    let base = kstack_top(slot) - KSTACK_PAGES * PAGE_SIZE;
+    for i in 0..KSTACK_PAGES {
+        let ok = frame::alloc_zeroed()
+            .map(|pa| (pa, mmu::map_page(base + i * PAGE_SIZE, pa, Kind::KernelData)))
+            .is_some_and(|(pa, r)| r.is_ok() || {
+                frame::free(pa);
+                false
+            });
+        if !ok {
+            // Qisman xaritalangan sahifalarni qaytaramiz
+            for j in 0..i {
+                if let Some(pa) = mmu::unmap_page(base + j * PAGE_SIZE) {
+                    frame::free(pa);
+                }
+            }
+            *KSTACK_SLOTS.lock() &= !(1 << slot);
+            return Err(SpawnError::OutOfMemory);
+        }
+    }
+    Ok(slot)
+}
+
+fn free_kstack(slot: usize) {
+    let base = kstack_top(slot) - KSTACK_PAGES * PAGE_SIZE;
+    for i in 0..KSTACK_PAGES {
+        if let Some(pa) = mmu::unmap_page(base + i * PAGE_SIZE) {
+            frame::free(pa); // nollanadi
+        }
+    }
+    *KSTACK_SLOTS.lock() &= !(1 << slot);
 }
 
 struct Scheduler {
@@ -123,6 +185,7 @@ pub fn init() {
         parent: 0,
         detached: false,
         handles: Vec::new(),
+        heap_base: USER_HEAP_BASE,
         heap_end: USER_HEAP_BASE,
         ctx: Context::default(),
         kstack: None,
@@ -130,10 +193,6 @@ pub fn init() {
     });
     SCHED.lock().tasks[0] = Some(idle);
     STARTED.store(true, Ordering::Release);
-}
-
-fn alloc_kstack() -> Result<usize, SpawnError> {
-    frame::alloc_contiguous(KSTACK_PAGES).ok_or(SpawnError::OutOfMemory)
 }
 
 fn insert(mut task: Box<Task>) -> Result<Pid, SpawnError> {
@@ -148,20 +207,26 @@ fn insert(mut task: Box<Task>) -> Result<Pid, SpawnError> {
 
 /// Yangi yadro oqimini yaratadi: `entry(arg)` alohida stekda işlaydi.
 pub fn spawn_kernel(name: &str, entry: extern "C" fn(usize), arg: usize) -> Result<Pid, SpawnError> {
+    spawn_kernel_ext(name, entry, arg, true)
+}
+
+/// `detached = false` — tugagaç `wait` bilan çiqiş kodini oliş mumkin.
+pub fn spawn_kernel_ext(name: &str, entry: extern "C" fn(usize), arg: usize, detached: bool) -> Result<Pid, SpawnError> {
     let kstack = alloc_kstack()?;
     let mut ctx = Context::default();
     ctx.x19_x28[0] = entry as *const () as u64;
     ctx.x19_x28[1] = arg as u64;
     ctx.lr = kthread_trampoline as *const () as u64;
-    ctx.sp = (kstack + KSTACK_PAGES * PAGE_SIZE) as u64;
+    ctx.sp = kstack_top(kstack) as u64;
     insert(Box::new(Task {
         pid: 0,
         name: String::from(name),
         state: State::Ready,
         user: false,
         parent: 0,
-        detached: true,
+        detached,
         handles: Vec::new(),
+        heap_base: USER_HEAP_BASE,
         heap_end: USER_HEAP_BASE,
         ctx,
         kstack: Some(kstack),
@@ -177,16 +242,19 @@ pub fn spawn_user(name: &str, image: &[u8], args: &str, detached: bool, parent: 
     }
     let mut aspace = AddressSpace::new_user().ok_or(SpawnError::OutOfMemory)?;
     let entry = elf::load(&mut aspace, image).map_err(SpawnError::BadImage)?;
+    // ASLR: har bir jarayonda stek va heap boşqa manzilda
+    let stack_top = USER_STACK_TOP - (crate::random::u64() % STACK_RANDOM_PAGES) as usize * PAGE_SIZE;
+    let heap_base = USER_HEAP_BASE + (crate::random::u64() % HEAP_RANDOM_PAGES) as usize * PAGE_SIZE;
     for i in 1..=USER_STACK_PAGES {
         let pa = frame::alloc_zeroed().ok_or(SpawnError::OutOfMemory)?;
-        if aspace.map(USER_STACK_TOP - i * PAGE_SIZE, pa, Kind::UserData).is_err() {
+        if aspace.map(stack_top - i * PAGE_SIZE, pa, Kind::UserData).is_err() {
             frame::free(pa);
             return Err(SpawnError::OutOfMemory);
         }
     }
 
     // Argumentlar: stek tepasiga (16 bayt tekislangan), stek ulardan pastda boşlanadi.
-    let args_addr = (USER_STACK_TOP - args.len()) & !15;
+    let args_addr = (stack_top - args.len()) & !15;
     for (i, b) in args.bytes().enumerate() {
         let va = args_addr + i;
         let pa = aspace.translate(va).ok_or(SpawnError::OutOfMemory)?;
@@ -198,7 +266,7 @@ pub fn spawn_user(name: &str, image: &[u8], args: &str, detached: bool, parent: 
         Err(e) => return Err(e), // aspace özi böşatiladi
     };
     // Yadro stekining tepasida tayyor kadr: `restore_and_eret` uni EL0 ga "qaytaradi".
-    let top = kstack + KSTACK_PAGES * PAGE_SIZE;
+    let top = kstack_top(kstack);
     let frame_ptr = (top - core::mem::size_of::<TrapFrame>()) as *mut TrapFrame;
     unsafe {
         let mut x = [0u64; 31];
@@ -223,7 +291,8 @@ pub fn spawn_user(name: &str, image: &[u8], args: &str, detached: bool, parent: 
         parent,
         detached,
         handles: Vec::new(),
-        heap_end: USER_HEAP_BASE,
+        heap_base,
+        heap_end: heap_base,
         ctx,
         kstack: Some(kstack),
         aspace: Some(aspace),
@@ -499,7 +568,7 @@ pub fn map_memory(size: usize) -> Option<usize> {
     let pages = size.div_ceil(PAGE_SIZE);
     with_current(|t| {
         let start = t.heap_end;
-        if pages == 0 || start + pages * PAGE_SIZE > USER_HEAP_BASE + USER_HEAP_MAX {
+        if pages == 0 || start + pages * PAGE_SIZE > t.heap_base + USER_HEAP_MAX {
             return None;
         }
         let aspace = t.aspace.as_mut()?;

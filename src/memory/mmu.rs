@@ -33,6 +33,12 @@ static mut KERNEL_L3: [Table; KERNEL_L3_COUNT] = [const { Table([0; ENTRIES]) };
 
 const MIB2: usize = 2 << 20;
 
+/// Yadro steklari hududi (yadro yarmida, L1 indeks 192). Har bir stek 64 KiB oynada:
+/// pastki 32 KiB — xaritalanmagan qörğon, yuqori 32 KiB — stek.
+pub const KSTACK_BASE: usize = 0x30_0000_0000;
+/// Şu hudud uçun L2 jadval: oldindan yaratiladi, şunda hamma jarayon nusxalari uni körinadi.
+static mut KSTACK_L2: Table = Table([0; ENTRIES]);
+
 unsafe extern "C" {
     static __text_start: u8;
     static __text_end: u8;
@@ -155,6 +161,10 @@ pub fn init(ram_start: usize, ram_size: usize) {
             write_volatile(l1.add(i), l2 as u64 | VALID | TABLE_OR_PAGE);
         }
 
+        // Yadro steklari hududi: L2 jadval oldindan (L3 lar keyin, kerak bölganda)
+        let kl2: *mut u64 = (&raw mut KSTACK_L2).cast();
+        write_volatile(l1.add(KSTACK_BASE / GIB), kl2 as u64 | VALID | TABLE_OR_PAGE);
+
         let mair: u64 = 0x00 | (0xff << 8); // 0: Device-nGnRnE, 1: Normal WB/WA
         let mmfr0: u64;
         asm!("mrs {}, id_aa64mmfr0_el1", out(reg) mmfr0);
@@ -180,6 +190,7 @@ pub fn init(ram_start: usize, ram_size: usize) {
             "orr {tmp}, {tmp}, #(1 << 0)",  // M: MMU
             "orr {tmp}, {tmp}, #(1 << 2)",  // C: maʼlumot keşi
             "orr {tmp}, {tmp}, #(1 << 12)", // I: instruksiya keşi
+            "orr {tmp}, {tmp}, #(1 << 19)", // WXN: yoziladigan xotira hamişa bajarilmaydi (apparat)
             "msr sctlr_el1, {tmp}",
             "isb",
             mair = in(reg) mair,
@@ -188,6 +199,55 @@ pub fn init(ram_start: usize, ram_size: usize) {
             tmp = out(reg) _,
         );
     }
+}
+
+/// PAN (Privileged Access Never) bormi va yoqilganmi.
+static PAN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// PAN ni yoqadi (protsessor qöllasa): yadro foydalanuvçi sahifalariga faqat
+/// `with_user_access` içida tega oladi. Har bir istisnoda PAN avtomatik qayta yoqiladi.
+pub fn enable_pan() -> bool {
+    let mmfr1: u64;
+    unsafe { asm!("mrs {}, id_aa64mmfr1_el1", out(reg) mmfr1) };
+    if (mmfr1 >> 20) & 0xf == 0 {
+        return false;
+    }
+    unsafe {
+        asm!(
+            "mrs {tmp}, sctlr_el1",
+            "bic {tmp}, {tmp}, #(1 << 23)", // SPAN = 0: EL1 ga kirişda PAN = 1
+            "msr sctlr_el1, {tmp}",
+            "isb",
+            ".inst 0xd500419f",             // msr pan, #1
+            tmp = out(reg) _,
+        );
+    }
+    PAN.store(true, core::sync::atomic::Ordering::Relaxed);
+    true
+}
+
+/// PSTATE.PAN ning joriy qiymati (tekşiruv uçun).
+pub fn pan_state() -> bool {
+    let v: u64;
+    unsafe { asm!("mrs {}, s3_0_c4_c2_3", out(reg) v) }; // PAN registri
+    v & (1 << 22) != 0
+}
+
+pub fn pan_enabled() -> bool {
+    PAN.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Foydalanuvçi xotirasiga vaqtinça ruxsat beradi (faqat tekşirilgan manzillar uçun!).
+pub fn with_user_access<R>(f: impl FnOnce() -> R) -> R {
+    let pan = pan_enabled();
+    if pan {
+        unsafe { asm!(".inst 0xd500409f") }; // msr pan, #0
+    }
+    let r = f();
+    if pan {
+        unsafe { asm!(".inst 0xd500419f") }; // msr pan, #1
+    }
+    r
 }
 
 /// Berilgan L1 jadvalni faol qiladi (jarayon almaştirilganda).

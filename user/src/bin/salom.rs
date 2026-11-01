@@ -21,5 +21,14 @@ fn main() -> i64 {
         tr(["tizim vaqti", "время системы", "system time"]),
         zamin::uptime_ms()
     );
+    // ASLR: har işga tuşganda stek va heap manzili boşqaça
+    let on_stack = 0u8;
+    let on_heap = zamin::Box::new(0u8);
+    println!(
+        "  {}: {:#x}, heap: {:#x}",
+        tr(["stek", "стек", "stack"]),
+        &on_stack as *const u8 as usize,
+        &*on_heap as *const u8 as usize
+    );
     0
 }

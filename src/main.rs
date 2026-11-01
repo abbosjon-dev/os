@@ -114,6 +114,7 @@ pub extern "C" fn kernel_main() -> ! {
     // 2) MMU — atomik amallar (spinlock) şundan keyin işonçli işlaydi
     mmu::init(ram_start, ram_size);
     tprintln!(msg::MMU_ON, mmu::VA_BITS);
+    mmu::enable_pan();
 
     // 3) Fizik sahifa allokatori
     frame::init(ram_start, ram_size, kend);
@@ -199,6 +200,17 @@ extern "C" fn busy_counter(which: usize) {
     }
 }
 
+/// Ataylab yadro stekini töldiradi: har darajada 1 KiB, 100 daraja > 32 KiB.
+#[inline(never)]
+fn deep_recursion(n: u64) -> u64 {
+    let buf = core::hint::black_box([n as u8; 1024]);
+    if n == 0 { buf[0] as u64 } else { deep_recursion(n - 1) + buf[(n % 1024) as usize] as u64 }
+}
+
+extern "C" fn stack_bomb(_: usize) {
+    core::hint::black_box(deep_recursion(100));
+}
+
 /// Rejalaştiruvçi va foydalanuvçi rejimini tekşiradi, keyin terminalni oçadi.
 extern "C" fn boot_tests(_: usize) {
     // Ikki "oçköz" oqim bir vaqtda — ikkalasi ham oldinga siljişi kerak
@@ -210,6 +222,11 @@ extern "C" fn boot_tests(_: usize) {
     let (ca, cb) = (COUNTER_A.load(Ordering::Relaxed), COUNTER_B.load(Ordering::Relaxed));
     assert!(ca > 0 && cb > 0, "oqimlar almaşmayapti: {} / {}", ca, cb);
     tprintln!(msg::TEST_SCHED, ca, cb);
+
+    // Yadro steki qörğoni: töliş aniqlanişi va faqat şu oqim tugatilişi kerak
+    let bomb = task::spawn_kernel_ext("stek-sinovi", stack_bomb, 0, false).expect("oqim");
+    assert_eq!(task::wait(bomb), Some(-11), "stek tölişi aniqlanmadi");
+    tprintln!(msg::TEST_STACK_GUARD);
 
     // Foydalanuvçi rejimi: `sinov` dasturi 42 bilan çiqişi va xotira töliq qaytişi kerak
     let frames_before = frame::stats().0;
@@ -287,6 +304,14 @@ fn self_tests() {
     assert_eq!(mmu::kernel_access(&*heap as *const u8 as usize), Some((true, false)), "heap sahifasi");
     drop(heap);
     tprintln!(msg::TEST_WX);
+
+    // PAN: oddiy holatda yoqiq, faqat nusxalaş oraliğida öçiq
+    if mmu::pan_enabled() {
+        assert!(mmu::pan_state(), "PAN yoqilmagan");
+        assert!(!mmu::with_user_access(mmu::pan_state), "PAN öçmadi");
+        assert!(mmu::pan_state(), "PAN qayta yoqilmadi");
+        tprintln!(msg::TEST_PAN);
+    }
 
     if let Err(alg) = crypto::self_test() {
         panic!("kriptografiya tekşiruvi yiqildi: {}", alg);

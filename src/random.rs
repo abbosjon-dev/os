@@ -109,7 +109,6 @@ pub fn bytes<const N: usize>() -> [u8; N] {
     b
 }
 
-#[allow(dead_code)] // ASLR uçun keyingi bosqiçda
 pub fn u64() -> u64 {
     u64::from_le_bytes(bytes::<8>())
 }

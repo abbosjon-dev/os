@@ -13,7 +13,8 @@ if [ ! -f "$DISK" ]; then
     mkdir -p "$(dirname "$DISK")"
     truncate -s 32M "$DISK"
 fi
-exec qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 512M -smp 4 -nographic \
+# -cpu max: PAN, RNDR va boşqa zamonaviy himoya imkoniyatlari bilan
+exec qemu-system-aarch64 -machine virt -cpu max -m 512M -smp 4 -nographic \
     -drive "file=$DISK,if=none,format=raw,id=zdisk" -device virtio-blk-device,drive=zdisk \
     -device virtio-rng-device \
     -kernel "$KERNEL" "$@"
