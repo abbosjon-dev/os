@@ -18,13 +18,24 @@ fn user_str(addr: u64, len: u64) -> Result<String, i64> {
     user_string(addr, len, MAX_PATH)
 }
 
+/// Fayl yöli: nisbiy bölsa — jarayonning joriy papkasiga nisbatan.
+fn user_path(addr: u64, len: u64) -> Result<String, i64> {
+    let p = user_str(addr, len)?;
+    if p.starts_with('/') || p.starts_with('~') {
+        Ok(p)
+    } else {
+        let cwd = task::cwd();
+        Ok(alloc::format!("{}/{}", cwd.trim_end_matches('/'), p))
+    }
+}
+
 fn fs_err(e: fs::FsError) -> i64 {
     e.code()
 }
 
 pub fn dispatch(frame: &mut TrapFrame) {
     let num = frame.x[8];
-    let a = [frame.x[0], frame.x[1], frame.x[2], frame.x[3]];
+    let a = [frame.x[0], frame.x[1], frame.x[2], frame.x[3], frame.x[4]];
     // Tizim çaqiruvi davomida uzilişlar yoqiq: uzoq amallar (disk, katta fayllar)
     // paytida ham taymer işlaydi va jarayonni almaştiriş mumkin.
     unsafe { core::arch::asm!("msr daifclr, #2", options(nomem, nostack)) };
@@ -35,13 +46,53 @@ pub fn dispatch(frame: &mut TrapFrame) {
     frame.x[0] = ret as u64;
 }
 
-fn handle(num: u64, a: [u64; 4]) -> SysResult {
+/// Dastakka yozadi: konsol, quvur yoki fayl.
+fn write_handle(h: usize, data: &[u8]) -> SysResult {
+    match task::get_handle(h) {
+        Some(Handle::Console) => {
+            uart::write_bytes(data);
+            Ok(data.len() as i64)
+        }
+        Some(Handle::PipeWrite(id)) => crate::pipe::write(id, data).map(|n| n as i64),
+        Some(Handle::File { node, offset, append }) => {
+            let n = fs::write(node, if append { None } else { Some(offset) }, data).map_err(fs_err)?;
+            task::set_handle(h, Handle::File { node, offset: offset + n, append });
+            Ok(n as i64)
+        }
+        _ => Err(ERR_BAD_HANDLE),
+    }
+}
+
+/// Dastakdan öqiydi: konsol (bitta qator), quvur yoki fayl.
+fn read_handle(h: usize, max: usize) -> Result<alloc::vec::Vec<u8>, i64> {
+    match task::get_handle(h) {
+        Some(Handle::Console) => Ok(match crate::line::read_line_eof(false) {
+            Some(mut line) => {
+                line.push('\n');
+                let mut v = line.into_bytes();
+                v.truncate(max);
+                v
+            }
+            None => alloc::vec::Vec::new(), // Ctrl+D — kiriş oxiri
+        }),
+        Some(Handle::PipeRead(id)) => Ok(crate::pipe::read(id, max)),
+        Some(Handle::File { node, offset, append }) => {
+            let mut buf = alloc::vec![0u8; max];
+            let n = fs::read(node, offset, &mut buf).map_err(fs_err)?;
+            buf.truncate(n);
+            task::set_handle(h, Handle::File { node, offset: offset + n, append });
+            Ok(buf)
+        }
+        _ => Err(ERR_BAD_HANDLE),
+    }
+}
+
+fn handle(num: u64, a: [u64; 5]) -> SysResult {
     match num {
         SYS_EXIT => task::exit_current(a[0] as i64),
         SYS_WRITE => {
             let bytes = copy_from_user(a[0], a[1])?;
-            uart::write_bytes(&bytes);
-            Ok(bytes.len() as i64)
+            write_handle(STDOUT as usize, &bytes)
         }
         SYS_YIELD => {
             task::yield_now();
@@ -56,11 +107,26 @@ fn handle(num: u64, a: [u64; 4]) -> SysResult {
         SYS_LANG => Ok(i18n::current() as i64),
         SYS_MAP => task::map_memory(a[0] as usize).map(|v| v as i64).ok_or(ERR_NO_MEMORY),
         SYS_SPAWN => {
-            let path = user_str(a[0], a[1])?;
+            let path = user_path(a[0], a[1])?;
             let args = user_string(a[2], a[3], task::MAX_ARGS)?;
             let image = fs::read_all(&path).map_err(fs_err)?;
             let name = path.rsplit('/').next().unwrap_or(&path);
-            let pid = task::spawn_user(name, &image, &args, false, task::current_pid()).map_err(|e| match e {
+            // Standart dastaklar: x4 dagi raqamlar (INHERIT — otaning şu raqamli dastagi)
+            let mut stdio = [Handle::Console; 3];
+            for (k, slot) in stdio.iter_mut().enumerate() {
+                let idx = (a[4] >> (16 * k)) & 0xffff;
+                let idx = if idx == INHERIT { k as u64 } else { idx };
+                *slot = task::get_handle(idx as usize).ok_or(ERR_BAD_HANDLE)?;
+            }
+            let opts = task::SpawnOptions {
+                detached: false,
+                parent: task::current_pid(),
+                stdio,
+                env: task::current_env(),
+                trusted: false, // işonç bolaga ötmaydi
+                cwd: task::cwd(),
+            };
+            let pid = task::spawn_user(name, &image, &args, opts).map_err(|e| match e {
                 SpawnError::OutOfMemory => ERR_NO_MEMORY,
                 SpawnError::TooManyTasks => ERR_FULL,
                 SpawnError::ArgsTooLong => ERR_TOO_BIG,
@@ -73,39 +139,32 @@ fn handle(num: u64, a: [u64; 4]) -> SysResult {
             if task::parent_of(pid) != Some(task::current_pid()) {
                 return Err(ERR_NOT_CHILD);
             }
+            if a[1] == 1 {
+                return match task::try_wait(pid) {
+                    Some(Some(code)) => Ok(code),
+                    Some(None) => Err(ERR_RUNNING),
+                    None => Err(ERR_NOT_FOUND),
+                };
+            }
             task::wait(pid).ok_or(ERR_NOT_FOUND)
         }
 
         // --- Fayllar ---
         SYS_OPEN => {
-            let path = user_str(a[0], a[1])?;
+            let path = user_path(a[0], a[1])?;
             let node = fs::open(&path, a[2]).map_err(fs_err)?;
             let h = Handle::File { node, offset: 0, append: a[2] & OPEN_APPEND != 0 };
             task::add_handle(h).map(|i| i as i64).ok_or(ERR_FULL)
         }
         SYS_READ => {
             check_writable(a[1], a[2])?;
-            let mut buf = alloc::vec![0u8; (a[2] as usize).min(task::uaccess::MAX_COPY)];
-            match task::get_handle(a[0] as usize) {
-                Some(Handle::File { node, offset, append }) => {
-                    let n = fs::read(node, offset, &mut buf).map_err(fs_err)?;
-                    copy_to_user(a[1], &buf[..n])?;
-                    task::set_handle(a[0] as usize, Handle::File { node, offset: offset + n, append });
-                    Ok(n as i64)
-                }
-                _ => Err(ERR_BAD_HANDLE),
-            }
+            let data = read_handle(a[0] as usize, (a[2] as usize).min(task::uaccess::MAX_COPY))?;
+            copy_to_user(a[1], &data)?;
+            Ok(data.len() as i64)
         }
         SYS_FWRITE => {
             let data = copy_from_user(a[1], a[2])?;
-            match task::get_handle(a[0] as usize) {
-                Some(Handle::File { node, offset, append }) => {
-                    let n = fs::write(node, if append { None } else { Some(offset) }, &data).map_err(fs_err)?;
-                    task::set_handle(a[0] as usize, Handle::File { node, offset: offset + n, append });
-                    Ok(n as i64)
-                }
-                _ => Err(ERR_BAD_HANDLE),
-            }
+            write_handle(a[0] as usize, &data)
         }
         SYS_CLOSE => {
             if task::close_handle(a[0] as usize) {
@@ -115,11 +174,12 @@ fn handle(num: u64, a: [u64; 4]) -> SysResult {
             }
         }
         SYS_READDIR => {
-            let path = user_str(a[0], a[1])?;
+            let path = user_path(a[0], a[1])?;
             let mut out = String::new();
             for e in fs::list(&path).map_err(fs_err)? {
                 out += &e.name;
-                out += if e.is_dir { "/\n" } else { "\n" };
+                out += if e.is_dir { "/" } else { "" };
+                out += &alloc::format!("\t{}\n", e.size);
             }
             if out.len() as u64 > a[3] {
                 return Err(ERR_TOO_BIG);
@@ -128,11 +188,11 @@ fn handle(num: u64, a: [u64; 4]) -> SysResult {
             Ok(out.len() as i64)
         }
         SYS_MKDIR => {
-            fs::mkdir(&user_str(a[0], a[1])?).map_err(fs_err)?;
+            fs::mkdir(&user_path(a[0], a[1])?).map_err(fs_err)?;
             Ok(0)
         }
         SYS_REMOVE => {
-            fs::remove(&user_str(a[0], a[1])?).map_err(fs_err)?;
+            fs::remove(&user_path(a[0], a[1])?).map_err(fs_err)?;
             Ok(0)
         }
 
@@ -159,6 +219,64 @@ fn handle(num: u64, a: [u64; 4]) -> SysResult {
                 }
                 _ => Err(ERR_BAD_HANDLE),
             }
+        }
+
+        // --- Kiriş/çiqiş, muhit, terminal ---
+        SYS_PIPE => {
+            check_writable(a[0], 16)?;
+            let id = crate::pipe::create();
+            let r = task::add_handle(Handle::PipeRead(id));
+            let w = task::add_handle(Handle::PipeWrite(id));
+            let (Some(r), Some(w)) = (r, w) else {
+                crate::pipe::release(id, false);
+                crate::pipe::release(id, true);
+                return Err(ERR_FULL);
+            };
+            let mut out = [0u8; 16];
+            out[..8].copy_from_slice(&(r as u64).to_le_bytes());
+            out[8..].copy_from_slice(&(w as u64).to_le_bytes());
+            copy_to_user(a[0], &out)?;
+            Ok(0)
+        }
+        SYS_SETENV => {
+            let name = user_str(a[0], a[1])?;
+            let value = user_str(a[2], a[3])?;
+            if name.is_empty() || name.contains('=') {
+                return Err(ERR_INVALID);
+            }
+            task::set_env(&name, &value);
+            Ok(0)
+        }
+        SYS_GETENV => {
+            let name = user_str(a[0], a[1])?;
+            let value = task::get_env(&name).ok_or(ERR_NOT_FOUND)?;
+            if value.len() as u64 > a[3] {
+                return Err(ERR_TOO_BIG);
+            }
+            copy_to_user(a[2], value.as_bytes())?;
+            Ok(value.len() as i64)
+        }
+        SYS_FOREGROUND => {
+            if !task::is_trusted() {
+                return Err(ERR_DENIED);
+            }
+            task::set_foreground(a[0] as usize);
+            Ok(0)
+        }
+        SYS_CHDIR => {
+            let path = user_path(a[0], a[1])?;
+            fs::list(&path).map_err(fs_err)?; // mavjud papka bölişi kerak
+            task::set_cwd(&path);
+            Ok(0)
+        }
+        SYS_ADMIN => {
+            // Tizim buyruqlari (parol, tiklaş, öçir...) — faqat işonçli terminal uçun
+            if !task::is_trusted() {
+                return Err(ERR_DENIED);
+            }
+            let line = user_str(a[0], a[1])?;
+            crate::shell::admin(&line);
+            Ok(0)
         }
 
         _ => {

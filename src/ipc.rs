@@ -5,7 +5,7 @@
 //! yuboruvçi qabul qiluvçidan oldin işga tuşsa ham heç narsa yöqolmaydi.
 //! Qabul qiluvçi xabar kelgunça uxlaydi (protsessor vaqtini sarflamaydi).
 
-use crate::abi::{ERR_FULL, ERR_NOT_FOUND, ERR_TOO_BIG, MAX_MESSAGE};
+use crate::abi::{ERR_FULL, ERR_INTERRUPTED, ERR_NOT_FOUND, ERR_TOO_BIG, MAX_MESSAGE};
 use crate::sync::SpinLock;
 use alloc::collections::VecDeque;
 use alloc::string::String;
@@ -30,6 +30,7 @@ pub enum IpcError {
     Full,
     TooBig,
     NotFound,
+    Interrupted,
 }
 
 impl IpcError {
@@ -38,6 +39,7 @@ impl IpcError {
             IpcError::Full => ERR_FULL,
             IpcError::TooBig => ERR_TOO_BIG,
             IpcError::NotFound => ERR_NOT_FOUND,
+            IpcError::Interrupted => ERR_INTERRUPTED,
         }
     }
 }
@@ -93,6 +95,9 @@ pub fn recv(id: ChanId, cap: usize) -> Result<Vec<u8>, IpcError> {
     loop {
         if let Some(m) = try_recv(id, cap)? {
             return Ok(m);
+        }
+        if crate::task::current_killed() {
+            return Err(IpcError::Interrupted);
         }
         crate::task::wait_channel(id, || CHANNELS.lock().get(id).is_some_and(|c| !c.queue.is_empty()));
     }

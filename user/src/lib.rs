@@ -44,6 +44,8 @@ impl Error {
             ERR_DENIED => ["ruxsat yöq", "доступ запрещён", "permission denied"],
             ERR_NOT_CHILD => ["bola jarayon emas", "не дочерний процесс", "not a child process"],
             ERR_IO => ["disk xatosi", "ошибка диска", "disk error"],
+            ERR_BROKEN_PIPE => ["quvur uzildi", "канал разорван", "broken pipe"],
+            ERR_INTERRUPTED => ["töxtatildi", "прервано", "interrupted"],
             ERR_CORRUPT => [
                 "diskdagi maʼlumot buzilgan (tekşiruvdan ötmadi)",
                 "данные на диске повреждены (не прошли проверку)",
@@ -64,12 +66,17 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 #[inline(always)]
 pub(crate) unsafe fn syscall(num: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
+    unsafe { syscall5(num, a0, a1, a2, a3, 0) }
+}
+
+#[inline(always)]
+pub(crate) unsafe fn syscall5(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> i64 {
     let ret: i64;
     unsafe {
         asm!(
             "svc #0",
             inlateout("x0") a0 as i64 => ret,
-            in("x1") a1, in("x2") a2, in("x3") a3, in("x8") num,
+            in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, in("x8") num,
             options(nostack),
         );
     }
@@ -123,10 +130,133 @@ pub fn tr(t: [&'static str; 3]) -> &'static str {
 }
 
 /// Dasturni işga tuşiradi: `spawn("/dasturlar/salom", "")`. Natija: PID.
+/// Standart dastaklar otadan meros bölib ötadi.
 pub fn spawn(path: &str, args: &str) -> Result<u64> {
+    spawn_with(path, args, [abi::INHERIT; 3])
+}
+
+/// Dasturni berilgan stdin/stdout/stderr dastaklari bilan işga tuşiradi
+/// (`abi::INHERIT` — otaning şu raqamli dastagi). Quvur va yönaltiriş uçun.
+pub fn spawn_with(path: &str, args: &str, stdio: [u64; 3]) -> Result<u64> {
+    let packed = (stdio[0] & 0xffff) | (stdio[1] & 0xffff) << 16 | (stdio[2] & 0xffff) << 32;
     check(unsafe {
-        syscall(abi::SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, args.as_ptr() as u64, args.len() as u64)
+        syscall5(
+            abi::SYS_SPAWN,
+            path.as_ptr() as u64,
+            path.len() as u64,
+            args.as_ptr() as u64,
+            args.len() as u64,
+            packed,
+        )
     })
+}
+
+/// Dastakni yopadi.
+pub fn close(handle: u64) {
+    unsafe { syscall(abi::SYS_CLOSE, handle, 0, 0, 0) };
+}
+
+/// Quvur: (öqiş dastagi, yoziş dastagi).
+pub fn pipe() -> Result<(u64, u64)> {
+    let mut out = [0u64; 2];
+    check(unsafe { syscall(abi::SYS_PIPE, out.as_mut_ptr() as u64, 0, 0, 0) })?;
+    Ok((out[0], out[1]))
+}
+
+/// Dastakdan öqiydi (stdin = 0). Natija: öqilgan baytlar (0 — oxiri).
+pub fn read(handle: u64, buf: &mut [u8]) -> Result<usize> {
+    check(unsafe { syscall(abi::SYS_READ, handle, buf.as_mut_ptr() as u64, buf.len() as u64, 0) }).map(|n| n as usize)
+}
+
+/// Dastakka yozadi.
+pub fn write_to(handle: u64, data: &[u8]) -> Result<usize> {
+    check(unsafe { syscall(abi::SYS_FWRITE, handle, data.as_ptr() as u64, data.len() as u64, 0) }).map(|n| n as usize)
+}
+
+/// Standart kiriş buferi (konsol bir urinişda butun qatorni beradi).
+static mut STDIN_BUF: Vec<u8> = Vec::new();
+
+fn stdin_buf() -> &'static mut Vec<u8> {
+    unsafe { &mut *(&raw mut STDIN_BUF) }
+}
+
+/// Standart kirişdan bitta qator (`None` — kiriş tugadi).
+/// Konsoldan: foydalanuvçi Enter bosgunça; quvurdan: navbatdagi qator.
+pub fn read_line() -> Option<String> {
+    let buf = stdin_buf();
+    loop {
+        if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = buf.drain(..=pos).collect();
+            return Some(String::from_utf8_lossy(&line[..line.len() - 1]).into_owned());
+        }
+        let mut chunk = vec![0u8; 4096];
+        match read(abi::STDIN, &mut chunk) {
+            Ok(n) if n > 0 => buf.extend_from_slice(&chunk[..n]),
+            _ => {
+                if buf.is_empty() {
+                    return None;
+                }
+                let rest = core::mem::take(buf);
+                return Some(String::from_utf8_lossy(&rest).into_owned());
+            }
+        }
+    }
+}
+
+/// Standart kirişni oxirigaça öqiydi.
+pub fn read_all_stdin() -> Vec<u8> {
+    let mut out = core::mem::take(stdin_buf());
+    let mut buf = vec![0u8; 4096];
+    while let Ok(n) = read(abi::STDIN, &mut buf) {
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+    }
+    out
+}
+
+/// Bola jarayon tugaganmi (kutmaydi): `Ok(Some(kod))` — tugagan, `Ok(None)` — hali işlayapti.
+pub fn try_wait(pid: u64) -> Result<Option<i64>> {
+    let r = unsafe { syscall(abi::SYS_WAIT, pid, 1, 0, 0) };
+    match r {
+        abi::ERR_RUNNING => Ok(None),
+        abi::ERR_NOT_CHILD | abi::ERR_NOT_FOUND => Err(Error(r)),
+        code => Ok(Some(code)),
+    }
+}
+
+/// Muhit özgaruvçisi.
+pub fn env(name: &str) -> Option<String> {
+    let mut buf = vec![0u8; 1024];
+    let n = check(unsafe {
+        syscall(abi::SYS_GETENV, name.as_ptr() as u64, name.len() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+    })
+    .ok()? as usize;
+    buf.truncate(n);
+    String::from_utf8(buf).ok()
+}
+
+pub fn set_env(name: &str, value: &str) -> Result<()> {
+    check(unsafe {
+        syscall(abi::SYS_SETENV, name.as_ptr() as u64, name.len() as u64, value.as_ptr() as u64, value.len() as u64)
+    })
+    .map(|_| ())
+}
+
+/// Joriy papkani özgartiradi (nisbiy yöllar şunga nisbatan oçiladi).
+pub fn chdir(path: &str) -> Result<()> {
+    check(unsafe { syscall(abi::SYS_CHDIR, path.as_ptr() as u64, path.len() as u64, 0, 0) }).map(|_| ())
+}
+
+/// Konsolning oldingi plandagi jarayoni (Ctrl+C uni töxtatadi). Faqat terminal uçun.
+pub fn set_foreground(pid: u64) {
+    unsafe { syscall(abi::SYS_FOREGROUND, pid, 0, 0, 0) };
+}
+
+/// Tizim buyruği (faqat işonçli terminal uçun).
+pub fn admin(line: &str) -> Result<()> {
+    check(unsafe { syscall(abi::SYS_ADMIN, line.as_ptr() as u64, line.len() as u64, 0, 0) }).map(|_| ())
 }
 
 /// Bola jarayon tugaşini kutadi. Natija: uning çiqiş kodi.
@@ -199,14 +329,42 @@ impl Write for Console {
     }
 }
 
+/// Qator avval buferga yiğiladi va bitta tizim çaqiruvida yoziladi — boşqa
+/// jarayonlarning çiqişi bilan harflar aralaşib ketmaydi.
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
-    let _ = Console.write_fmt(args);
+    let mut s = String::new();
+    if fmt::write(&mut s, args).is_ok() {
+        write(s.as_bytes());
+    }
 }
 
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => { $crate::_print(format_args!($($arg)*)) };
+}
+
+/// Xato xabarlari — standart xato oqimiga (quvurga emas).
+pub struct ErrConsole;
+
+impl Write for ErrConsole {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let _ = write_to(abi::STDERR, s.as_bytes());
+        Ok(())
+    }
+}
+
+#[doc(hidden)]
+pub fn _eprint(args: fmt::Arguments) {
+    let mut s = String::new();
+    if fmt::write(&mut s, args).is_ok() {
+        let _ = write_to(abi::STDERR, s.as_bytes());
+    }
+}
+
+#[macro_export]
+macro_rules! eprintln {
+    ($($arg:tt)*) => { $crate::_eprint(format_args!("{}\n", format_args!($($arg)*))) };
 }
 
 #[macro_export]

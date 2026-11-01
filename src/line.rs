@@ -12,11 +12,13 @@ pub struct LineEditor {
     utf8_len: usize,
     utf8_need: usize,
     pub hidden: bool,
+    /// Ctrl+D bosildi
+    pub eof: bool,
 }
 
 impl LineEditor {
     pub const fn new() -> Self {
-        Self { line: String::new(), utf8: [0; 4], utf8_len: 0, utf8_need: 0, hidden: false }
+        Self { line: String::new(), utf8: [0; 4], utf8_len: 0, utf8_need: 0, hidden: false, eof: false }
     }
 
     /// Bitta baytni qabul qiladi. Enter bosilganda töliq qatorni qaytaradi.
@@ -40,6 +42,12 @@ impl LineEditor {
             b'\r' | b'\n' => {
                 println!();
                 return Some(core::mem::take(&mut self.line));
+            }
+            0x04 if self.line.is_empty() => {
+                // Ctrl+D böş qatorda — kiriş oxiri
+                println!();
+                self.eof = true;
+                return Some(String::new());
             }
             0x7f | 0x08 => {
                 if self.line.pop().is_some() {
@@ -69,6 +77,23 @@ impl LineEditor {
             self.line.push_str(s);
             print!("{}", if self.hidden { "*" } else { s });
         }
+    }
+}
+
+/// Bitta qator yoki `None` — Ctrl+D (kiriş oxiri).
+pub fn read_line_eof(hidden: bool) -> Option<String> {
+    let mut ed = LineEditor::new();
+    ed.hidden = hidden;
+    loop {
+        while let Some(b) = uart::read_byte() {
+            if let Some(line) = ed.feed(b) {
+                return if ed.eof { None } else { Some(line) };
+            }
+        }
+        if task::current_killed() {
+            return None;
+        }
+        task::wait_input(uart::has_input);
     }
 }
 

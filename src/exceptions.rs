@@ -57,6 +57,9 @@ extern "C" fn handle_exception(frame: &mut TrapFrame, kind: u64) {
     }
     if kind % 4 == 1 {
         crate::irq::handle();
+        if kind == 9 {
+            crate::task::check_killed(); // uziliş foydalanuvçi rejimida kelgan — xavfsiz nuqta
+        }
         return;
     }
 
@@ -72,6 +75,7 @@ extern "C" fn handle_exception(frame: &mut TrapFrame, kind: u64) {
     if kind == 8 {
         if ec == EC_SVC64 {
             crate::task::syscall::dispatch(frame);
+            crate::task::check_killed(); // xavfsiz nuqta: foydalanuvçi rejimiga qaytişdan oldin
             return;
         }
         // Boşqa har qanday xato (taqiqlangan xotira, nomaʼlum buyruq...) — jarayon tugatiladi.

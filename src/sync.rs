@@ -112,7 +112,7 @@ impl<T> Mutex<T> {
             if self.locked.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
                 return MutexGuard { lock: self };
             }
-            crate::task::wait_event(self.key(), || self.locked.load(Ordering::Acquire));
+            crate::task::wait_event_uninterruptible(self.key(), || self.locked.load(Ordering::Acquire));
         }
     }
 }

@@ -61,7 +61,42 @@ pub enum State {
 pub enum Handle {
     File { node: fs::NodeId, offset: usize, append: bool },
     Channel(ipc::ChanId),
+    /// Konsol: öqiş — klaviaturadan bitta qator, yoziş — ekranga
+    Console,
+    PipeRead(crate::pipe::PipeId),
+    PipeWrite(crate::pipe::PipeId),
 }
+
+impl Handle {
+    /// Dastak nusxalanganda (bola jarayonga berilganda) quvur hisoblagiçini oşiradi.
+    fn retain(self) -> Handle {
+        match self {
+            Handle::PipeRead(id) => crate::pipe::add_ref(id, false),
+            Handle::PipeWrite(id) => crate::pipe::add_ref(id, true),
+            _ => {}
+        }
+        self
+    }
+
+    /// Dastak yopildi.
+    fn release(self) {
+        match self {
+            Handle::PipeRead(id) => crate::pipe::release(id, false),
+            Handle::PipeWrite(id) => crate::pipe::release(id, true),
+            _ => {}
+        }
+    }
+}
+
+/// Dastaklar röyxatini yopadi (rejalaştiruvçi qulfidan taşqarida çaqirilişi kerak).
+fn release_handles(handles: Vec<Option<Handle>>) {
+    for h in handles.into_iter().flatten() {
+        h.release();
+    }
+}
+
+/// Konsolning oldingi plandagi jarayoni: Ctrl+C uni töxtatadi.
+static FOREGROUND: AtomicUsize = AtomicUsize::new(0);
 
 /// Saqlangan registrlar (arch/switch.s bilan bir xil tartibda).
 #[repr(C)]
@@ -87,6 +122,14 @@ pub struct Task {
     /// Oxirgi marta qaysi yadroda işlagan
     pub last_cpu: usize,
     handles: Vec<Option<Handle>>,
+    /// Muhit özgaruvçilari (bola jarayonga meros bölib ötadi)
+    env: Vec<(String, String)>,
+    /// Işonçli (yadro işga tuşirgan terminal): tizim buyruqlariga ruxsat
+    trusted: bool,
+    /// Töxtatiş sörovi: jarayon xavfsiz nuqtada (foydalanuvçi rejimiga qaytişda) özi tugaydi
+    killed: bool,
+    /// Joriy papka (nisbiy yöllar şunga nisbatan)
+    cwd: String,
     heap_base: usize,
     heap_end: usize,
     ctx: Context,
@@ -215,6 +258,10 @@ fn idle_task(cpu: usize) -> Box<Task> {
         on_cpu: true,
         last_cpu: cpu,
         handles: Vec::new(),
+        env: Vec::new(),
+        trusted: false,
+        killed: false,
+        cwd: String::from("/"),
         heap_base: USER_HEAP_BASE,
         heap_end: USER_HEAP_BASE,
         ctx: Context::default(),
@@ -283,6 +330,10 @@ pub fn spawn_kernel_ext(name: &str, entry: extern "C" fn(usize), arg: usize, det
         on_cpu: false,
         last_cpu: 0,
         handles: Vec::new(),
+        env: Vec::new(),
+        trusted: false,
+        killed: false,
+        cwd: String::from("/"),
         heap_base: USER_HEAP_BASE,
         heap_end: USER_HEAP_BASE,
         ctx,
@@ -293,7 +344,48 @@ pub fn spawn_kernel_ext(name: &str, entry: extern "C" fn(usize), arg: usize, det
 
 /// ELF faylidan foydalanuvçi jarayonini yaratadi.
 /// `args` foydalanuvçi stekining tepasiga yoziladi: dastur uni x0 (manzil), x1 (uzunlik) da oladi.
-pub fn spawn_user(name: &str, image: &[u8], args: &str, detached: bool, parent: Pid) -> Result<Pid, SpawnError> {
+/// Jarayon qanday muhitda işga tuşadi.
+pub struct SpawnOptions {
+    pub detached: bool,
+    pub parent: Pid,
+    /// stdin, stdout, stderr
+    pub stdio: [Handle; 3],
+    pub env: Vec<(String, String)>,
+    pub trusted: bool,
+    pub cwd: String,
+}
+
+impl SpawnOptions {
+    /// Yadrodan işga tuşirilgan dastur: konsol, standart muhit.
+    pub fn kernel(detached: bool) -> SpawnOptions {
+        SpawnOptions {
+            detached,
+            parent: 0,
+            stdio: [Handle::Console; 3],
+            env: default_env(),
+            trusted: false,
+            cwd: default_cwd(),
+        }
+    }
+}
+
+/// Standart joriy papka: kirgan bölsa — uy papkasi.
+pub fn default_cwd() -> String {
+    String::from(if crate::accounts::current().is_some() { "~" } else { "/" })
+}
+
+/// Standart muhit.
+pub fn default_env() -> Vec<(String, String)> {
+    let mut env = alloc::vec![(String::from("PATH"), String::from("/dasturlar:~/dasturlar"))];
+    if let Some(a) = crate::accounts::current() {
+        env.push((String::from("FOYDALANUVCHI"), a.username.clone()));
+        env.push((String::from("UY"), String::from("~")));
+    }
+    env
+}
+
+pub fn spawn_user(name: &str, image: &[u8], args: &str, opts: SpawnOptions) -> Result<Pid, SpawnError> {
+    let SpawnOptions { detached, parent, stdio, env, trusted, cwd } = opts;
     if args.len() > MAX_ARGS {
         return Err(SpawnError::ArgsTooLong);
     }
@@ -349,7 +441,11 @@ pub fn spawn_user(name: &str, image: &[u8], args: &str, detached: bool, parent: 
         detached,
         on_cpu: false,
         last_cpu: 0,
-        handles: Vec::new(),
+        handles: stdio.iter().map(|h| Some(h.retain())).collect(),
+        env,
+        trusted,
+        killed: false,
+        cwd,
         heap_base,
         heap_end: heap_base,
         ctx,
@@ -443,17 +539,36 @@ pub fn yield_now() {
 /// Şart rejalaştiruvçi qulfi ostida tekşiriladi: uyğotuvçi ham şu qulfni oladi,
 /// şuning uçun "tekşirdik → uyğotiş keldi → uxladik" poygasi (yöqolgan uyğotiş) bölmaydi.
 fn block_current_if(state: State, cond: impl Fn() -> bool) {
+    block_inner(state, cond, true)
+}
+
+/// `interruptible` — töxtatiş sörovi bölsa uxlamaydi (çaqiruvçi tekşirib, çiqib ketadi).
+/// Mutex kutişi uzilmaydi: qulf olinmagunça kutiladi (aks holda holat buziladi).
+fn block_inner(state: State, cond: impl Fn() -> bool, interruptible: bool) {
     let d = irq_save();
     {
         let mut s = SCHED.lock();
         let cur = s.current[cpu_id()];
         let t = s.tasks[cur].as_mut().unwrap();
-        if t.state == State::Running && cond() {
+        if t.state == State::Running && !(interruptible && t.killed) && cond() {
             t.state = state;
         }
     }
     schedule();
     irq_restore(d);
+}
+
+/// Joriy jarayonga töxtatiş sörovi kelganmi.
+pub fn current_killed() -> bool {
+    let s = SCHED.lock();
+    s.tasks[s.current[cpu_id()]].as_ref().is_some_and(|t| t.killed)
+}
+
+/// Xavfsiz nuqta (foydalanuvçi rejimiga qaytişdan oldin): töxtatiş sörovi bölsa — tugaymiz.
+pub fn check_killed() {
+    if current_killed() {
+        exit_current(-9);
+    }
 }
 
 pub fn sleep_ms(ms: u64) {
@@ -492,13 +607,14 @@ pub fn wake_input() {
 /// Joriy vazifani tugatadi. Qaytmaydi.
 pub fn exit_current(code: i64) -> ! {
     irq_save();
+    let handles;
     {
         let mut s = SCHED.lock();
         let cur = s.current[cpu_id()];
         let pid = s.tasks[cur].as_ref().unwrap().pid;
         let me = s.tasks[cur].as_mut().unwrap();
         me.state = State::Dead(code);
-        me.handles.clear();
+        handles = core::mem::take(&mut me.handles);
         for t in s.tasks.iter_mut().flatten() {
             if t.state == State::WaitingPid(pid) {
                 t.state = State::Ready;
@@ -509,6 +625,7 @@ pub fn exit_current(code: i64) -> ! {
             }
         }
     }
+    release_handles(handles); // quvurlarning narigi tomoni EOF ni körsin
     kick_others();
     schedule();
     unreachable!("tugagan vazifa qayta işga tuşdi");
@@ -557,9 +674,32 @@ pub fn wait(pid: Pid) -> Option<i64> {
             Step::Sleep | Step::Retry => {
                 schedule();
                 irq_restore(d);
+                if current_killed() {
+                    return None; // kutayotgan özi töxtatildi
+                }
             }
         }
     }
+}
+
+/// Kutmasdan tekşiradi: `Some(Some(kod))` — tugagan (va tozalandi), `Some(None)` — işlayapti,
+/// `None` — bunday jarayon yöq.
+pub fn try_wait(pid: Pid) -> Option<Option<i64>> {
+    let task = {
+        let mut s = SCHED.lock();
+        let i = s.tasks.iter().position(|t| t.as_ref().is_some_and(|t| t.pid == pid && t.pid != 0))?;
+        let t = s.tasks[i].as_ref().unwrap();
+        match (t.state, t.on_cpu) {
+            (State::Dead(_), false) => s.tasks[i].take(),
+            _ => return Some(None),
+        }
+    };
+    let code = match task.as_ref().map(|t| t.state) {
+        Some(State::Dead(c)) => c,
+        _ => 0,
+    };
+    drop(task);
+    Some(Some(code))
 }
 
 /// Heç kim kutmayotgan tugagan vazifalarni tozalaydi (böş vazifalardan çaqiriladi).
@@ -583,29 +723,38 @@ pub fn reap_detached() {
 
 /// Foydalanuvçi jarayonini tugatadi. Yadro oqimlarini tugatib bölmaydi.
 /// Boşqa yadroda işlayotgan jarayon keyingi almaştirişda töxtaydi.
+/// Foydalanuvçi jarayonini töxtatiş sörovi. Jarayon darhol emas, xavfsiz nuqtada —
+/// foydalanuvçi rejimiga qaytayotganda — özi tugaydi: yadro içida (masalan, Mutex uşlab
+/// turganda) uzib qöyilmaydi. Kutayotgan bölsa — uyğotiladi.
 pub fn kill(pid: Pid) -> bool {
     {
         let mut s = SCHED.lock();
-        let cur = s.current[cpu_id()];
         let Some(i) = s.tasks.iter().position(|t| t.as_ref().is_some_and(|t| t.pid == pid)) else {
             return false;
         };
         let t = s.tasks[i].as_mut().unwrap();
-        if !t.user || i == cur || matches!(t.state, State::Dead(_)) {
+        if !t.user || matches!(t.state, State::Dead(_)) {
             return false;
         }
-        t.state = State::Dead(-9);
-        for t in s.tasks.iter_mut().flatten() {
-            if t.state == State::WaitingPid(pid) {
-                t.state = State::Ready;
-            }
-            if t.parent == pid {
-                t.detached = true;
-            }
+        t.killed = true;
+        if !matches!(t.state, State::Running | State::Ready | State::WaitingEvent(_)) {
+            t.state = State::Ready; // uxlayotgan / kutayotgan — uyğotamiz
         }
     }
     kick_others();
     true
+}
+
+/// Ctrl+C: oldingi plandagi foydalanuvçi jarayonini töxtatadi.
+pub fn interrupt_foreground() {
+    let pid = FOREGROUND.load(Ordering::Acquire);
+    if pid != 0 {
+        kill(pid);
+    }
+}
+
+pub fn set_foreground(pid: Pid) {
+    FOREGROUND.store(pid, Ordering::Release);
 }
 
 pub fn current_pid() -> Pid {
@@ -668,7 +817,43 @@ pub fn set_handle(i: usize, h: Handle) {
 }
 
 pub fn close_handle(i: usize) -> bool {
-    with_current(|t| t.handles.get_mut(i).and_then(|h| h.take()).is_some())
+    match with_current(|t| t.handles.get_mut(i).and_then(|h| h.take())) {
+        Some(h) => {
+            h.release();
+            true
+        }
+        None => false,
+    }
+}
+
+/// Muhit özgaruvçisi.
+pub fn get_env(name: &str) -> Option<String> {
+    with_current(|t| t.env.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()))
+}
+
+pub fn set_env(name: &str, value: &str) {
+    with_current(|t| {
+        t.env.retain(|(k, _)| k != name);
+        if !value.is_empty() {
+            t.env.push((String::from(name), String::from(value)));
+        }
+    })
+}
+
+pub fn current_env() -> Vec<(String, String)> {
+    with_current(|t| t.env.clone())
+}
+
+pub fn is_trusted() -> bool {
+    with_current(|t| t.trusted)
+}
+
+pub fn cwd() -> String {
+    with_current(|t| t.cwd.clone())
+}
+
+pub fn set_cwd(path: &str) {
+    with_current(|t| t.cwd = String::from(path))
 }
 
 /// Joriy jarayonga `size` bayt yangi (nollangan) xotira beradi. Natija: manzil.
@@ -713,6 +898,17 @@ pub fn wait_event(key: usize, still_waiting: impl Fn() -> bool) {
         return;
     }
     block_current_if(State::WaitingEvent(key), still_waiting);
+}
+
+/// Uzilmaydigan kutiş (Mutex uçun): töxtatiş sörovi bölsa ham kutiladi.
+pub fn wait_event_uninterruptible(key: usize, still_waiting: impl Fn() -> bool) {
+    if !STARTED.load(Ordering::Acquire) {
+        while still_waiting() {
+            core::hint::spin_loop();
+        }
+        return;
+    }
+    block_inner(State::WaitingEvent(key), still_waiting, false);
 }
 
 /// `key` hodisasini kutayotgan barça vazifalarni uyğotadi (uzilişdan ham çaqirsa böladi).

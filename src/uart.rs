@@ -122,10 +122,17 @@ pub fn enable_rx_irq() {
 
 pub fn handle_irq() {
     let u = console();
+    // Avval belgini tozalaymiz, keyin FIFO ni böşatamiz: oraliqda kelgan bayt yangi uziliş
+    // beradi. Teskari tartibda u "yöqolardi" — FIFO tölib, kiriş butunlay töxtab qolardi.
+    unsafe { write_volatile(u.reg(ICR), INT_RX | INT_RT) };
     while let Some(b) = u.try_get_byte() {
+        if b == 0x03 {
+            // Ctrl+C — oldingi plandagi dasturni töxtatamiz
+            crate::task::interrupt_foreground();
+            continue;
+        }
         rx::push(b);
     }
-    unsafe { write_volatile(u.reg(ICR), INT_RX | INT_RT) };
     crate::random::mix_event(); // bosiş vaqtlari — qöşimça entropiya
     crate::task::wake_input();
 }

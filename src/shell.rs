@@ -107,6 +107,11 @@ fn program_help(name: &str) -> Text {
             "запускает сервер kalkulyator и отправляет ему запросы по каналу",
             "starts the kalkulyator server and sends it requests over a channel",
         ],
+        "terminal" => ["Zamin terminali", "терминал Zamin", "Zamin terminal"],
+        "ekran" => ["faylni ekranga çiqaradi: ekran fayl", "выводит файл: ekran файл", "prints files: ekran file"],
+        "izla" => ["qatorlarda qidiradi: izla söz [fayl]", "ищет в строках: izla слово [файл]", "searches lines: izla word [file]"],
+        "sana" => ["qator, söz, baytlarni sanaydi", "считает строки, слова, байты", "counts lines, words, bytes"],
+        "tartib" => ["qatorlarni tartiblaydi (-t teskari)", "сортирует строки (-t обратно)", "sorts lines (-t reverse)"],
         "katta" => [
             "katta fayl yozib tekşiradi: katta [MB] | katta tekşir",
             "пишет и проверяет большой файл: katta [МБ] | katta tekşir",
@@ -158,9 +163,42 @@ fn abs_path(p: &str) -> String {
     if p.starts_with('/') || p.starts_with('~') { String::from(p) } else { format!("/{}", p) }
 }
 
-/// Terminal yadro oqimi sifatida işlaydi. Avval birinçi sozlaş yoki kiriş.
+/// Terminal oqimi: avval birinçi sozlaş yoki kiriş, keyin foydalanuvçi terminali
+/// (`/dasturlar/terminal`) işonçli jarayon sifatida işga tuşiriladi. U tugasa (`chiqiş`) —
+/// qayta kiriş söraladi. Terminal dasturi bölmasa — yadro içidagi zaxira terminal.
 pub extern "C" fn run(disk: usize) {
-    crate::setup::run(disk != 0);
+    loop {
+        crate::setup::run(disk != 0);
+        let Ok(image) = fs::read_all("/dasturlar/terminal") else { break };
+        let opts = task::SpawnOptions {
+            detached: false,
+            parent: 0,
+            stdio: [task::Handle::Console; 3],
+            env: task::default_env(),
+            trusted: true,
+            cwd: task::default_cwd(),
+        };
+        match task::spawn_user("terminal", &image, "", opts) {
+            Ok(pid) => {
+                task::wait(pid);
+                let _ = flush();
+                accounts::set_master_key(None); // çiqiş: kalit xotiradan öçiriladi
+                fs::forget_user_files();
+            }
+            Err(_) => break,
+        }
+    }
+    kernel_shell();
+}
+
+/// Tizim buyruğini bajaradi (işonçli terminalning SYS_ADMIN çaqiruvi).
+pub fn admin(line: &str) {
+    let mut sh = Shell::new();
+    sh.execute(line.trim());
+}
+
+/// Zaxira: yadro içidagi terminal.
+fn kernel_shell() {
     let mut shell = Shell::new();
     shell.start();
     loop {
@@ -273,6 +311,13 @@ impl Shell {
                     let pad = 13usize.saturating_sub(e.name.chars().count());
                     println!("    {}{:pad$}— {}", e.name, "", program_help(&e.name)[lang], pad = pad);
                 }
+                let own = fs::list("~/dasturlar").unwrap_or_default();
+                if !own.is_empty() {
+                    tprintln!(msg::SH_OWN_PROGRAMS);
+                    for e in own {
+                        println!("    {}", e.name);
+                    }
+                }
             }
             Cmd::Run => {
                 let (line, background) = match args.strip_suffix('&') {
@@ -297,7 +342,7 @@ impl Shell {
                     }
                 };
                 let name = path.rsplit('/').next().unwrap_or(prog);
-                match task::spawn_user(name, &image, prog_args, background, 0) {
+                match task::spawn_user(name, &image, prog_args, task::SpawnOptions::kernel(background)) {
                     Ok(pid) if background => tprintln!(msg::SH_STARTED_BG, pid, name),
                     Ok(pid) => {
                         if let Some(code) = task::wait(pid) {

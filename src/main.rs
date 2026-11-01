@@ -6,6 +6,7 @@
 
 extern crate alloc;
 
+#[allow(dead_code)] // ayrim doimiylar faqat foydalanuvçi kutubxonasida kerak
 mod abi;
 mod accounts;
 mod config;
@@ -20,6 +21,7 @@ mod ipc;
 mod line;
 mod irq;
 mod memory;
+mod pipe;
 mod power;
 mod random;
 mod security;
@@ -305,7 +307,7 @@ extern "C" fn boot_tests(_: usize) {
     // Foydalanuvçi rejimi: `sinov` dasturi 42 bilan çiqişi va xotira töliq qaytişi kerak
     let frames_before = frame::stats().0;
     let image = task::programs::find("sinov").expect("sinov dasturi yöq");
-    let pid = task::spawn_user("sinov", image, "", false, 0).expect("sinov");
+    let pid = task::spawn_user("sinov", image, "", task::SpawnOptions::kernel(false)).expect("sinov");
     let code = task::wait(pid);
     assert_eq!(code, Some(42), "sinov dasturi xato kod qaytardi");
     assert_eq!(frame::stats().0, frames_before, "jarayon xotirasi töliq qaytmadi");

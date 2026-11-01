@@ -527,6 +527,23 @@ impl Vfs {
     }
 }
 
+/// Çiqişda: foydalanuvçi fayllari xotiradan olib taşlanadi (keyingi kirişda diskdan qayta öqiladi).
+pub fn forget_user_files() {
+    let mut v = VFS.lock();
+    let ids: Vec<NodeId> = (0..v.nodes.len()).filter(|&id| v.persistent(id)).collect();
+    for id in ids.into_iter().rev() {
+        let parent = v.nodes[id].as_ref().map(|n| n.parent);
+        if let Some(p) = parent {
+            if let Ok(Node { data: Data::Dir(children), .. }) = v.node_mut(p) {
+                children.retain(|&c| c != id);
+            }
+        }
+        v.nodes[id] = None;
+    }
+    v.home = None;
+    DIRTY.store(false, Ordering::Release);
+}
+
 /// Özgargan bloklarni va metadata ni diskka şifrlab yozadi (copy-on-write).
 /// Natija: yozilgan bloklar soni.
 pub fn commit() -> Result<u64, zaminfs::ZfsError> {

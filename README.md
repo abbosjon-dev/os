@@ -110,6 +110,34 @@ Qöşimça tillar: **русский** va **English**.
 
 Kod içidagi barça izohlar va hujjatlar ham yangi alifboda yoziladi.
 
+## Zamin terminali
+
+Terminal — oddiy foydalanuvçi dasturi (`/dasturlar/terminal`). Yadro uni kirişdan keyin
+"işonçli" jarayon sifatida işga tuşiradi: faqat u tizim buyruqlarini (parol, tiklaş, öçir...)
+yadroga uzata oladi; u işga tuşirgan dasturlarga bu huquq ötmaydi.
+
+```
+abbosjon@zamin:~> ekran mevalar.txt | izla an | sana     # quvurlar
+abbosjon@zamin:~> tartib -t mevalar.txt > tartib.txt     # çiqişni faylga
+abbosjon@zamin:~> aks yana bir qator >> mevalar.txt       # faylga qöşiş
+abbosjon@zamin:~> kir Hujjatlar                           # joriy papka
+abbosjon@zamin:~/Hujjatlar> hisobla 50000000              # Ctrl+C — töxtatiş
+abbosjon@zamin:~> soat &                                   # fonda
+abbosjon@zamin:~> muhit SALOM=dunyo                        # muhit özgaruvçisi
+abbosjon@zamin:~> örnat /dasturlar/salom meningsalom       # ~/dasturlar ga örnatiş
+abbosjon@zamin:~> chiqiş                                   # chiqiş (qayta kiriş)
+```
+
+- har bir jarayonda standart kiriş/çiqiş/xato (0, 1, 2): konsol, quvur yoki fayl;
+- quvurlar: öquvçi maʼlumot kelgunça uxlaydi, yozuvçilar yopilsa — "fayl oxiri";
+- joriy papka va muhit özgaruvçilari (`PATH`, `UY`, `FOYDALANUVCHI`) bolaga meros bölib ötadi;
+- Ctrl+C — oldingi plandagi dasturni töxtatadi, Ctrl+D — kiriş oxiri;
+- fondagi dastur klaviaturani "öğirlamaydi" (uning kirişi böş);
+- töxtatiş xavfsiz: jarayon yadro içida (masalan, qulf uşlab turganda) uzilmaydi, foydalanuvçi
+  rejimiga qaytayotganda özi tugaydi.
+
+Yordamçi dasturlar: `ekran` (fayl/kirişni çiqariş), `izla` (qidiriş), `sana` (sanaş), `tartib` (tartiblaş).
+
 ## Dasturlar va jarayonlar
 
 Terminalda:
@@ -188,7 +216,7 @@ build.rs             Foydalanuvçi dasturlarini yiğib, yadroga joylaydi
 user/src/lib.rs      `zamin` kutubxonasi: tizim çaqiruvlari, println!, tr(), Channel, spawn/wait
 user/src/heap.rs     Foydalanuvçi xotira ajratuvçisi (Vec, String, format! işlaydi)
 user/src/fs.rs       Fayllar: File, read, write, list, mkdir, remove
-user/src/bin/        Dasturlar: salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz, katta
+user/src/bin/        Dasturlar: terminal, ekran, izla, sana, tartib, salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz, katta
 src/setup.rs         Birinçi sozlaş (til, ism, login, parol) va kiriş
 src/accounts.rs      Foydalanuvçi hisoblari, parol xeşi
 src/config.rs        Diskdagi sozlamalar
@@ -203,7 +231,9 @@ src/drivers/virtio_blk.rs  virtio-blk disk drayveri (v1 va v2)
 src/line.rs          Qator tahrirlovçisi (UTF-8, yaşirin parol kiritiş)
 scripts/qemu.sh      `cargo run` uçun: disk obrazini yaratadi va QEMU ni işga tuşiradi
 src/i18n.rs          Köp tillilik: özbekça (asosiy), русский, English
-src/shell.rs         Zamin terminali (yordam, jarayonlar, işlat, tugat, til, öçir...)
+src/shell.rs         Kiriş, terminalni işga tuşiriş, tizim buyruqlari (SYS_ADMIN), zaxira terminal
+src/pipe.rs          Quvurlar
+user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 ```
 
 ## Yöl xaritasi

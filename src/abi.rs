@@ -8,7 +8,7 @@
 // --- Jarayon ---
 /// Jarayonni tugatadi. x0 = çiqiş kodi.
 pub const SYS_EXIT: u64 = 0;
-/// Konsolga yozadi. x0 = manzil, x1 = uzunlik. Natija: yozilgan baytlar.
+/// Standart çiqişga (1-dastak: konsol, quvur yoki fayl) yozadi. x0 = manzil, x1 = uzunlik.
 pub const SYS_WRITE: u64 = 1;
 /// Protsessorni boşqa jarayonga böşatib beradi.
 pub const SYS_YIELD: u64 = 2;
@@ -22,17 +22,20 @@ pub const SYS_PID: u64 = 5;
 pub const SYS_LANG: u64 = 6;
 /// Xotira oladi. x0 = bayt. Natija: yangi (nollangan) xotira manzili.
 pub const SYS_MAP: u64 = 7;
-/// Dasturni işga tuşiradi. x0,x1 = fayl yöli; x2,x3 = argumentlar. Natija: PID.
+/// Dasturni işga tuşiradi. x0,x1 = fayl yöli; x2,x3 = argumentlar;
+/// x4 = standart dastaklar (qarang: INHERIT). Natija: PID.
 pub const SYS_SPAWN: u64 = 8;
-/// Bola jarayon tugaşini kutadi. x0 = PID. Natija: uning çiqiş kodi.
+/// Bola jarayon tugaşini kutadi. x0 = PID, x1 = 1 — kutmasdan tekşiriş.
+/// Natija: uning çiqiş kodi (yoki ERR_RUNNING).
 pub const SYS_WAIT: u64 = 9;
 
 // --- Fayllar ---
 /// Faylni oçadi. x0,x1 = yöl; x2 = bayroqlar (OPEN_*). Natija: dastak (handle).
 pub const SYS_OPEN: u64 = 10;
-/// Dastakdan öqiydi. x0 = dastak, x1 = bufer, x2 = siğim. Natija: öqilgan baytlar (0 = oxiri).
+/// Dastakdan öqiydi (fayl, quvur yoki konsol — konsoldan bitta qator). x0 = dastak,
+/// x1 = bufer, x2 = siğim. Natija: öqilgan baytlar (0 = oxiri).
 pub const SYS_READ: u64 = 11;
-/// Faylga yozadi. x0 = dastak, x1 = manzil, x2 = uzunlik. Natija: yozilgan baytlar.
+/// Dastakka yozadi (fayl, quvur yoki konsol). x0 = dastak, x1 = manzil, x2 = uzunlik.
 pub const SYS_FWRITE: u64 = 12;
 /// Dastakni yopadi. x0 = dastak.
 pub const SYS_CLOSE: u64 = 13;
@@ -52,6 +55,27 @@ pub const SYS_CHAN_SEND: u64 = 18;
 /// Kanaldan xabar oladi (kelgunça kutadi). x0 = dastak, x1 = bufer, x2 = siğim.
 /// Natija: xabar uzunligi.
 pub const SYS_CHAN_RECV: u64 = 19;
+
+// --- Kiriş/çiqiş, muhit, terminal ---
+/// Quvur yaratadi. x0 = [u64; 2] bufer: (öqiş dastagi, yoziş dastagi).
+pub const SYS_PIPE: u64 = 20;
+/// Muhit özgaruvçisini örnatadi. x0,x1 = nom; x2,x3 = qiymat (böş — öçiriladi).
+pub const SYS_SETENV: u64 = 21;
+/// Muhit özgaruvçisini öqiydi. x0,x1 = nom; x2,x3 = bufer. Natija: qiymat uzunligi.
+pub const SYS_GETENV: u64 = 22;
+/// Konsolning oldingi plandagi jarayoni (Ctrl+C uni töxtatadi). x0 = PID (0 — heç kim).
+pub const SYS_FOREGROUND: u64 = 23;
+/// Tizim buyruği (faqat işonçli terminal uçun). x0,x1 = buyruq qatori.
+pub const SYS_ADMIN: u64 = 24;
+/// Joriy papkani özgartiradi. x0,x1 = yöl.
+pub const SYS_CHDIR: u64 = 25;
+
+/// Standart dastaklar
+pub const STDIN: u64 = 0;
+pub const STDOUT: u64 = 1;
+pub const STDERR: u64 = 2;
+/// SYS_SPAWN: x4 = stdin | stdout << 16 | stderr << 32; INHERIT — otanikini işlatiş
+pub const INHERIT: u64 = 0xffff;
 
 /// OPEN bayroqlari
 pub const OPEN_CREATE: u64 = 1;
@@ -94,3 +118,9 @@ pub const ERR_DENIED: i64 = -14;
 pub const ERR_IO: i64 = -15;
 /// Diskdagi maʼlumot buzilgan (şifr tekşiruvidan ötmadi).
 pub const ERR_CORRUPT: i64 = -16;
+/// Quvurning öquvçisi qolmagan.
+pub const ERR_BROKEN_PIPE: i64 = -17;
+/// Jarayon hali işlayapti (SYS_WAIT kutmaslik rejimida).
+pub const ERR_RUNNING: i64 = -18;
+/// Kutiş töxtatildi (jarayonga töxtatiş sörovi keldi).
+pub const ERR_INTERRUPTED: i64 = -19;

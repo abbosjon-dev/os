@@ -284,6 +284,11 @@ pub mod msg {
         "  невозможно завершить {} (можно завершать только фоновые программы)",
         "  cannot terminate {} (only background programs can be terminated)",
     ];
+    pub const SH_OWN_PROGRAMS: Text = [
+        "  Siz örnatgan dasturlar (~/dasturlar):",
+        "  Установленные вами (~/dasturlar):",
+        "  Installed by you (~/dasturlar):",
+    ];
     pub const SH_PROGRAMS_HEADER: Text = [
         "  Dasturlar (işlatiş: işlat <nom>):",
         "  Программы (запуск: запуск <имя>):",
