@@ -25,6 +25,11 @@ const KIND_NAMES: [&str; 4] = ["Sync", "IRQ", "FIQ", "SError"];
 
 #[unsafe(no_mangle)]
 extern "C" fn handle_exception(frame: &mut TrapFrame, kind: u64) {
+    if kind % 4 == 1 {
+        crate::irq::handle();
+        return;
+    }
+
     let esr: u64;
     let far: u64;
     unsafe {
@@ -37,7 +42,7 @@ extern "C" fn handle_exception(frame: &mut TrapFrame, kind: u64) {
         // BRK — dasturiy breakpoint: xabar beramiz va keyingi instruksiyaga o'tamiz.
         (0, 0x3c) => {
             crate::println!(
-                "[exc] BRK #{} @ {:#x} — qayta ishlandi, davom etamiz",
+                "[exc ] BRK #{} @ {:#x} — qayta ishlandi, davom etamiz",
                 esr & 0xffff,
                 frame.elr
             );

@@ -8,9 +8,13 @@ extern crate alloc;
 
 mod dtb;
 mod exceptions;
+mod gic;
+mod irq;
 mod memory;
 mod power;
+mod shell;
 mod sync;
+mod timer;
 mod uart;
 
 use alloc::boxed::Box;
@@ -66,6 +70,7 @@ pub extern "C" fn kernel_main() -> ! {
             (RAM_START, DEFAULT_RAM_SIZE)
         }
     };
+    power::init(fdt.as_ref());
     if let Some(f) = fdt {
         println!("[dtb ] qurilma tavsifi o'qildi ({} KiB)", f.total_size() / 1024);
     }
@@ -88,14 +93,26 @@ pub extern "C" fn kernel_main() -> ! {
     heap::init();
     println!("[heap] {} MiB tayyor", heap::stats().1 >> 20);
 
+    // 5) Uzilishlar va taymer
+    irq::init();
+    println!(
+        "[irq ] GIC: {} ta uzilish liniyasi, taymer: {} Hz (chastota {} MHz)",
+        gic::line_count(),
+        timer::HZ,
+        timer::frequency() / 1_000_000
+    );
+
     self_tests();
 
-    let (used, total) = heap::stats();
-    let (free, _) = frame::stats();
-    println!("[mem ] heap ishlatilmoqda: {} / {} bayt, bo'sh sahifalar: {}", used, total, free);
     println!();
-    println!("Hammasi joyida. Tizim o'chirilmoqda...");
-    power::shutdown();
+    let mut shell = shell::Shell::new();
+    shell.start();
+    loop {
+        while let Some(b) = uart::read_byte() {
+            shell.feed(b);
+        }
+        gic::wait_for_interrupt_unless(uart::has_input);
+    }
 }
 
 /// Yadro o'z-o'zini tekshirishi.
@@ -139,6 +156,16 @@ fn self_tests() {
     println!("[test] mmu: {:#x} -> {:#x} xaritalash, yozish va olib tashlash — OK", TEST_VA, pa);
 
     let _ = PAGE_SIZE;
+
+    // Taymer uzilishlari: 50 ms ichida kamida 3 ta tick kelishi kerak
+    let start_ticks = timer::ticks();
+    let start = timer::uptime_ms();
+    while timer::uptime_ms() - start < 50 {
+        core::hint::spin_loop();
+    }
+    let got = timer::ticks() - start_ticks;
+    assert!(got >= 3, "taymer uzilishlari kelmayapti ({} ta)", got);
+    println!("[test] taymer: 50 ms da {} ta uzilish — OK", got);
 }
 
 #[panic_handler]

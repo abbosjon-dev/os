@@ -120,4 +120,15 @@ impl Fdt {
         });
         result
     }
+
+    /// Yuqori darajadagi (`/nom...`) tugunning xususiyati.
+    pub fn top_level_prop(&self, node_prefix: &str, prop: &str) -> Option<&'static [u8]> {
+        let mut found = None;
+        self.for_each_prop(|depth, node, p, val| {
+            if found.is_none() && depth == 2 && node.starts_with(node_prefix) && p == prop {
+                found = Some(val);
+            }
+        });
+        found
+    }
 }

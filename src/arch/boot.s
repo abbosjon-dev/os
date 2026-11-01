@@ -19,6 +19,9 @@ _start:
     // --- EL2 -> EL1 ---
     mov     x0, #(1 << 31)          // HCR_EL2.RW = 1: EL1 AArch64 rejimida
     msr     hcr_el2, x0
+    mov     x0, #3                  // EL1 ga fizik taymer va hisoblagichni ruxsat
+    msr     cnthctl_el2, x0
+    msr     cntvoff_el2, xzr
     mov     x0, #0x0800
     movk    x0, #0x30d0, lsl #16    // SCTLR_EL1: MMU o'chiq, RES1 bitlar
     msr     sctlr_el1, x0
