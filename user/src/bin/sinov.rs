@@ -102,6 +102,29 @@ fn main() -> i64 {
         return 42; // ikkinçi marta kutib bölmaydi — u allaqaçon tozalangan
     }
 
+    // 60–62: signallar (özimizga SIG_USER yuboramiz)
+    use zamin::abi::SIG_USER;
+    if zamin::signal(zamin::pid(), SIG_USER).is_err() {
+        return 60;
+    }
+    if zamin::signals_pending() & (1 << SIG_USER) == 0 {
+        return 61;
+    }
+    if zamin::signals_pending() != 0 {
+        return 62; // öqilgaç tozalangan bölişi kerak
+    }
+
+    // 70–71: lazy heap — katta maydon ajratib, siyrak tegamiz (demand paging)
+    let mut big: zamin::Vec<u8> = zamin::Vec::with_capacity(4 << 20);
+    big.resize(4 << 20, 0);
+    for i in (0..big.len()).step_by(4096) {
+        big[i] = (i / 4096) as u8;
+    }
+    if big[0] != 0 || big[4096] != 1 || big[8192] != 2 {
+        return 70;
+    }
+    drop(big);
+
     // 50–52: oqimlar va futex qulfi (4 oqim × 2000 = 8000)
     static COUNTER: zamin::sync::Mutex<u64> = zamin::sync::Mutex::new(0);
     let hs: Vec<_> = (0..4)

@@ -78,6 +78,12 @@ extern "C" fn handle_exception(frame: &mut TrapFrame, kind: u64) {
             crate::task::check_killed(); // xavfsiz nuqta: foydalanuvçi rejimiga qaytişdan oldin
             return;
         }
+        // Sahifa xatosi (translation fault) lazy heap maydonida bölsa — sahifani xaritalab, davom etamiz.
+        if (ec == EC_DATA_ABORT_LOWER || ec == EC_INSN_ABORT_LOWER) && (esr & 0x3c) == 0x04 {
+            if crate::task::handle_page_fault(far as usize) {
+                return;
+            }
+        }
         // Boşqa har qanday xato (taqiqlangan xotira, nomaʼlum buyruq...) — jarayon tugatiladi.
         let addr = if ec == EC_DATA_ABORT_LOWER || ec == EC_INSN_ABORT_LOWER { far } else { frame.elr };
         crate::tprintln!(

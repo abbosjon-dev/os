@@ -334,6 +334,10 @@ fn handle(num: u64, a: [u64; 6]) -> SysResult {
             Ok(0)
         }
         SYS_TID => Ok(task::current_tid() as i64),
+        SYS_SIGNAL => {
+            if task::send_signal(a[0] as usize, a[1] as u32) { Ok(0) } else { Err(ERR_NOT_FOUND) }
+        }
+        SYS_SIGPENDING => Ok(task::current_signals() as i64),
         SYS_DNS | SYS_PING | SYS_TCP_CONNECT if task::jail().is_some() => Err(ERR_DENIED),
         SYS_NET_INFO => {
             use crate::net;

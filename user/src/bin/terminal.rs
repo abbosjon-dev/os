@@ -36,6 +36,7 @@ const BUILTINS: &[Cmd] = &[
     (["işlat", "запуск", "run"], &["ishlat", "islat"], ["dasturni işga tuşiriş", "запустить программу", "run a program"]),
     (["ruxsat", "права", "chmod"], &[], ["ruxsatlar: ruxsat 600 fayl", "права: права 600 файл", "permissions: chmod 600 file"]),
     (["çeklangan", "песочница", "sandbox"], &["cheklangan"], ["dasturni qafasda (faqat joriy papka) işlatiş", "запустить в песочнице (только текущая папка)", "run sandboxed (current folder only)"]),
+    (["signal", "сигнал", "signal"], &[], ["signal yuboriş: signal PID [raqam]", "послать сигнал: сигнал PID [номер]", "send a signal: signal PID [num]"]),
     (["çiqiş", "выход", "exit"], &["chiqish", "chiqiş", "ciqis"], ["çiqiş (qayta kiriş söraladi)", "выйти (снова запросит вход)", "log out"]),
 ];
 
@@ -356,7 +357,18 @@ impl Shell {
             12 => {
                 self.run_pipeline(&[args], None, false);
             }
-            15 => return false, // çiqiş
+            16 => return false, // çiqiş
+            15 => {
+                let mut it = args.split_whitespace();
+                let (Some(pid), sig) = (it.next().and_then(|v| v.parse::<u64>().ok()), it.next().and_then(|v| v.parse::<u64>().ok()).unwrap_or(zamin::abi::SIG_TERM)) else {
+                    println!("  {}", BUILTINS[15].2[lang]);
+                    return true;
+                };
+                match zamin::signal(pid, sig) {
+                    Ok(()) => println!("  {} {} -> {}", tr(["signal yuborildi:", "сигнал отправлен:", "signal sent:"]), sig, pid),
+                    Err(e) => println!("  {}: {}", pid, e),
+                }
+            }
             13 => {
                 let Some((mode, file)) = args.split_once(' ') else {
                     println!("  {}", BUILTINS[13].2[lang]);

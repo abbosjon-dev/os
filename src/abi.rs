@@ -103,6 +103,17 @@ pub const SYS_TCP_SEND: u64 = 40;
 pub const SYS_TCP_RECV: u64 = 41;
 /// TCP yopiş. x0 = ulaniş.
 pub const SYS_TCP_CLOSE: u64 = 42;
+
+// --- Signallar ---
+/// Signal yuboradi. x0 = PID, x1 = signal (9/15 — töxtatiş). Natija: 0 yoki xato.
+pub const SYS_SIGNAL: u64 = 43;
+/// Kelgan signallar bitmaskasini qaytaradi (va tozalaydi).
+pub const SYS_SIGPENDING: u64 = 44;
+
+/// Signallar
+pub const SIG_TERM: u64 = 15;
+pub const SIG_KILL: u64 = 9;
+pub const SIG_USER: u64 = 10;
 /// Hozirgi vaqt: Unix soniyalar (UTC).
 pub const SYS_TIME: u64 = 34;
 /// Vaqt mintaqasi: UTC dan farq (daqiqalarda).

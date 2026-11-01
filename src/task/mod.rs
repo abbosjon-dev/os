@@ -139,6 +139,8 @@ pub struct Task {
     cwd: String,
     /// Egasi — foydalanuvçi raqami (0 — yadro)
     uid: u32,
+    /// Kelgan (hali öqilmagan) signallar bitmaskasi
+    signals: u32,
     /// Qafas: jarayon faqat şu papka içida işlaydi, dastur işga tuşira olmaydi,
     /// nomli kanallarni oça olmaydi (`çeklangan` buyruği)
     jail: Option<fs::NodeId>,
@@ -277,6 +279,7 @@ fn idle_task(cpu: usize) -> Box<Task> {
         killed: false,
         cwd: String::from("/"),
         uid: 0,
+        signals: 0,
         jail: None,
         heap_base: USER_HEAP_BASE,
         heap_end: USER_HEAP_BASE,
@@ -353,6 +356,7 @@ pub fn spawn_kernel_ext(name: &str, entry: extern "C" fn(usize), arg: usize, det
         killed: false,
         cwd: String::from("/"),
         uid: 0,
+        signals: 0,
         jail: None,
         heap_base: USER_HEAP_BASE,
         heap_end: USER_HEAP_BASE,
@@ -476,6 +480,7 @@ pub fn spawn_user(name: &str, image: &[u8], args: &str, opts: SpawnOptions) -> R
         killed: false,
         cwd,
         uid,
+        signals: 0,
         jail,
         heap_base,
         heap_end: heap_base,
@@ -581,7 +586,7 @@ fn block_inner(state: State, cond: impl Fn() -> bool, interruptible: bool) {
         let mut s = SCHED.lock();
         let cur = s.current[cpu_id()];
         let t = s.tasks[cur].as_mut().unwrap();
-        if t.state == State::Running && !(interruptible && t.killed) && cond() {
+        if t.state == State::Running && !(interruptible && (t.killed || t.signals != 0)) && cond() {
             t.state = state;
         }
     }
@@ -742,8 +747,8 @@ pub fn wait(pid: Pid) -> Option<i64> {
             Step::Sleep | Step::Retry => {
                 schedule();
                 irq_restore(d);
-                if current_killed() {
-                    return None; // kutayotgan özi töxtatildi
+                if current_killed() || current_signals() != 0 {
+                    return None; // kutayotgan töxtatildi yoki signal keldi
                 }
             }
         }
@@ -795,6 +800,7 @@ pub fn spawn_thread(entry: usize, stack_top: usize, arg: u64) -> Result<Pid, Spa
         killed: false,
         cwd,
         uid,
+        signals: 0,
         jail,
         heap_base: 0,
         heap_end: 0,
@@ -916,15 +922,27 @@ pub fn user_range_ok(addr: usize, len: usize, write: bool) -> bool {
     if addr < mmu::USER_BASE || end > mmu::USER_END {
         return false;
     }
-    let s = SCHED.lock();
+    let mut s = SCHED.lock();
     let p = proc_slot(&s, s.current[cpu_id()]);
-    let Some(aspace) = s.tasks[p].as_ref().and_then(|t| t.aspace.as_ref()) else {
-        return false;
-    };
+    let Some(t) = s.tasks[p].as_mut() else { return false };
+    let (heap_base, heap_end) = (t.heap_base, t.heap_end);
+    let Some(aspace) = t.aspace.as_mut() else { return false };
     let mut page = addr & !(PAGE_SIZE - 1);
     while page < end {
         if !aspace.user_accessible(page, write) {
-            return false;
+            // Lazy heap maydonidagi hali xaritalanmagan sahifani şu yerda xaritalaymiz
+            if page >= heap_base && page < heap_end {
+                match frame::alloc_zeroed() {
+                    Some(pa) if aspace.map(page, pa, Kind::UserData).is_ok() => {}
+                    Some(pa) => {
+                        frame::free(pa);
+                        return false;
+                    }
+                    None => return false,
+                }
+            } else {
+                return false;
+            }
         }
         page += PAGE_SIZE;
     }
@@ -1019,6 +1037,35 @@ pub fn current_uid() -> u32 {
     s.tasks[p].as_ref().map_or(0, |t| if t.user { t.uid } else { 0 })
 }
 
+/// Joriy jarayonga kelgan (öqilmagan) signallar; öqilgaç tozalanadi.
+pub fn current_signals() -> u32 {
+    with_proc(|t| core::mem::take(&mut t.signals))
+}
+
+/// Signal yuboradi. Terminate (9, 15) — jarayonni töxtatadi; qolganlari — bayroq qöyadi.
+/// Faqat egasi (yoki administrator) yuborişi mumkin.
+pub fn send_signal(pid: Pid, sig: u32) -> bool {
+    let caller = current_uid();
+    let admin = crate::accounts::is_admin_uid(caller);
+    if sig == 9 || sig == 15 {
+        return kill(pid); // töxtatiş (kill özi ruxsatni tekşiradi)
+    }
+    let mut s = SCHED.lock();
+    let Some(t) = s.tasks.iter_mut().flatten().find(|t| t.pid == pid && t.leader == 0 && t.user) else {
+        return false;
+    };
+    if !admin && t.uid != caller {
+        return false;
+    }
+    t.signals |= 1 << (sig & 31);
+    if !matches!(t.state, State::Running | State::Ready | State::Dead(_)) {
+        t.state = State::Ready; // kutayotgan bölsa — uyğotamiz (kutiş uzildi)
+    }
+    drop(s);
+    kick_others();
+    true
+}
+
 pub fn is_trusted() -> bool {
     with_proc(|t| t.trusted)
 }
@@ -1032,6 +1079,9 @@ pub fn set_cwd(path: &str) {
 }
 
 /// Joriy jarayonga `size` bayt yangi (nollangan) xotira beradi. Natija: manzil.
+/// Xotira "ajratadi" — lekin faqat virtual manzilni zaxiralaydi (lazy).
+/// Haqiqiy sahifalar faqat dastur ularga tegganda (sahifa xatosi) xaritalanadi —
+/// şunda dastur katta maydon sörab, kam qismini işlatsa, xotira behuda sarflanmaydi.
 pub fn map_memory(size: usize) -> Option<usize> {
     let pages = size.div_ceil(PAGE_SIZE);
     with_proc(|t| {
@@ -1040,17 +1090,34 @@ pub fn map_memory(size: usize) -> Option<usize> {
         if pages == 0 || start.checked_add(bytes)? > t.heap_base + USER_HEAP_MAX {
             return None;
         }
-        let aspace = t.aspace.as_mut()?;
-        for i in 0..pages {
-            let pa = frame::alloc_zeroed()?;
-            if aspace.map(start + i * PAGE_SIZE, pa, Kind::UserData).is_err() {
-                frame::free(pa);
-                return None;
-            }
-            // Xaritalangan sahifalar jarayon bilan birga böşatiladi.
-            t.heap_end = start + (i + 1) * PAGE_SIZE;
-        }
+        t.heap_end = start + bytes; // faqat VA zaxiralanadi
         Some(start)
+    })
+}
+
+/// Sahifa xatosi: `va` joriy jarayonning lazy heap maydonidami? Bölsa — nollangan
+/// sahifa xaritalanadi va `true` qaytariladi (dastur davom etadi). Aks holda `false`.
+pub fn handle_page_fault(va: usize) -> bool {
+    let page = va & !(PAGE_SIZE - 1);
+    with_proc(|t| {
+        if !t.user || page < t.heap_base || page >= t.heap_end {
+            return false;
+        }
+        let Some(aspace) = t.aspace.as_mut() else { return false };
+        if aspace.user_accessible(page, false) {
+            return true; // boşqa yadro allaqaçon xaritalagan — qayta urinamiz
+        }
+        match frame::alloc_zeroed() {
+            Some(pa) => {
+                if aspace.map(page, pa, Kind::UserData).is_ok() {
+                    true
+                } else {
+                    frame::free(pa);
+                    false
+                }
+            }
+            None => false,
+        }
     })
 }
 

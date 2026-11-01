@@ -280,6 +280,16 @@ pub fn chdir(path: &str) -> Result<()> {
     check(unsafe { syscall(abi::SYS_CHDIR, path.as_ptr() as u64, path.len() as u64, 0, 0) }).map(|_| ())
 }
 
+/// Signal yuboradi: `signal(pid, abi::SIG_USER)`; 9/15 — jarayonni töxtatadi.
+pub fn signal(pid: u64, sig: u64) -> Result<()> {
+    check(unsafe { syscall(abi::SYS_SIGNAL, pid, sig, 0, 0) }).map(|_| ())
+}
+
+/// Kelgan signallar bitmaskasi (öqilgaç tozalanadi). `pending() & (1 << SIG_USER)`.
+pub fn signals_pending() -> u32 {
+    unsafe { syscall(abi::SYS_SIGPENDING, 0, 0, 0, 0) as u32 }
+}
+
 /// Konsolning oldingi plandagi jarayoni (Ctrl+C uni töxtatadi). Faqat terminal uçun.
 pub fn set_foreground(pid: u64) {
     unsafe { syscall(abi::SYS_FOREGROUND, pid, 0, 0, 0) };
