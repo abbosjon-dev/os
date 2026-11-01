@@ -47,3 +47,11 @@ pub fn ticks() -> u64 {
 pub fn uptime_ms() -> u64 {
     counter() / (frequency() / 1000)
 }
+
+/// PL031 haqiqiy vaqt soati (QEMU virt: 0x0901_0000). RTCDR — 1970-yildan beri soniyalar.
+const RTC_BASE: usize = 0x0901_0000;
+
+/// Hozirgi vaqt (Unix soniyalar, UTC). Soat bölmasa — 0.
+pub fn unix_time() -> u64 {
+    unsafe { core::ptr::read_volatile(RTC_BASE as *const u32) as u64 }
+}

@@ -97,7 +97,8 @@ fn wizard(disk: bool) {
     let home = fs::setup_home(&username).unwrap_or_default();
     if disk {
         zaminfs::wipe(); // eski (boşqa kalit bilan şifrlangan) nusxalar qolmasin
-        let _ = zaminfs::sync(&master);
+        zaminfs::format(&master);
+        let _ = fs::commit();
     }
 
     println!();
@@ -132,9 +133,15 @@ fn login(account: &accounts::Account) {
     };
     accounts::set_master_key(Some(key));
     let _ = fs::setup_home(&account.username);
-    match zaminfs::load(&key) {
-        Ok(Some(n)) => tprintln!(msg::ZFS_RESTORED, n),
-        Ok(None) => {}
+    match zaminfs::mount(&key) {
+        Ok(Some(meta)) => match fs::import_meta(&meta) {
+            Ok(n) => tprintln!(msg::ZFS_RESTORED, n),
+            Err(e) => {
+                tprintln!(msg::ZFS_ERROR, format_args!("{:?}", e));
+                zaminfs::block_writes();
+            }
+        },
+        Ok(None) => zaminfs::format(&key),
         Err(e) => tprintln!(msg::ZFS_ERROR, format_args!("{:?}", e)),
     }
     println!();

@@ -107,6 +107,11 @@ fn program_help(name: &str) -> Text {
             "запускает сервер kalkulyator и отправляет ему запросы по каналу",
             "starts the kalkulyator server and sends it requests over a channel",
         ],
+        "katta" => [
+            "katta fayl yozib tekşiradi: katta [MB] | katta tekşir",
+            "пишет и проверяет большой файл: katta [МБ] | katta tekşir",
+            "writes and verifies a big file: katta [MB] | katta tekşir",
+        ],
         "fayl" => [
             "fayl yaratadi, yozadi va öqiydi",
             "создаёт, записывает и читает файл",
@@ -138,14 +143,14 @@ fn fs_error_text(e: FsError) -> &'static str {
         FsError::Invalid => &msg::FS_INVALID,
         FsError::TooBig => &msg::FS_TOO_BIG,
         FsError::Denied => &msg::FS_DENIED,
+        FsError::Corrupt => &msg::FS_CORRUPT,
+        FsError::Io => &msg::FS_IO,
     })
 }
 
 /// Fayllarni darhol diskka saqlaydi. Natija: şifrlangan tasvir hajmi.
-pub fn flush() -> Result<usize, fs::zaminfs::ZfsError> {
-    let key = accounts::master_key().ok_or(fs::zaminfs::ZfsError::NoDisk)?;
-    fs::take_dirty();
-    fs::zaminfs::sync(&key)
+pub fn flush() -> Result<u64, fs::zaminfs::ZfsError> {
+    fs::commit()
 }
 
 /// Terminalda yöllar ildizga nisbatan: `uy/a.txt` == `/uy/a.txt`; `~` — uy papkasi.

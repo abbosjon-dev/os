@@ -183,3 +183,8 @@ pub fn set_master_key(key: Option<[u8; 32]>) {
 pub fn master_key() -> Option<[u8; 32]> {
     *MASTER_KEY.lock()
 }
+
+/// Joriy foydalanuvçi raqami: 1000 — birinçi foydalanuvçi, 0 — tizim (heç kim kirmagan).
+pub fn current_uid() -> u32 {
+    if CURRENT.lock().is_some() { 1000 } else { 0 }
+}

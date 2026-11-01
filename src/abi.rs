@@ -90,3 +90,7 @@ pub const ERR_INVALID: i64 = -12;
 pub const ERR_NOT_CHILD: i64 = -13;
 /// Ruxsat yöq.
 pub const ERR_DENIED: i64 = -14;
+/// Disk xatosi.
+pub const ERR_IO: i64 = -15;
+/// Diskdagi maʼlumot buzilgan (şifr tekşiruvidan ötmadi).
+pub const ERR_CORRUPT: i64 = -16;

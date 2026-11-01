@@ -203,15 +203,8 @@ pub extern "C" fn secondary_main(cpu: usize) -> ! {
 extern "C" fn saver(_: usize) {
     loop {
         task::sleep_ms(2000);
-        if fs::take_dirty() {
-            match accounts::master_key() {
-                Some(key) => {
-                    if fs::zaminfs::sync(&key).is_err() {
-                        fs::set_dirty(); // keyinroq qayta urinamiz
-                    }
-                }
-                None => fs::set_dirty(),
-            }
+        if fs::take_dirty() && fs::commit().is_err() {
+            fs::set_dirty(); // kalit yöq yoki disk xatosi — keyinroq qayta urinamiz
         }
     }
 }

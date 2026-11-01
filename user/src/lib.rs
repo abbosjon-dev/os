@@ -43,6 +43,12 @@ impl Error {
             ERR_NOT_EMPTY => ["papka böş emas", "папка не пуста", "directory not empty"],
             ERR_DENIED => ["ruxsat yöq", "доступ запрещён", "permission denied"],
             ERR_NOT_CHILD => ["bola jarayon emas", "не дочерний процесс", "not a child process"],
+            ERR_IO => ["disk xatosi", "ошибка диска", "disk error"],
+            ERR_CORRUPT => [
+                "diskdagi maʼlumot buzilgan (tekşiruvdan ötmadi)",
+                "данные на диске повреждены (не прошли проверку)",
+                "data on disk is corrupted (failed verification)",
+            ],
             _ => ["nomaʼlum xato", "неизвестная ошибка", "unknown error"],
         })
     }

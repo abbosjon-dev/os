@@ -36,10 +36,17 @@ Sozlamalar diskka yoziladi. Keyingi yuklanişlarda faqat parol söraladi.
 
 ## Xavfsizlik va şifrlaş
 
-- **ZaminFS** — diskdagi fayl tizimi, töliq şifrlangan (ChaCha20-Poly1305). Fayllar har 2 soniyada,
-  `saqla` buyruği bilan yoki öçirişdan oldin saqlanadi. Diskda ikki nusxa (A/B): yoziş yarmida tok
-  öçsa ham oxirgi butun nusxa qoladi. Bitta bayt özgartirilsa ham nusxa rad etiladi; ikkala nusxa
-  oçilmasa, ular ustidan heç narsa yozilmaydi.
+- **ZaminFS 2** — diskdagi bloklarga asoslangan fayl tizimi, töliq şifrlangan:
+  - 4 KiB bloklar, har biri alohida ChaCha20-Poly1305 bilan (har yozuvda yangi nonce);
+  - autentifikatsiyalangan daraxt: superblok → metadata → maʼlumot bloklari (nonce va blok raqami
+    yuqori darajada saqlanadi) — blokni özgartiriş, köçiriş yoki eski nusxasini qaytariş aniqlanadi;
+  - copy-on-write: bloklar joyida qayta yozilmaydi, superblok A/B navbatma-navbat almaştiriladi —
+    tok qaysi payt öçmasin, oxirgi butun holat saqlanadi; yangisi buzilsa — oldingisi oçiladi;
+  - faqat özgargan bloklar yoziladi; katta fayllar (256 MiB gaça) xotiraga töliq yuklanmaydi,
+    kerakli bloklar diskdan öqiladi, keş töla bölsa çiqariladi;
+  - metadata: egasi, ruxsatlar, yaratilgan/özgartirilgan vaqt (RTC dan);
+  - fayllar har 2 soniyada, `saqla` bilan yoki öçirişdan oldin saqlanadi; diskni oçib bölmasa,
+    ustidan heç narsa yozilmaydi.
 - **Kalitlar** — har bir hisobga tasodifiy 256-bitli asosiy kalit. U paroldan PBKDF2-HMAC-SHA256
   (300 000 takror) bilan olingan kalit orqali "öralib" saqlanadi. Parol heç qayerda saqlanmaydi;
   parol özgarganda maʼlumotlar qayta şifrlanmaydi; `tiklaş` kalitni öçiradi — maʼlumotlar abadiy oçilmaydi.
@@ -181,13 +188,14 @@ build.rs             Foydalanuvçi dasturlarini yiğib, yadroga joylaydi
 user/src/lib.rs      `zamin` kutubxonasi: tizim çaqiruvlari, println!, tr(), Channel, spawn/wait
 user/src/heap.rs     Foydalanuvçi xotira ajratuvçisi (Vec, String, format! işlaydi)
 user/src/fs.rs       Fayllar: File, read, write, list, mkdir, remove
-user/src/bin/        Dasturlar: salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz
+user/src/bin/        Dasturlar: salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz, katta
 src/setup.rs         Birinçi sozlaş (til, ism, login, parol) va kiriş
 src/accounts.rs      Foydalanuvçi hisoblari, parol xeşi
 src/config.rs        Diskdagi sozlamalar
 src/crypto/          SHA-256, HMAC, PBKDF2, ChaCha20, Poly1305, AEAD (noldan)
 src/random.rs        Kriptografik tasodifiy sonlar generatori
-src/fs/zaminfs.rs    ZaminFS — şifrlangan diskdagi fayl tizimi
+src/fs/zaminfs.rs    ZaminFS 2 — bloklar, copy-on-write, şifrlangan daraxt
+src/fs/file.rs       Fayl mazmuni: bloklar, keş, diskdan öqiş
 src/security.rs      `xavfsizlik` buyruği
 src/drivers/virtio.rs      virtio-mmio transporti
 src/drivers/virtio_rng.rs  virtio-rng drayveri
@@ -209,7 +217,7 @@ src/shell.rs         Zamin terminali (yordam, jarayonlar, işlat, tugat, til, ö
 - [x] **6. SMP** — barça yadrolar (PSCI CPU_ON), köp yadroli rejalaştiruvçi, yadrolararo uzilişlar (SGI)
 - [ ] **7. Drayverlar** — virtio-blk disk tayyor; tarmoq, GPU, klaviatura/siçqonça — navbatda
 - [x] **7½. Birinçi sozlaş** — til, hisob (login + parol), tilga mos tizim papkalari, kiriş ekrani
-- [x] **8. Fayl tizimi** — VFS + ZaminFS (diskda, şifrlangan); bloklarga asoslangan 2-versiya — navbatda
+- [x] **8. Fayl tizimi** — VFS + ZaminFS 2 (bloklar, copy-on-write, şifrlangan daraxt)
 - [x] **8½. Yadro himoyasi** — qörğonli yadro steklari, PAN, WXN, böşatilgan xotirani nollaş, ASLR
 - [ ] **9. Grafika** — framebuffer, kompozitor, oyna menejeri, şriftlar
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar

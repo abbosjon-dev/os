@@ -11,7 +11,7 @@ shift
 DISK="${ZAMIN_DISK:-target/zamin-disk.img}"
 if [ ! -f "$DISK" ]; then
     mkdir -p "$(dirname "$DISK")"
-    truncate -s 32M "$DISK"
+    truncate -s 256M "$DISK" # siyrak fayl: haqiqatan yozilgan joyni egallaydi
 fi
 # -cpu max: PAN, RNDR va boşqa zamonaviy himoya imkoniyatlari bilan
 exec qemu-system-aarch64 -machine virt -cpu max -m 512M -smp 4 -nographic \

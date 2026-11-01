@@ -447,10 +447,16 @@ pub mod msg {
         "  Could not open files on disk: {} — saving is paused so they are not overwritten",
     ];
     pub const SH_SAVED: Text = [
-        "  Saqlandi: {} bayt (şifrlangan)",
-        "  Сохранено: {} байт (зашифровано)",
-        "  Saved: {} bytes (encrypted)",
+        "  Saqlandi: {} ta blok yozildi (faqat özgarganlari, şifrlangan)",
+        "  Сохранено: записано блоков — {} (только изменённые, зашифровано)",
+        "  Saved: {} blocks written (only changed ones, encrypted)",
     ];
+    pub const FS_CORRUPT: Text = [
+        "diskdagi maʼlumot buzilgan (tekşiruvdan ötmadi)",
+        "данные на диске повреждены (не прошли проверку)",
+        "data on disk is corrupted (failed verification)",
+    ];
+    pub const FS_IO: Text = ["disk xatosi", "ошибка диска", "disk error"];
     pub const SH_SAVE_FAIL: Text = ["  Saqlab bölmadi: {}", "  Не удалось сохранить: {}", "  Save failed: {}"];
     pub const SMP_READY: Text = [
         "[smp ] {} ta protsessor yadrosi işlamoqda",
@@ -529,6 +535,10 @@ pub mod msg {
         "ChaCha20-Poly1305, ключ: PBKDF2-SHA256 ({} итераций)",
         "ChaCha20-Poly1305, key: PBKDF2-SHA256 ({} iterations)",
     ];
-    pub const SEC_DISK_STATE: Text = ["ZaminFS: avlod {}, nusxa {}", "ZaminFS: поколение {}, копия {}", "ZaminFS: generation {}, copy {}"];
+    pub const SEC_DISK_STATE: Text = [
+        "ZaminFS 2: avlod {}, superblok {}, bloklar {} / {} (4 KiB)",
+        "ZaminFS 2: поколение {}, суперблок {}, блоки {} / {} (4 КиБ)",
+        "ZaminFS 2: generation {}, superblock {}, blocks {} / {} (4 KiB)",
+    ];
     pub const SEC_PASSWORD: Text = ["Parol diskda saqlanmaydi", "Пароль на диске не хранится", "Password is never stored"];
 }

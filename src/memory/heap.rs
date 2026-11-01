@@ -9,7 +9,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::{self, null_mut};
 
 const MIN_BLOCK: usize = 16; // = size_of::<Node>()
-const HEAP_PAGES: usize = 2048; // 8 MiB
+const HEAP_PAGES: usize = 8192; // 32 MiB
 
 struct Node {
     size: usize,

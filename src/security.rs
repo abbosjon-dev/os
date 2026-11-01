@@ -32,9 +32,9 @@ pub fn report() {
     if disk {
         let iters = accounts::current().map_or(accounts::ITERATIONS, |a| a.iterations);
         crate::tprintln!(msg::SEC_DISK_ON, iters);
-        let (generation, slot) = fs::zaminfs::state();
+        let (generation, slot, used, total) = fs::zaminfs::state();
         print!("        ");
-        crate::tprintln!(msg::SEC_DISK_STATE, generation, if slot == 0 { "A" } else { "B" });
+        crate::tprintln!(msg::SEC_DISK_STATE, generation, if slot == 0 { "A" } else { "B" }, used, total);
     } else {
         println!("{}", i18n::pick(&msg::SEC_OFF));
     }
