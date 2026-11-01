@@ -135,7 +135,7 @@ pub extern "C" fn kernel_main() -> ! {
 static COUNTER_A: AtomicU64 = AtomicU64::new(0);
 static COUNTER_B: AtomicU64 = AtomicU64::new(0);
 
-/// Hech qaçon navbat bermaydigan oqim: faqat taymer uni töxtata oladi.
+/// Heç qaçon navbat bermaydigan oqim: faqat taymer uni töxtata oladi.
 extern "C" fn busy_counter(which: usize) {
     let c = if which == 0 { &COUNTER_A } else { &COUNTER_B };
     let start = timer::uptime_ms();
@@ -146,7 +146,7 @@ extern "C" fn busy_counter(which: usize) {
 
 /// Rejalaştiruvçi va foydalanuvçi rejimini tekşiradi, keyin terminalni oçadi.
 extern "C" fn boot_tests(_: usize) {
-    // Ikki "özgʼir" oqim bir vaqtda — ikkalasi ham oldinga siljişi kerak
+    // Ikki "oçköz" oqim bir vaqtda — ikkalasi ham oldinga siljişi kerak
     let a = task::spawn_kernel("hisoblagiç-a", busy_counter, 0).expect("oqim");
     let b = task::spawn_kernel("hisoblagiç-b", busy_counter, 1).expect("oqim");
     task::sleep_ms(150);
@@ -156,13 +156,13 @@ extern "C" fn boot_tests(_: usize) {
     assert!(ca > 0 && cb > 0, "oqimlar almaşmayapti: {} / {}", ca, cb);
     tprintln!(msg::TEST_SCHED, ca, cb);
 
-    // Foydalanuvçi rejimi: `sinov` dasturi 42 bilan çiqişi va xotira toʼliq qaytişi kerak
+    // Foydalanuvçi rejimi: `sinov` dasturi 42 bilan çiqişi va xotira töliq qaytişi kerak
     let frames_before = frame::stats().0;
     let image = task::programs::find("sinov").expect("sinov dasturi yöq");
     let pid = task::spawn_user("sinov", image, false).expect("sinov");
     let code = task::wait(pid);
     assert_eq!(code, Some(42), "sinov dasturi xato kod qaytardi");
-    assert_eq!(frame::stats().0, frames_before, "jarayon xotirasi toʼliq qaytmadi");
+    assert_eq!(frame::stats().0, frames_before, "jarayon xotirasi töliq qaytmadi");
     tprintln!(msg::TEST_USER, 42);
 
     println!();

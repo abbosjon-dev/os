@@ -1,5 +1,5 @@
 /* QEMU virt: RAM 0x4000_0000 dan boşlanadi.
-   Birinchi 2 MiB DTB uchun bo'sh qoldiriladi (QEMU uni RAM boshiga qo'yadi,
+   Birinçi 2 MiB DTB uçun böş qoldiriladi (QEMU uni RAM boşiga qöyadi,
    joy yetmasa — umuman qöymaydi). */
 ENTRY(_start)
 

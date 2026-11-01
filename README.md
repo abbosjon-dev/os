@@ -36,7 +36,7 @@ Terminalda:
 
 ```
 zamin> dasturlar            # mavjud dasturlar röyxati
-zamin> işlat salom          # dasturni işga tuşiriş (tugaguncha kutadi)
+zamin> işlat salom          # dasturni işga tuşiriş (tugagunça kutadi)
 zamin> işlat soat &         # fonda işga tuşiriş
 zamin> jarayonlar           # işlayotgan jarayonlar
 zamin> tugat 6              # jarayonni tugatiş
@@ -59,7 +59,7 @@ fn main() -> i64 {
 }
 ```
 
-`cargo run` uni avtomatik yigʼadi va yadroga joylaydi.
+`cargo run` uni avtomatik yiğadi va yadroga joylaydi.
 
 ## Tuzilma
 
@@ -84,7 +84,7 @@ src/task/mod.rs      Jarayonlar va rejalaştiruvçi (round-robin, 10 ms)
 src/task/elf.rs      ELF64 yuklovçi
 src/task/syscall.rs  Tizim çaqiruvlari
 src/abi.rs           Tizim çaqiruvlari raqamlari (yadro va dasturlar uçun umumiy)
-build.rs             Foydalanuvçi dasturlarini yigʼib, yadroga joylaydi
+build.rs             Foydalanuvçi dasturlarini yiğib, yadroga joylaydi
 user/src/lib.rs      `zamin` kutubxonasi: tizim çaqiruvlari, println!, tr()
 user/src/bin/        Dasturlar: salom, hisobla, soat, buzuq, sinov
 src/i18n.rs          Köp tillilik: özbekça (asosiy), русский, English

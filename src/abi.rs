@@ -19,7 +19,7 @@ pub const SYS_PID: u64 = 5;
 /// Joriy til: 0 = özbekça, 1 = русский, 2 = English.
 pub const SYS_LANG: u64 = 6;
 
-/// Xato: notöğri manzil (masalan, yadro xotirasiga ishora).
+/// Xato: notöğri manzil (masalan, yadro xotirasiga işora).
 pub const ERR_BAD_ADDRESS: i64 = -1;
 /// Xato: nomaʼlum tizim çaqiruvi.
 pub const ERR_UNKNOWN_SYSCALL: i64 = -2;

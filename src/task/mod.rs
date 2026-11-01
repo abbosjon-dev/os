@@ -51,7 +51,7 @@ pub struct Task {
     pub name: String,
     pub state: State,
     pub user: bool,
-    /// Hech kim kutmaydi — tugagaç avtomatik tozalanadi.
+    /// Heç kim kutmaydi — tugagaç avtomatik tozalanadi.
     detached: bool,
     ctx: Context,
     kstack: Option<usize>,
@@ -257,7 +257,7 @@ pub fn sleep_ms(ms: u64) {
     block_current(State::Sleeping(timer::uptime_ms() + ms));
 }
 
-/// Klaviaturadan maʼlumot kelguncha kutadi.
+/// Klaviaturadan maʼlumot kelgunça kutadi.
 pub fn wait_input(has_input: impl Fn() -> bool) {
     let d = irq_save();
     if !has_input() {
@@ -302,7 +302,7 @@ extern "C" fn kthread_exit() -> ! {
     exit_current(0)
 }
 
-/// `pid` tugaguncha kutadi, çiqiş kodini qaytaradi va uni tozalaydi.
+/// `pid` tugagunça kutadi, çiqiş kodini qaytaradi va uni tozalaydi.
 pub fn wait(pid: Pid) -> Option<i64> {
     loop {
         let d = irq_save();
@@ -339,7 +339,7 @@ pub fn wait(pid: Pid) -> Option<i64> {
     }
 }
 
-/// Hech kim kutmayotgan tugagan vazifalarni tozalaydi (PID 0 dan çaqiriladi).
+/// Heç kim kutmayotgan tugagan vazifalarni tozalaydi (PID 0 dan çaqiriladi).
 pub fn reap_detached() {
     loop {
         let task = {

@@ -1,5 +1,5 @@
-//! Yadro yigʼilişidan oldin `user/` dagi foydalanuvçi dasturlarini yigʼadi va
-//! ularni yadro içiga joylaydi (`include_bytes!`). Fayl tizimi paydo bölguncha
+//! Yadro yiğilişidan oldin `user/` dagi foydalanuvçi dasturlarini yiğadi va
+//! ularni yadro içiga joylaydi (`include_bytes!`). Fayl tizimi paydo bölgunça
 //! dasturlar şu tarzda yadro bilan birga keladi.
 
 use std::env;
@@ -34,7 +34,7 @@ fn main() {
         .env("CARGO_ENCODED_RUSTFLAGS", flags)
         .status()
         .expect("cargo işga tuşmadi");
-    assert!(status.success(), "foydalanuvçi dasturlarini yigʼib bölmadi");
+    assert!(status.success(), "foydalanuvçi dasturlarini yiğib bölmadi");
 
     let mut names: Vec<String> = fs::read_dir(user.join("src").join("bin"))
         .unwrap()

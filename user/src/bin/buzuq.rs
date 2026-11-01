@@ -17,6 +17,6 @@ fn main() -> i64 {
         ])
     );
     let v = unsafe { core::ptr::read_volatile(0x4020_0000 as *const u64) };
-    println!("  ??? {:#x}", v); // bu qatorga hech qaçon yetib kelinmaydi
+    println!("  ??? {:#x}", v); // bu qatorga heç qaçon yetib kelinmaydi
     0
 }
