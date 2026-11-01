@@ -19,14 +19,21 @@ fn user_str(addr: u64, len: u64) -> Result<String, i64> {
 }
 
 /// Fayl yöli: nisbiy bölsa — jarayonning joriy papkasiga nisbatan.
+/// Qafasdagi jarayon uçun yöl qafas papkasi içida bölişi şart.
 fn user_path(addr: u64, len: u64) -> Result<String, i64> {
     let p = user_str(addr, len)?;
-    if p.starts_with('/') || p.starts_with('~') {
-        Ok(p)
+    let full = if p.starts_with('/') || p.starts_with('~') {
+        p
     } else {
         let cwd = task::cwd();
-        Ok(alloc::format!("{}/{}", cwd.trim_end_matches('/'), p))
+        alloc::format!("{}/{}", cwd.trim_end_matches('/'), p)
+    };
+    if let Some(jail) = task::jail() {
+        if !fs::path_inside(&full, jail) {
+            return Err(ERR_DENIED);
+        }
     }
+    Ok(full)
 }
 
 fn fs_err(e: fs::FsError) -> i64 {
@@ -35,7 +42,7 @@ fn fs_err(e: fs::FsError) -> i64 {
 
 pub fn dispatch(frame: &mut TrapFrame) {
     let num = frame.x[8];
-    let a = [frame.x[0], frame.x[1], frame.x[2], frame.x[3], frame.x[4]];
+    let a = [frame.x[0], frame.x[1], frame.x[2], frame.x[3], frame.x[4], frame.x[5]];
     // Tizim çaqiruvi davomida uzilişlar yoqiq: uzoq amallar (disk, katta fayllar)
     // paytida ham taymer işlaydi va jarayonni almaştiriş mumkin.
     unsafe { core::arch::asm!("msr daifclr, #2", options(nomem, nostack)) };
@@ -54,9 +61,12 @@ fn write_handle(h: usize, data: &[u8]) -> SysResult {
             Ok(data.len() as i64)
         }
         Some(Handle::PipeWrite(id)) => crate::pipe::write(id, data).map(|n| n as i64),
-        Some(Handle::File { node, offset, append }) => {
+        Some(Handle::File { node, offset, append, writable }) => {
+            if !writable {
+                return Err(ERR_DENIED); // faqat öqiş uçun oçilgan
+            }
             let n = fs::write(node, if append { None } else { Some(offset) }, data).map_err(fs_err)?;
-            task::set_handle(h, Handle::File { node, offset: offset + n, append });
+            task::set_handle(h, Handle::File { node, offset: offset + n, append, writable });
             Ok(n as i64)
         }
         _ => Err(ERR_BAD_HANDLE),
@@ -76,18 +86,18 @@ fn read_handle(h: usize, max: usize) -> Result<alloc::vec::Vec<u8>, i64> {
             None => alloc::vec::Vec::new(), // Ctrl+D — kiriş oxiri
         }),
         Some(Handle::PipeRead(id)) => Ok(crate::pipe::read(id, max)),
-        Some(Handle::File { node, offset, append }) => {
+        Some(Handle::File { node, offset, append, writable }) => {
             let mut buf = alloc::vec![0u8; max];
             let n = fs::read(node, offset, &mut buf).map_err(fs_err)?;
             buf.truncate(n);
-            task::set_handle(h, Handle::File { node, offset: offset + n, append });
+            task::set_handle(h, Handle::File { node, offset: offset + n, append, writable });
             Ok(buf)
         }
         _ => Err(ERR_BAD_HANDLE),
     }
 }
 
-fn handle(num: u64, a: [u64; 5]) -> SysResult {
+fn handle(num: u64, a: [u64; 6]) -> SysResult {
     match num {
         SYS_EXIT => task::exit_current(a[0] as i64),
         SYS_WRITE => {
@@ -107,9 +117,12 @@ fn handle(num: u64, a: [u64; 5]) -> SysResult {
         SYS_LANG => Ok(i18n::current() as i64),
         SYS_MAP => task::map_memory(a[0] as usize).map(|v| v as i64).ok_or(ERR_NO_MEMORY),
         SYS_SPAWN => {
+            if task::jail().is_some() {
+                return Err(ERR_DENIED); // qafasdagi jarayon dastur işga tuşira olmaydi
+            }
             let path = user_path(a[0], a[1])?;
             let args = user_string(a[2], a[3], task::MAX_ARGS)?;
-            let image = fs::read_all(&path).map_err(fs_err)?;
+            let image = fs::read_program(&path).map_err(fs_err)?;
             let name = path.rsplit('/').next().unwrap_or(&path);
             // Standart dastaklar: x4 dagi raqamlar (INHERIT — otaning şu raqamli dastagi)
             let mut stdio = [Handle::Console; 3];
@@ -125,6 +138,17 @@ fn handle(num: u64, a: [u64; 5]) -> SysResult {
                 env: task::current_env(),
                 trusted: false, // işonç bolaga ötmaydi
                 cwd: task::cwd(),
+                uid: task::current_uid(), // bola ota bilan bir xil foydalanuvçi
+                // Qafas: bola faqat otaning joriy papkasi içida işlaydi
+                jail: if a[5] & SPAWN_SANDBOX != 0 {
+                    Some(fs::node_of(&task::cwd()).map_err(fs_err)?)
+                } else {
+                    None
+                },
+                extra: match a[5] & 0xffff {
+                    INHERIT => None,
+                    h => Some(task::get_handle(h as usize).ok_or(ERR_BAD_HANDLE)?),
+                },
             };
             let pid = task::spawn_user(name, &image, &args, opts).map_err(|e| match e {
                 SpawnError::OutOfMemory => ERR_NO_MEMORY,
@@ -153,7 +177,8 @@ fn handle(num: u64, a: [u64; 5]) -> SysResult {
         SYS_OPEN => {
             let path = user_path(a[0], a[1])?;
             let node = fs::open(&path, a[2]).map_err(fs_err)?;
-            let h = Handle::File { node, offset: 0, append: a[2] & OPEN_APPEND != 0 };
+            let writable = a[2] & (OPEN_CREATE | OPEN_TRUNCATE | OPEN_APPEND | OPEN_WRITE) != 0;
+            let h = Handle::File { node, offset: 0, append: a[2] & OPEN_APPEND != 0, writable };
             task::add_handle(h).map(|i| i as i64).ok_or(ERR_FULL)
         }
         SYS_READ => {
@@ -179,7 +204,14 @@ fn handle(num: u64, a: [u64; 5]) -> SysResult {
             for e in fs::list(&path).map_err(fs_err)? {
                 out += &e.name;
                 out += if e.is_dir { "/" } else { "" };
-                out += &alloc::format!("\t{}\n", e.size);
+                // nom \t hajm \t ruxsat (sakkizlik) \t egasi \t özgartirilgan vaqt
+                out += &alloc::format!(
+                    "\t{}\t{:o}\t{}\t{}\n",
+                    e.size,
+                    e.mode,
+                    crate::accounts::username_of(e.owner),
+                    e.mtime
+                );
             }
             if out.len() as u64 > a[3] {
                 return Err(ERR_TOO_BIG);
@@ -198,8 +230,15 @@ fn handle(num: u64, a: [u64; 5]) -> SysResult {
 
         // --- Zamin kanallari ---
         SYS_CHAN_OPEN => {
+            if task::jail().is_some() {
+                return Err(ERR_DENIED); // qafasda faqat berilgan (nomsiz) kanallar
+            }
             let name = user_str(a[0], a[1])?;
-            let id = ipc::open(&name).map_err(|e| e.code())?;
+            let id = ipc::open(&name, task::current_uid()).map_err(|e| e.code())?;
+            task::add_handle(Handle::Channel(id)).map(|i| i as i64).ok_or(ERR_FULL)
+        }
+        SYS_CHAN_CREATE => {
+            let id = ipc::create_anonymous(task::current_uid()).map_err(|e| e.code())?;
             task::add_handle(Handle::Channel(id)).map(|i| i as i64).ok_or(ERR_FULL)
         }
         SYS_CHAN_SEND => {
@@ -295,6 +334,11 @@ fn handle(num: u64, a: [u64; 5]) -> SysResult {
             Ok(0)
         }
         SYS_TID => Ok(task::current_tid() as i64),
+        SYS_CHMOD => {
+            let path = user_path(a[0], a[1])?;
+            fs::chmod(&path, a[2] as u16).map_err(fs_err)?;
+            Ok(0)
+        }
         SYS_CHDIR => {
             let path = user_path(a[0], a[1])?;
             fs::list(&path).map_err(fs_err)?; // mavjud papka bölişi kerak

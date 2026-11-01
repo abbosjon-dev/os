@@ -84,6 +84,7 @@ pub enum Role {
     Downloads,
     Pictures,
     Music,
+    Temp,
 }
 
 impl Role {
@@ -100,6 +101,7 @@ impl Role {
             Role::Downloads => ["Yuklamalar", "Загрузки", "Downloads"],
             Role::Pictures => ["Rasmlar", "Изображения", "Pictures"],
             Role::Music => ["Musiqa", "Музыка", "Music"],
+            Role::Temp => ["vaqtinçalik", "временные", "tmp"],
         }
     }
 
@@ -130,6 +132,9 @@ pub struct Entry {
     pub name: String,
     pub is_dir: bool,
     pub size: usize,
+    pub mode: u16,
+    pub owner: u32,
+    pub mtime: u64,
 }
 
 struct Vfs {
@@ -138,10 +143,34 @@ struct Vfs {
     nodes: Vec<Option<Node>>,
     /// `~` — joriy foydalanuvçining uy papkasi
     home: Option<NodeId>,
+    /// Amalni bajarayotgan foydalanuvçi (0 — yadro, tekşiruvsiz)
+    uid: u32,
 }
 
+/// Ruxsat bitlari (egasi uçun 6 ga suriladi)
+pub const PERM_R: u16 = 4;
+pub const PERM_W: u16 = 2;
+pub const PERM_X: u16 = 1;
+/// Papkadagi faylni faqat uning egasi öçira oladi (umumiy papkalar uçun)
+pub const PERM_STICKY: u16 = 0o1000;
+
 /// Uxlaydigan qulf: katta fayllar bilan işlaş boşqa vazifalarni (va uzilişlarni) töxtatmaydi.
-static VFS: Mutex<Vfs> = Mutex::new(Vfs { nodes: Vec::new(), home: None });
+static VFS: Mutex<Vfs> = Mutex::new(Vfs { nodes: Vec::new(), home: None, uid: 0 });
+
+/// VFS ni joriy jarayon egasi nomidan oladi (ruxsatlar tekşiriladi).
+fn vfs_as_caller() -> crate::sync::MutexGuard<'static, Vfs> {
+    let uid = crate::task::current_uid();
+    let mut v = VFS.lock();
+    v.uid = uid;
+    v
+}
+
+/// VFS ni yadro nomidan oladi (içki amallar: tiklaş, uy papkasi yaratiş).
+fn vfs_as_kernel() -> crate::sync::MutexGuard<'static, Vfs> {
+    let mut v = VFS.lock();
+    v.uid = 0;
+    v
+}
 
 /// Foydalanuvçi fayllari özgardi — diskka saqlaş kerak.
 static DIRTY: AtomicBool = AtomicBool::new(false);
@@ -179,15 +208,58 @@ impl Vfs {
         }
     }
 
+    /// Foydalanuvçining tugunga nisbatan huquqlari: egasi — yuqori uç bit, boşqalar — pastki.
+    fn allowed(&self, id: NodeId, need: u16) -> bool {
+        if self.uid == 0 {
+            return true;
+        }
+        let Ok(n) = self.node(id) else { return false };
+        let bits = if n.owner == self.uid { (n.mode >> 6) & 7 } else { n.mode & 7 };
+        bits & need == need
+    }
+
+    fn need(&self, id: NodeId, need: u16) -> Result<(), FsError> {
+        if self.allowed(id, need) { Ok(()) } else { Err(FsError::Denied) }
+    }
+
+    /// Yöl böyiça tugun. Papkadan ötiş uçun undagi "x" ruxsati kerak.
     fn lookup(&self, path: &str) -> Result<NodeId, FsError> {
         let (mut cur, rest) = match path.strip_prefix('~') {
             Some(rest) => (self.home.ok_or(FsError::NotFound)?, rest),
             None => (ROOT, path),
         };
         for part in rest.split('/').filter(|p| !p.is_empty() && *p != ".") {
+            self.need(cur, PERM_X)?;
             cur = if part == ".." { self.node(cur)?.parent } else { self.child(cur, part)? };
         }
         Ok(cur)
+    }
+
+    /// `id` tuguni `ancestor` içidami (yoki özimi)?
+    fn is_inside(&self, mut id: NodeId, ancestor: NodeId) -> bool {
+        loop {
+            if id == ancestor {
+                return true;
+            }
+            if id == ROOT {
+                return false;
+            }
+            match self.node(id) {
+                Ok(n) => id = n.parent,
+                Err(_) => return false,
+            }
+        }
+    }
+
+    fn in_temp(&self, mut id: NodeId) -> bool {
+        while id != ROOT {
+            let Ok(n) = self.node(id) else { return false };
+            if n.role == Some(Role::Temp) {
+                return true;
+            }
+            id = n.parent;
+        }
+        false
     }
 
     /// Yöldan (ota papka, oxirgi nom) ajratib oladi.
@@ -224,7 +296,7 @@ impl Vfs {
         }
         let id = self.nodes.len();
         let mode = if matches!(data, Data::Dir(_)) { 0o755 } else { 0o644 };
-        let owner = if readonly { 0 } else { crate::accounts::current_uid() };
+        let owner = if readonly { 0 } else { self.uid };
         let now = crate::timer::unix_time();
         self.nodes.push(Some(Node {
             name: String::from(name),
@@ -245,7 +317,7 @@ impl Vfs {
 }
 
 pub fn init(programs: &[(&str, &[u8])]) {
-    let mut v = VFS.lock();
+    let mut v = vfs_as_kernel();
     let lang = crate::i18n::current() as usize;
     v.nodes.push(Some(Node {
         name: String::new(),
@@ -265,8 +337,13 @@ pub fn init(programs: &[(&str, &[u8])]) {
     let sys = v.add_with_role(ROOT, n, d, true, r).unwrap();
     let (n, d, r) = dir(Role::Home);
     v.add_with_role(ROOT, n, d, false, r).unwrap();
+    // Umumiy vaqtinçalik papka: hamma yozadi, faqat öz faylini öçiradi; diskka saqlanmaydi
+    let (n, d, r) = dir(Role::Temp);
+    let tmp = v.add_with_role(ROOT, n, d, false, r).unwrap();
+    v.node_mut(tmp).unwrap().mode = 0o777 | PERM_STICKY;
     for (name, image) in programs {
-        v.add(progs, name, Data::File(FileData::from_bytes(image)), true).unwrap();
+        let id = v.add(progs, name, Data::File(FileData::from_bytes(image)), true).unwrap();
+        v.node_mut(id).unwrap().mode = 0o755; // bajariladigan
     }
     let info = [
         (Role::SysName, String::from("Zamin OS\n")),
@@ -280,7 +357,7 @@ pub fn init(programs: &[(&str, &[u8])]) {
 
 /// Tizim tili özgarganda tizim papkalari va fayllarini qayta nomlaydi.
 pub fn apply_language(lang: Lang) {
-    let mut v = VFS.lock();
+    let mut v = vfs_as_kernel();
     for n in v.nodes.iter_mut().flatten() {
         if let Some(r) = n.role {
             n.name = String::from(r.names()[lang as usize]);
@@ -292,26 +369,34 @@ pub fn apply_language(lang: Lang) {
 /// `~` ni unga yönaltiradi. Allaqaçon bor bölsa — şunçaki yönaltiradi.
 /// Foydalanuvçi uy papkasi; egasi — şu foydalanuvçi.
 pub fn setup_home(username: &str, uid: u32) -> Result<String, FsError> {
-    let mut v = VFS.lock();
+    let mut v = vfs_as_kernel();
     let lang = crate::i18n::current() as usize;
     let homes = v.lookup("/uy")?;
     let home = match v.child(homes, username) {
         Ok(id) => id,
         Err(_) => v.add(homes, username, Data::Dir(Vec::new()), false)?,
     };
-    v.node_mut(home)?.owner = uid;
+    {
+        let n = v.node_mut(home)?;
+        n.owner = uid;
+        n.mode = 0o700; // maxfiy: boşqa foydalanuvçilar kira olmaydi
+    }
     for r in HOME_FOLDERS {
         if v.child(home, r.names()[0]).is_err() {
-            v.add_with_role(home, r.names()[lang], Data::Dir(Vec::new()), false, Some(r))?;
+            let id = v.add_with_role(home, r.names()[lang], Data::Dir(Vec::new()), false, Some(r))?;
+            v.node_mut(id)?.owner = uid;
         }
     }
-    v.home = Some(home);
+    // `~` faqat tizimga kirgan foydalanuvçining öz papkasi (boşqa hisob yaratilganda özgarmaydi)
+    if uid == crate::accounts::current_uid() {
+        v.home = Some(home);
+    }
     let homes_name = v.node(homes)?.name.clone();
     Ok(alloc::format!("/{}/{}", homes_name, username))
 }
 
 pub fn open(path: &str, flags: u64) -> Result<NodeId, FsError> {
-    let mut v = VFS.lock();
+    let mut v = vfs_as_caller();
     let id = match v.lookup(path) {
         Ok(id) => id,
         Err(FsError::NotFound) if flags & OPEN_CREATE != 0 => {
@@ -319,11 +404,14 @@ pub fn open(path: &str, flags: u64) -> Result<NodeId, FsError> {
             if v.node(parent)?.readonly {
                 return Err(FsError::Denied);
             }
+            v.need(parent, PERM_W)?; // papkada yangi fayl yaratiş
             mark_dirty();
             v.add(parent, name, Data::File(FileData::new()), false)?
         }
         Err(e) => return Err(e),
     };
+    let wants_write = flags & (OPEN_CREATE | OPEN_TRUNCATE | OPEN_APPEND | OPEN_WRITE) != 0;
+    v.need(id, if wants_write { PERM_R | PERM_W } else { PERM_R })?;
     let node = v.node_mut(id)?;
     match &mut node.data {
         Data::Dir(_) => return Err(FsError::IsDir),
@@ -341,7 +429,7 @@ pub fn open(path: &str, flags: u64) -> Result<NodeId, FsError> {
 }
 
 pub fn read(id: NodeId, offset: usize, buf: &mut [u8]) -> Result<usize, FsError> {
-    let mut v = VFS.lock();
+    let mut v = vfs_as_kernel();
     let n = match &mut v.node_mut(id)?.data {
         Data::File(d) => d.read(offset, buf)?,
         Data::Dir(_) => return Err(FsError::IsDir),
@@ -352,8 +440,18 @@ pub fn read(id: NodeId, offset: usize, buf: &mut [u8]) -> Result<usize, FsError>
 
 /// Butun faylni öqiydi.
 pub fn read_all(path: &str) -> Result<Vec<u8>, FsError> {
-    let mut v = VFS.lock();
+    read_checked(path, PERM_R)
+}
+
+/// Dasturni işga tuşiriş uçun öqiydi: "x" (bajariş) ruxsati ham kerak.
+pub fn read_program(path: &str) -> Result<Vec<u8>, FsError> {
+    read_checked(path, PERM_R | PERM_X)
+}
+
+fn read_checked(path: &str, perm: u16) -> Result<Vec<u8>, FsError> {
+    let mut v = vfs_as_caller();
     let id = v.lookup(path)?;
+    v.need(id, perm)?;
     let r = match &mut v.node_mut(id)?.data {
         Data::File(d) => d.read_all(),
         Data::Dir(_) => Err(FsError::IsDir),
@@ -364,7 +462,7 @@ pub fn read_all(path: &str) -> Result<Vec<u8>, FsError> {
 
 /// `offset` dan boşlab yozadi (`None` — fayl oxiriga). Natija: yozilgan baytlar.
 pub fn write(id: NodeId, offset: Option<usize>, data: &[u8]) -> Result<usize, FsError> {
-    let mut v = VFS.lock();
+    let mut v = vfs_as_kernel();
     let node = v.node_mut(id)?;
     if node.readonly {
         return Err(FsError::Denied);
@@ -386,17 +484,51 @@ pub fn write(id: NodeId, offset: Option<usize>, data: &[u8]) -> Result<usize, Fs
 }
 
 pub fn mkdir(path: &str) -> Result<NodeId, FsError> {
-    let mut v = VFS.lock();
+    let mut v = vfs_as_caller();
     let (parent, name) = v.split(path)?;
     if v.node(parent)?.readonly {
         return Err(FsError::Denied);
     }
+    v.need(parent, PERM_W)?;
     mark_dirty();
     v.add(parent, name, Data::Dir(Vec::new()), false)
 }
 
+/// Yöl bölgan tugun (yadro huquqi bilan): qafas papkasini aniqlaş uçun.
+pub fn node_of(path: &str) -> Result<NodeId, FsError> {
+    vfs_as_kernel().lookup(path)
+}
+
+/// Yöl `jail` papkasi içidami? Hali yöq fayl uçun — uning ota papkasi tekşiriladi.
+/// Nomlar emas, tugunlar soliştiriladi: ".." yoki boşqa tildagi nom bilan qoçib bölmaydi.
+pub fn path_inside(path: &str, jail: NodeId) -> bool {
+    let v = vfs_as_kernel();
+    let id = match v.lookup(path) {
+        Ok(id) => id,
+        Err(_) => match v.split(path) {
+            Ok((parent, _)) => parent,
+            Err(_) => return false,
+        },
+    };
+    v.is_inside(id, jail)
+}
+
+/// Ruxsatlarni özgartiradi (faqat egasi yoki yadro).
+pub fn chmod(path: &str, mode: u16) -> Result<(), FsError> {
+    let mut v = vfs_as_caller();
+    let id = v.lookup(path)?;
+    let uid = v.uid;
+    let n = v.node_mut(id)?;
+    if n.readonly || (uid != 0 && n.owner != uid) {
+        return Err(FsError::Denied);
+    }
+    n.mode = mode & 0o1777;
+    mark_dirty();
+    Ok(())
+}
+
 pub fn remove(path: &str) -> Result<(), FsError> {
-    let mut v = VFS.lock();
+    let mut v = vfs_as_caller();
     let id = v.lookup(path)?;
     let node = v.node(id)?;
     if id == ROOT || node.readonly {
@@ -407,7 +539,13 @@ pub fn remove(path: &str) -> Result<(), FsError> {
             return Err(FsError::NotEmpty);
         }
     }
-    let parent = node.parent;
+    let (parent, owner) = (node.parent, node.owner);
+    v.need(parent, PERM_W)?;
+    // Umumiy papkada (sticky) faqat egasi öçira oladi
+    let sticky = v.node(parent)?.mode & PERM_STICKY != 0;
+    if sticky && v.uid != 0 && owner != v.uid {
+        return Err(FsError::Denied);
+    }
     if let Data::Dir(children) = &mut v.node_mut(parent)?.data {
         children.retain(|&c| c != id);
     }
@@ -420,16 +558,22 @@ pub fn remove(path: &str) -> Result<(), FsError> {
 }
 
 pub fn list(path: &str) -> Result<Vec<Entry>, FsError> {
-    let v = VFS.lock();
+    let v = vfs_as_caller();
     let id = v.lookup(path)?;
+    if matches!(v.node(id)?.data, Data::Dir(_)) {
+        v.need(id, PERM_R)?;
+    }
     match &v.node(id)?.data {
         Data::Dir(children) => {
             let mut out: Vec<Entry> = children
                 .iter()
                 .filter_map(|&c| v.node(c).ok())
-                .map(|n| match &n.data {
-                    Data::File(d) => Entry { name: n.name.clone(), is_dir: false, size: d.size },
-                    Data::Dir(c) => Entry { name: n.name.clone(), is_dir: true, size: c.len() },
+                .map(|n| {
+                    let (is_dir, size) = match &n.data {
+                        Data::File(d) => (false, d.size),
+                        Data::Dir(c) => (true, c.len()),
+                    };
+                    Entry { name: n.name.clone(), is_dir, size, mode: n.mode, owner: n.owner, mtime: n.mtime }
                 })
                 .collect();
             out.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
@@ -441,7 +585,7 @@ pub fn list(path: &str) -> Result<Vec<Entry>, FsError> {
 
 /// (fayllar soni, papkalar soni, jami bayt)
 pub fn stats() -> (usize, usize, usize) {
-    let v = VFS.lock();
+    let v = vfs_as_kernel();
     let (mut files, mut dirs, mut bytes) = (0, 0, 0);
     for n in v.nodes.iter().flatten() {
         match &n.data {
@@ -480,7 +624,7 @@ impl Vfs {
     }
 
     fn persistent(&self, id: NodeId) -> bool {
-        self.node(id).is_ok_and(|n| id != ROOT && !n.readonly && n.role != Some(Role::Home))
+        self.node(id).is_ok_and(|n| id != ROOT && !n.readonly && n.role != Some(Role::Home)) && !self.in_temp(id)
     }
 
     fn serialize_node(&self, id: NodeId, out: &mut Vec<u8>) {
@@ -531,7 +675,7 @@ impl Vfs {
 
 /// Çiqişda: foydalanuvçi fayllari xotiradan olib taşlanadi (keyingi kirişda diskdan qayta öqiladi).
 pub fn forget_user_files() {
-    let mut v = VFS.lock();
+    let mut v = vfs_as_kernel();
     let ids: Vec<NodeId> = (0..v.nodes.len()).filter(|&id| v.persistent(id)).collect();
     for id in ids.into_iter().rev() {
         let parent = v.nodes[id].as_ref().map(|n| n.parent);
@@ -552,7 +696,7 @@ pub fn commit() -> Result<u64, zaminfs::ZfsError> {
     if !zaminfs::ready() {
         return Err(zaminfs::ZfsError::NoDisk);
     }
-    let mut v = VFS.lock();
+    let mut v = vfs_as_kernel();
     DIRTY.store(false, Ordering::Release);
     let ids: Vec<NodeId> = (0..v.nodes.len()).filter(|&id| v.persistent(id)).collect();
     for id in ids {
@@ -598,7 +742,7 @@ pub fn import_meta(meta: &[u8]) -> Result<usize, FsError> {
         Ok(u64::from_le_bytes(take(r, 8)?.try_into().unwrap()))
     }
 
-    let mut v = VFS.lock();
+    let mut v = vfs_as_kernel();
     let mut count = 0;
     while !rest.is_empty() {
         let kind = take(&mut rest, 1)?[0];

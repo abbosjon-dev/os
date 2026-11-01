@@ -248,9 +248,9 @@ pub mod msg {
     pub const KIND_USER: Text = ["dastur", "программа", "program"];
 
     pub const SH_PS_HEADER: Text = [
-        "  PID  CPU  TURI       HOLAT        NOM",
-        "  PID  CPU  ТИП        СОСТОЯНИЕ    ИМЯ",
-        "  PID  CPU  TYPE       STATE        NAME",
+        "  PID  CPU  EGASI     TURI       HOLAT        NOM",
+        "  PID  CPU  ВЛАДЕЛЕЦ  ТИП        СОСТОЯНИЕ    ИМЯ",
+        "  PID  CPU  OWNER     TYPE       STATE        NAME",
     ];
     pub const SH_EXITED: Text = [
         "  [{} {} tugadi, çiqiş kodi: {}]",
@@ -280,9 +280,9 @@ pub mod msg {
     pub const SH_KILL_USAGE: Text = ["  Foydalaniş: tugat <PID>", "  Использование: завершить <PID>", "  Usage: kill <PID>"];
     pub const SH_KILLED: Text = ["  {} tugatildi", "  {} завершён", "  {} terminated"];
     pub const SH_KILL_FAIL: Text = [
-        "  {} ni tugatib bölmaydi (faqat fondagi dasturlarni tugatiş mumkin)",
-        "  невозможно завершить {} (можно завершать только фоновые программы)",
-        "  cannot terminate {} (only background programs can be terminated)",
+        "  {} ni tugatib bölmaydi (faqat öz dasturlaringizni; administrator — hammasini)",
+        "  невозможно завершить {} (только свои программы; администратор — все)",
+        "  cannot terminate {} (only your own programs; administrators — any)",
     ];
     pub const SH_OWN_PROGRAMS: Text = [
         "  Siz örnatgan dasturlar (~/dasturlar):",
@@ -408,6 +408,25 @@ pub mod msg {
         "  Диск не найден: настройки действуют только в этом сеансе.",
         "  No disk found: settings are kept for this session only.",
     ];
+    pub const USER_ADMIN: Text = ["administrator", "администратор", "administrator"];
+    pub const USER_REGULAR: Text = ["foydalanuvçi", "пользователь", "user"];
+    pub const USER_NEED_ADMIN: Text = [
+        "  Bu buyruq faqat administrator uçun.",
+        "  Эта команда только для администратора.",
+        "  This command is for administrators only.",
+    ];
+    pub const USER_EXISTS: Text = ["  {} allaqaçon bor.", "  {} уже существует.", "  {} already exists."];
+    pub const USER_ADDED: Text = [
+        "  Qöşildi: {} (uid {}), uy papkasi: {}",
+        "  Добавлен: {} (uid {}), домашняя папка: {}",
+        "  Added: {} (uid {}), home folder: {}",
+    ];
+    pub const USER_REMOVED: Text = [
+        "  Öçirildi: {} (uy papkasi saqlanib qoldi)",
+        "  Удалён: {} (домашняя папка сохранена)",
+        "  Removed: {} (home folder kept)",
+    ];
+    pub const USER_NOT_SELF: Text = ["  Özingizni öçirib bölmaydi.", "  Нельзя удалить себя.", "  You cannot remove yourself."];
     pub const LOGIN_USERS: Text = ["  Foydalanuvçilar: {}", "  Пользователи: {}", "  Users: {}"];
     pub const LOGIN_USER_PROMPT: Text = ["  Foydalanuvçi nomi: ", "  Имя пользователя: ", "  Username: "];
     pub const LOGIN_NO_USER: Text = ["  Bunday foydalanuvçi yöq.", "  Нет такого пользователя.", "  No such user."];

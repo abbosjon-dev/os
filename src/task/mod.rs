@@ -59,7 +59,7 @@ pub enum State {
 /// Jarayon oçgan resurs (fayl yoki kanal) — "dastak".
 #[derive(Clone, Copy)]
 pub enum Handle {
-    File { node: fs::NodeId, offset: usize, append: bool },
+    File { node: fs::NodeId, offset: usize, append: bool, writable: bool },
     Channel(ipc::ChanId),
     /// Konsol: öqiş — klaviaturadan bitta qator, yoziş — ekranga
     Console,
@@ -135,6 +135,11 @@ pub struct Task {
     killed: bool,
     /// Joriy papka (nisbiy yöllar şunga nisbatan)
     cwd: String,
+    /// Egasi — foydalanuvçi raqami (0 — yadro)
+    uid: u32,
+    /// Qafas: jarayon faqat şu papka içida işlaydi, dastur işga tuşira olmaydi,
+    /// nomli kanallarni oça olmaydi (`çeklangan` buyruği)
+    jail: Option<fs::NodeId>,
     heap_base: usize,
     heap_end: usize,
     ctx: Context,
@@ -269,6 +274,8 @@ fn idle_task(cpu: usize) -> Box<Task> {
         trusted: false,
         killed: false,
         cwd: String::from("/"),
+        uid: 0,
+        jail: None,
         heap_base: USER_HEAP_BASE,
         heap_end: USER_HEAP_BASE,
         ctx: Context::default(),
@@ -343,6 +350,8 @@ pub fn spawn_kernel_ext(name: &str, entry: extern "C" fn(usize), arg: usize, det
         trusted: false,
         killed: false,
         cwd: String::from("/"),
+        uid: 0,
+        jail: None,
         heap_base: USER_HEAP_BASE,
         heap_end: USER_HEAP_BASE,
         ctx,
@@ -362,6 +371,10 @@ pub struct SpawnOptions {
     pub env: Vec<(String, String)>,
     pub trusted: bool,
     pub cwd: String,
+    pub uid: u32,
+    pub jail: Option<fs::NodeId>,
+    /// Bolaning 3-dastagi (masalan, nomsiz kanal)
+    pub extra: Option<Handle>,
 }
 
 impl SpawnOptions {
@@ -374,6 +387,9 @@ impl SpawnOptions {
             env: default_env(),
             trusted: false,
             cwd: default_cwd(),
+            uid: crate::accounts::current_uid(),
+            jail: None,
+            extra: None,
         }
     }
 }
@@ -394,7 +410,7 @@ pub fn default_env() -> Vec<(String, String)> {
 }
 
 pub fn spawn_user(name: &str, image: &[u8], args: &str, opts: SpawnOptions) -> Result<Pid, SpawnError> {
-    let SpawnOptions { detached, parent, stdio, env, trusted, cwd } = opts;
+    let SpawnOptions { detached, parent, stdio, env, trusted, cwd, uid, jail, extra } = opts;
     if args.len() > MAX_ARGS {
         return Err(SpawnError::ArgsTooLong);
     }
@@ -452,11 +468,13 @@ pub fn spawn_user(name: &str, image: &[u8], args: &str, opts: SpawnOptions) -> R
         detached,
         on_cpu: false,
         last_cpu: 0,
-        handles: stdio.iter().map(|h| Some(h.retain())).collect(),
+        handles: stdio.iter().chain(extra.iter()).map(|h| Some(h.retain())).collect(),
         env,
         trusted,
         killed: false,
         cwd,
+        uid,
+        jail,
         heap_base,
         heap_end: heap_base,
         ctx,
@@ -730,7 +748,7 @@ fn has_threads(s: &Scheduler, pid: Pid) -> bool {
 
 /// Joriy jarayonda yangi oqim: `entry(arg)` foydalanuvçi rejimida, `stack_top` stekda.
 pub fn spawn_thread(entry: usize, stack_top: usize, arg: u64) -> Result<Pid, SpawnError> {
-    let (leader, root, cwd) = {
+    let (leader, root, cwd, uid, jail) = {
         let s = SCHED.lock();
         let cur = s.current[cpu_id()];
         let p = proc_slot(&s, cur);
@@ -738,7 +756,7 @@ pub fn spawn_thread(entry: usize, stack_top: usize, arg: u64) -> Result<Pid, Spa
         if !t.user {
             return Err(SpawnError::BadImage(elf::ElfError::NotElf));
         }
-        (t.pid, t.root, t.cwd.clone())
+        (t.pid, t.root, t.cwd.clone(), t.uid, t.jail)
     };
     let kstack = alloc_kstack()?;
     let top = kstack_top(kstack);
@@ -767,6 +785,8 @@ pub fn spawn_thread(entry: usize, stack_top: usize, arg: u64) -> Result<Pid, Spa
         trusted: false,
         killed: false,
         cwd,
+        uid,
+        jail,
         heap_base: 0,
         heap_end: 0,
         ctx,
@@ -827,6 +847,8 @@ pub fn reap_detached() {
 /// foydalanuvçi rejimiga qaytayotganda — özi tugaydi: yadro içida (masalan, Mutex uşlab
 /// turganda) uzib qöyilmaydi. Kutayotgan bölsa — uyğotiladi.
 pub fn kill(pid: Pid) -> bool {
+    let caller = current_uid();
+    let caller_admin = crate::accounts::is_admin_uid(caller);
     {
         let mut s = SCHED.lock();
         let Some(i) = s.tasks.iter().position(|t| t.as_ref().is_some_and(|t| t.pid == pid)) else {
@@ -835,6 +857,9 @@ pub fn kill(pid: Pid) -> bool {
         let t = s.tasks[i].as_ref().unwrap();
         if !t.user || matches!(t.state, State::Dead(_)) {
             return false;
+        }
+        if !caller_admin && t.uid != caller {
+            return false; // boşqa foydalanuvçining jarayoni
         }
         let leader = if t.leader != 0 { t.leader } else { t.pid };
         for t in s.tasks.iter_mut().flatten() {
@@ -972,6 +997,19 @@ pub fn current_env() -> Vec<(String, String)> {
     with_proc(|t| t.env.clone())
 }
 
+/// Joriy jarayonning qafasi (bölsa).
+pub fn jail() -> Option<fs::NodeId> {
+    with_proc(|t| t.jail)
+}
+
+/// Joriy jarayon egasi (yadro oqimi — 0).
+pub fn current_uid() -> u32 {
+    let s = SCHED.lock();
+    let cur = s.current[cpu_id()];
+    let p = proc_slot(&s, cur);
+    s.tasks[p].as_ref().map_or(0, |t| if t.user { t.uid } else { 0 })
+}
+
 pub fn is_trusted() -> bool {
     with_proc(|t| t.trusted)
 }
@@ -1056,6 +1094,7 @@ pub struct TaskInfo {
     pub state: State,
     pub user: bool,
     pub cpu: usize,
+    pub uid: u32,
 }
 
 /// Barça vazifalar, PID böyiça tartiblangan.
@@ -1065,7 +1104,7 @@ pub fn snapshot() -> alloc::vec::Vec<TaskInfo> {
         s.tasks
             .iter()
             .flatten()
-            .map(|t| TaskInfo { pid: t.pid, name: t.name.clone(), state: t.state, user: t.user, cpu: t.last_cpu })
+            .map(|t| TaskInfo { pid: t.pid, name: t.name.clone(), state: t.state, user: t.user, cpu: t.last_cpu, uid: t.uid })
             .collect()
     };
     v.sort_by_key(|t| t.pid);

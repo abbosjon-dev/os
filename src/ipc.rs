@@ -18,7 +18,10 @@ const MAX_CHANNELS: usize = 256;
 const MAX_NAME: usize = 64;
 
 struct Channel {
+    /// Böş — nomsiz kanal (faqat dastak orqali beriladi)
     name: String,
+    /// Yaratgan foydalanuvçi: boşqalar nom orqali oça olmaydi ("ommaviy/" bundan mustasno)
+    owner: u32,
     queue: VecDeque<Vec<u8>>,
     sent: u64,
 }
@@ -31,6 +34,7 @@ pub enum IpcError {
     TooBig,
     NotFound,
     Interrupted,
+    Denied,
 }
 
 impl IpcError {
@@ -40,23 +44,41 @@ impl IpcError {
             IpcError::TooBig => ERR_TOO_BIG,
             IpcError::NotFound => ERR_NOT_FOUND,
             IpcError::Interrupted => ERR_INTERRUPTED,
+            IpcError::Denied => crate::abi::ERR_DENIED,
         }
     }
 }
 
-/// Nomli kanalni topadi yoki yaratadi.
-pub fn open(name: &str) -> Result<ChanId, IpcError> {
+/// Hamma foydalanuvçilar oça oladigan kanallar şu söz bilan boşlanadi.
+pub const PUBLIC_PREFIX: &str = "ommaviy/";
+
+/// Nomli kanalni topadi yoki yaratadi. Boşqa foydalanuvçining kanalini oçib bölmaydi.
+pub fn open(name: &str, uid: u32) -> Result<ChanId, IpcError> {
     if name.is_empty() || name.len() > MAX_NAME {
         return Err(IpcError::TooBig);
     }
     let mut ch = CHANNELS.lock();
     if let Some(i) = ch.iter().position(|c| c.name == name) {
+        let c = &ch[i];
+        if uid != 0 && c.owner != uid && !name.starts_with(PUBLIC_PREFIX) {
+            return Err(IpcError::Denied);
+        }
         return Ok(i);
     }
     if ch.len() >= MAX_CHANNELS {
         return Err(IpcError::Full);
     }
-    ch.push(Channel { name: String::from(name), queue: VecDeque::new(), sent: 0 });
+    ch.push(Channel { name: String::from(name), owner: uid, queue: VecDeque::new(), sent: 0 });
+    Ok(ch.len() - 1)
+}
+
+/// Nomsiz kanal: uni faqat dastagi bor jarayon (masalan, bolaga berilgan) işlata oladi.
+pub fn create_anonymous(uid: u32) -> Result<ChanId, IpcError> {
+    let mut ch = CHANNELS.lock();
+    if ch.len() >= MAX_CHANNELS {
+        return Err(IpcError::Full);
+    }
+    ch.push(Channel { name: String::new(), owner: uid, queue: VecDeque::new(), sent: 0 });
     Ok(ch.len() - 1)
 }
 
@@ -105,5 +127,9 @@ pub fn recv(id: ChanId, cap: usize) -> Result<Vec<u8>, IpcError> {
 
 /// `kanallar` buyruği uçun: (nom, navbatdagi xabarlar, jami yuborilgan)
 pub fn list() -> Vec<(String, usize, u64)> {
-    CHANNELS.lock().iter().map(|c| (c.name.clone(), c.queue.len(), c.sent)).collect()
+    CHANNELS
+        .lock()
+        .iter()
+        .map(|c| (if c.name.is_empty() { String::from("(nomsiz)") } else { c.name.clone() }, c.queue.len(), c.sent))
+        .collect()
 }

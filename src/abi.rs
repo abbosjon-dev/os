@@ -83,6 +83,10 @@ pub const SYS_FUTEX_WAIT: u64 = 29;
 pub const SYS_FUTEX_WAKE: u64 = 30;
 /// Joriy oqim raqami (TID).
 pub const SYS_TID: u64 = 31;
+/// Ruxsatlarni özgartiradi. x0,x1 = yöl; x2 = ruxsat (sakkizlik, masalan 0o644).
+pub const SYS_CHMOD: u64 = 32;
+/// Nomsiz kanal yaratadi (faqat dastak orqali beriladi). Natija: dastak.
+pub const SYS_CHAN_CREATE: u64 = 33;
 
 /// Standart dastaklar
 pub const STDIN: u64 = 0;
@@ -90,11 +94,15 @@ pub const STDOUT: u64 = 1;
 pub const STDERR: u64 = 2;
 /// SYS_SPAWN: x4 = stdin | stdout << 16 | stderr << 32; INHERIT — otanikini işlatiş
 pub const INHERIT: u64 = 0xffff;
+/// SYS_SPAWN: x5 = qöşimça dastak (bolada 3-raqam; INHERIT — yöq) | SPAWN_SANDBOX
+pub const SPAWN_SANDBOX: u64 = 1 << 16;
 
 /// OPEN bayroqlari
 pub const OPEN_CREATE: u64 = 1;
 pub const OPEN_TRUNCATE: u64 = 2;
 pub const OPEN_APPEND: u64 = 4;
+/// Yoziş uçun oçiş (yaratmasdan va tozalamasdan)
+pub const OPEN_WRITE: u64 = 8;
 
 /// Bitta xabarning eng katta hajmi (bayt).
 pub const MAX_MESSAGE: usize = 4096;

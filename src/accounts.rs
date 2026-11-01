@@ -91,12 +91,10 @@ pub fn set_all(list: Vec<Account>) {
     *ALL.lock() = list;
 }
 
-#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
 pub fn find(username: &str) -> Option<Account> {
     ALL.lock().iter().find(|a| a.username == username).cloned()
 }
 
-#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
 /// Hisobni qöşadi yoki yangilaydi (login böyiça).
 pub fn upsert(a: Account) {
     let mut all = ALL.lock();
@@ -106,7 +104,6 @@ pub fn upsert(a: Account) {
     }
 }
 
-#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
 pub fn remove(username: &str) -> bool {
     let mut all = ALL.lock();
     let n = all.len();
@@ -114,12 +111,10 @@ pub fn remove(username: &str) -> bool {
     all.len() != n
 }
 
-#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
 pub fn next_uid() -> u32 {
     ALL.lock().iter().map(|a| a.uid + 1).max().unwrap_or(FIRST_UID).max(FIRST_UID)
 }
 
-#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
 /// Foydalanuvçi nomi raqami böyiça (0 — "tizim").
 pub fn username_of(uid: u32) -> String {
     if uid == 0 {
@@ -128,7 +123,6 @@ pub fn username_of(uid: u32) -> String {
     ALL.lock().iter().find(|a| a.uid == uid).map_or_else(|| alloc::format!("{}", uid), |a| a.username.clone())
 }
 
-#[allow(dead_code)] // keyingi qadamda (hisob qöşiş/öçiriş, ruxsatlar) işlatiladi
 pub fn is_admin_uid(uid: u32) -> bool {
     uid == 0 || ALL.lock().iter().any(|a| a.uid == uid && a.admin)
 }

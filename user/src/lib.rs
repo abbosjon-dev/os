@@ -74,12 +74,17 @@ pub(crate) unsafe fn syscall(num: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> i6
 
 #[inline(always)]
 pub(crate) unsafe fn syscall5(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> i64 {
+    unsafe { syscall6(num, a0, a1, a2, a3, a4, abi::INHERIT) }
+}
+
+#[inline(always)]
+pub(crate) unsafe fn syscall6(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
     let ret: i64;
     unsafe {
         asm!(
             "svc #0",
             inlateout("x0") a0 as i64 => ret,
-            in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, in("x8") num,
+            in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, in("x5") a5, in("x8") num,
             options(nostack),
         );
     }
@@ -152,6 +157,27 @@ pub fn spawn_with(path: &str, args: &str, stdio: [u64; 3]) -> Result<u64> {
             packed,
         )
     })
+}
+
+/// Qanday işga tuşiriladi: qöşimça dastak (bolada 3-raqam) va qafas.
+pub struct SpawnExtra {
+    pub handle: Option<u64>,
+    /// Qafas: bola faqat joriy papka içida işlaydi, dastur işga tuşira olmaydi
+    pub sandbox: bool,
+}
+
+/// Töliq variant: stdin/stdout/stderr, qöşimça dastak va qafas.
+pub fn spawn_full(path: &str, args: &str, stdio: [u64; 3], extra: SpawnExtra) -> Result<u64> {
+    let packed = (stdio[0] & 0xffff) | (stdio[1] & 0xffff) << 16 | (stdio[2] & 0xffff) << 32;
+    let x5 = extra.handle.unwrap_or(abi::INHERIT) & 0xffff | if extra.sandbox { abi::SPAWN_SANDBOX } else { 0 };
+    check(unsafe {
+        syscall6(abi::SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, args.as_ptr() as u64, args.len() as u64, packed, x5)
+    })
+}
+
+/// Fayl ruxsatlarini özgartiradi: `chmod("skript", 0o755)`.
+pub fn chmod(path: &str, mode: u16) -> Result<()> {
+    check(unsafe { syscall(abi::SYS_CHMOD, path.as_ptr() as u64, path.len() as u64, mode as u64, 0) }).map(|_| ())
 }
 
 /// Dastakni yopadi.
@@ -292,6 +318,21 @@ pub unsafe fn _init(args_ptr: *const u8, args_len: usize) {
 pub struct Channel(u64);
 
 impl Channel {
+    /// Nomsiz kanal: uni faqat dastak orqali (masalan, bolaga) beriş mumkin.
+    pub fn create() -> Result<Channel> {
+        check(unsafe { syscall(abi::SYS_CHAN_CREATE, 0, 0, 0, 0) }).map(Channel)
+    }
+
+    /// Dastak raqami (bolaga beriş uçun).
+    pub fn handle(&self) -> u64 {
+        self.0
+    }
+
+    /// Ota bergan kanal (bolada 3-dastak).
+    pub fn inherited() -> Channel {
+        Channel(3)
+    }
+
     pub fn open(name: &str) -> Result<Channel> {
         check(unsafe { syscall(abi::SYS_CHAN_OPEN, name.as_ptr() as u64, name.len() as u64, 0, 0) }).map(Channel)
     }

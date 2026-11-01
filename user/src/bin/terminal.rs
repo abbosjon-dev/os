@@ -34,6 +34,8 @@ const BUILTINS: &[Cmd] = &[
     (["muhit", "окружение", "env"], &[], ["muhit özgaruvçisi: muhit NOM yoki muhit NOM=qiymat", "переменная: окружение ИМЯ=значение", "variable: env NAME or env NAME=value"]),
     (["örnat", "установить", "install"], &["ornat"], ["dasturni örnatiş: örnat fayl [nom]", "установить программу: установить файл [имя]", "install a program: install file [name]"]),
     (["işlat", "запуск", "run"], &["ishlat", "islat"], ["dasturni işga tuşiriş", "запустить программу", "run a program"]),
+    (["ruxsat", "права", "chmod"], &[], ["ruxsatlar: ruxsat 600 fayl", "права: права 600 файл", "permissions: chmod 600 file"]),
+    (["çeklangan", "песочница", "sandbox"], &["cheklangan"], ["dasturni qafasda (faqat joriy papka) işlatiş", "запустить в песочнице (только текущая папка)", "run sandboxed (current folder only)"]),
     (["çiqiş", "выход", "exit"], &["chiqish", "chiqiş", "ciqis"], ["çiqiş (qayta kiriş söraladi)", "выйти (снова запросит вход)", "log out"]),
 ];
 
@@ -52,6 +54,7 @@ const ADMIN: &[Cmd] = &[
     (["saqla", "сохранить", "sync"], &[], ["fayllarni hozir saqlaş", "сохранить файлы сейчас", "save files now"]),
     (["xavfsizlik", "безопасность", "security"], &[], ["himoya holati", "состояние защиты", "protection status"]),
     (["tiklaş", "сброс", "reset"], &["tiklash"], ["sozlamalarni öçiriş", "стереть настройки", "erase settings"]),
+    (["hisoblar", "пользователи", "users"], &[], ["foydalanuvçilar: hisoblar [qöş | öçir] login", "пользователи: [добавить | удалить] логин", "users: [add | del] login"]),
     (["qayta", "перезагрузка", "reboot"], &[], ["qayta yuklaş", "перезагрузить", "restart"]),
     (["öçir", "выкл", "shutdown"], &["ochir", "ocir"], ["tizimni öçiriş", "выключить систему", "power off"]),
 ];
@@ -277,12 +280,9 @@ impl Shell {
                     Ok(list) => {
                         for e in list {
                             let shown = if e.is_dir { format!("{}/", e.name) } else { e.name.clone() };
-                            let pad = 24usize.saturating_sub(shown.chars().count());
-                            if e.is_dir {
-                                println!("  {}{:pad$}{} {}", shown, "", e.size, tr(["ta", "шт.", "items"]), pad = pad);
-                            } else {
-                                println!("  {}{:pad$}{} B", shown, "", e.size, pad = pad);
-                            }
+                            let size = if e.is_dir { format!("{} {}", e.size, tr(["ta", "шт.", "items"])) } else { format!("{} B", e.size) };
+                            let po = 10usize.saturating_sub(e.owner.chars().count());
+                            println!("  {} {}{:po$} {:>10}  {}", fs::mode_string(e.mode, e.is_dir), e.owner, "", size, shown, po = po);
                         }
                     }
                     Err(e) => println!("  {}: {}", path, e),
@@ -353,7 +353,38 @@ impl Shell {
             12 => {
                 self.run_pipeline(&[args], None, false);
             }
-            13 => return false,
+            15 => return false, // çiqiş
+            13 => {
+                let Some((mode, file)) = args.split_once(' ') else {
+                    println!("  {}", BUILTINS[13].2[lang]);
+                    return true;
+                };
+                match u16::from_str_radix(mode.trim(), 8) {
+                    Ok(m) => {
+                        if let Err(e) = zamin::chmod(&self.resolve(file.trim()), m) {
+                            println!("  {}: {}", file, e);
+                        }
+                    }
+                    Err(_) => println!("  {}", BUILTINS[13].2[lang]),
+                }
+            }
+            14 => {
+                // Qafas: faqat joriy papka; dastur işga tuşira olmaydi, nomli kanallar yöq
+                let (name, rest) = args.split_once(' ').map_or((args, ""), |(n, a)| (n, a.trim()));
+                let Some(path) = self.find_program(name) else {
+                    println!("  {}: {}", tr(["nomaʼlum dastur", "неизвестная программа", "unknown program"]), name);
+                    return true;
+                };
+                match zamin::spawn_full(&path, rest, [INHERIT; 3], zamin::SpawnExtra { handle: None, sandbox: true }) {
+                    Ok(pid) => {
+                        zamin::set_foreground(pid);
+                        let code = zamin::wait(pid).unwrap_or(-1);
+                        zamin::set_foreground(0);
+                        println!("  [{} {}: {}]", name, tr(["qafasda tugadi, kod", "завершён в песочнице, код", "finished in sandbox, code"]), code);
+                    }
+                    Err(e) => println!("  {}: {}", name, e),
+                }
+            }
             _ => {}
         }
         true
@@ -381,7 +412,8 @@ impl Shell {
         let name = it.next().unwrap_or_else(|| src.rsplit('/').next().unwrap_or(src));
         let _ = fs::mkdir("~/dasturlar");
         let dst = format!("~/dasturlar/{}", name);
-        match fs::write(&dst, &data) {
+        let result = fs::write(&dst, &data).and_then(|_| zamin::chmod(&dst, 0o755));
+        match result {
             Ok(()) => println!("  {} {} ({} B)", tr(["Örnatildi:", "Установлено:", "Installed:"]), name, data.len()),
             Err(e) => println!("  {}: {}", dst, e),
         }

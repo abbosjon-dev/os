@@ -37,6 +37,7 @@ enum Cmd {
     Reset,
     Save,
     Security,
+    Users,
     Reboot,
     Shutdown,
 }
@@ -73,6 +74,7 @@ const COMMANDS: &[Command] = &[
     Command { cmd: Cmd::Reset, names: ["tiklaş", "сброс", "reset"], aliases: &["tiklash"], help: ["sozlamalarni öçirib, birinçi sozlaşga qaytiş", "стереть настройки и начать заново", "erase settings and start over"] },
     Command { cmd: Cmd::Save, names: ["saqla", "сохранить", "sync"], aliases: &[], help: ["fayllarni hozir diskka saqlaş (şifrlangan)", "сохранить файлы на диск сейчас (зашифровано)", "save files to disk now (encrypted)"] },
     Command { cmd: Cmd::Security, names: ["xavfsizlik", "безопасность", "security"], aliases: &[], help: ["himoya holati", "состояние защиты", "protection status"] },
+    Command { cmd: Cmd::Users, names: ["hisoblar", "пользователи", "users"], aliases: &[], help: ["foydalanuvçilar: hisoblar [qöş | öçir] [login]", "пользователи: пользователи [добавить | удалить] [логин]", "users: users [add | del] [login]"] },
     Command { cmd: Cmd::Reboot, names: ["qayta", "перезагрузка", "reboot"], aliases: &[], help: ["qayta yuklaş", "перезагрузить", "restart"] },
     Command { cmd: Cmd::Shutdown, names: ["öçir", "выкл", "shutdown"], aliases: &["ocir", "ochir"], help: ["tizimni öçiriş", "выключить систему", "power off"] },
 ];
@@ -116,6 +118,11 @@ fn program_help(name: &str) -> Text {
             "tub sonlarni bir neçta oqimda sanaydi: oqimlar [son] [çegara]",
             "считает простые в нескольких потоках: oqimlar [n] [предел]",
             "counts primes in several threads: oqimlar [n] [limit]",
+        ],
+        "qafas" => [
+            "qafasdan qoçişga urinadi (çeklangan qafas)",
+            "пытается выйти из песочницы (песочница qafas)",
+            "tries to escape the sandbox (sandbox qafas)",
         ],
         "katta" => [
             "katta fayl yozib tekşiradi: katta [MB] | katta tekşir",
@@ -182,6 +189,9 @@ pub extern "C" fn run(disk: usize) {
             env: task::default_env(),
             trusted: true,
             cwd: task::default_cwd(),
+            uid: accounts::current_uid(),
+            jail: None,
+            extra: None,
         };
         match task::spawn_user("terminal", &image, "", opts) {
             Ok(pid) => {
@@ -306,7 +316,9 @@ impl Shell {
                     let pk = 11usize.saturating_sub(kind.chars().count());
                     let ps = 13usize.saturating_sub(st.chars().count());
                     let cpu = if t.state == State::Running { alloc::format!("{}", t.cpu) } else { String::from("-") };
-                    println!("  {:<4} {:<4} {}{:pk$}{}{:ps$}{}", pid, cpu, kind, "", st, "", name, pk = pk, ps = ps);
+                    let owner = accounts::username_of(t.uid);
+                    let po = 10usize.saturating_sub(owner.chars().count());
+                    println!("  {:<4} {:<4} {}{:po$}{}{:pk$}{}{:ps$}{}", pid, cpu, owner, "", kind, "", st, "", name, po = po, pk = pk, ps = ps);
                 }
             }
             Cmd::Programs => {
@@ -335,7 +347,7 @@ impl Shell {
                     return;
                 }
                 let path = if prog.contains('/') { abs_path(prog) } else { format!("/dasturlar/{}", prog) };
-                let image = match fs::read_all(&path) {
+                let image = match fs::read_program(&path) {
                     Ok(img) => img,
                     Err(FsError::NotFound) => {
                         tprintln!(msg::SH_NO_PROGRAM, prog);
@@ -485,6 +497,10 @@ impl Shell {
                 tprintln!(msg::SH_PASSWD_CHANGED);
             }
             Cmd::Reset => {
+                if !accounts::current().is_some_and(|a| a.admin) {
+                    tprintln!(msg::USER_NEED_ADMIN);
+                    return;
+                }
                 tprint!(msg::SH_RESET_CONFIRM);
                 let answer = read_line(false);
                 if !matches!(answer.trim(), "ha" | "h" | "да" | "д" | "yes" | "y") {
@@ -495,6 +511,70 @@ impl Shell {
                 accounts::set_master_key(None);
                 tprintln!(msg::SH_RESET_DONE);
                 power::reboot();
+            }
+            Cmd::Users => {
+                let (sub, rest) = args.split_once(' ').map_or((args, ""), |(a, b)| (a, b.trim()));
+                let me = accounts::current();
+                let is_admin = me.as_ref().is_some_and(|a| a.admin);
+                match sub {
+                    "" | "röyxat" | "список" | "list" => {
+                        for a in accounts::all() {
+                            let role = i18n::pick(if a.admin { &msg::USER_ADMIN } else { &msg::USER_REGULAR });
+                            println!("  {:<6} {:<16} {} ({})", a.uid, a.username, a.full_name, role);
+                        }
+                    }
+                    "qöş" | "qosh" | "добавить" | "add" => {
+                        if !is_admin {
+                            tprintln!(msg::USER_NEED_ADMIN);
+                            return;
+                        }
+                        if !accounts::valid_username(rest) {
+                            tprintln!(msg::SETUP_USER_HINT);
+                            return;
+                        }
+                        if accounts::find(rest).is_some() {
+                            tprintln!(msg::USER_EXISTS, rest);
+                            return;
+                        }
+                        let Some(key) = accounts::master_key() else { return };
+                        tprint!(msg::SETUP_NAME);
+                        let full_name = String::from(read_line(false).trim());
+                        tprint!(msg::SETUP_PASS);
+                        let p1 = read_line(true);
+                        tprint!(msg::SETUP_PASS2);
+                        let p2 = read_line(true);
+                        if p1 != p2 || p1.chars().count() < 4 {
+                            tprintln!(msg::SETUP_PASS_MISMATCH);
+                            return;
+                        }
+                        accounts::forget(p2);
+                        tprintln!(msg::SETUP_CREATING);
+                        let uid = accounts::next_uid();
+                        let a = accounts::create(rest, &full_name, &p1, uid, false, &key);
+                        accounts::forget(p1);
+                        accounts::upsert(a);
+                        config::save_current();
+                        let home = fs::setup_home(rest, uid).unwrap_or_default();
+                        tprintln!(msg::USER_ADDED, rest, uid, home);
+                    }
+                    "öçir" | "ochir" | "удалить" | "del" => {
+                        if !is_admin {
+                            tprintln!(msg::USER_NEED_ADMIN);
+                            return;
+                        }
+                        if me.as_ref().is_some_and(|m| m.username == rest) {
+                            tprintln!(msg::USER_NOT_SELF);
+                            return;
+                        }
+                        if accounts::remove(rest) {
+                            config::save_current();
+                            tprintln!(msg::USER_REMOVED, rest);
+                        } else {
+                            tprintln!(msg::LOGIN_NO_USER);
+                        }
+                    }
+                    _ => println!("  {}", COMMANDS.iter().find(|c| matches!(c.cmd, Cmd::Users)).map_or("", |c| c.help[i18n::current() as usize])),
+                }
             }
             Cmd::Save => match flush() {
                 Ok(n) => tprintln!(msg::SH_SAVED, n),

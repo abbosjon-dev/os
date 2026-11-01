@@ -66,6 +66,23 @@ pub struct Entry {
     pub is_dir: bool,
     /// Fayl — baytlar, papka — içidagi yozuvlar soni
     pub size: u64,
+    /// Ruxsatlar (sakkizlik), masalan 0o644
+    pub mode: u16,
+    pub owner: String,
+    /// Özgartirilgan vaqt (Unix soniyalar)
+    pub mtime: u64,
+}
+
+/// Ruxsatlarni "rwxr-xr-x" körinişida.
+pub fn mode_string(mode: u16, is_dir: bool) -> String {
+    let mut s = String::from(if is_dir { "d" } else { "-" });
+    for shift in [6, 3, 0] {
+        let b = (mode >> shift) & 7;
+        s.push(if b & 4 != 0 { 'r' } else { '-' });
+        s.push(if b & 2 != 0 { 'w' } else { '-' });
+        s.push(if b & 1 != 0 { 'x' } else { '-' });
+    }
+    s
 }
 
 /// Papka tarkibi, batafsil.
@@ -78,13 +95,14 @@ pub fn entries(path: &str) -> Result<Vec<Entry>> {
     Ok(text
         .lines()
         .map(|l| {
-            let (name, size) = l.split_once('\t').unwrap_or((l, "0"));
+            let mut f = l.split('\t');
+            let name = f.next().unwrap_or("");
+            let size = f.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let mode = f.next().and_then(|v| u16::from_str_radix(v, 8).ok()).unwrap_or(0);
+            let owner = String::from(f.next().unwrap_or(""));
+            let mtime = f.next().and_then(|v| v.parse().ok()).unwrap_or(0);
             let is_dir = name.ends_with('/');
-            Entry {
-                name: String::from(name.trim_end_matches('/')),
-                is_dir,
-                size: size.parse().unwrap_or(0),
-            }
+            Entry { name: String::from(name.trim_end_matches('/')), is_dir, size, mode, owner, mtime }
         })
         .collect())
 }
