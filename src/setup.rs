@@ -22,7 +22,7 @@ pub fn run(disk: bool) {
 
 fn choose_language() -> Lang {
     println!();
-    println!("  Zamin OS ga xush kelibsiz!");
+    println!("  Zamin OS ga xuş kelibsiz!");
     println!("  Добро пожаловать в Zamin OS!");
     println!("  Welcome to Zamin OS!");
     println!();

@@ -34,7 +34,7 @@ const BUILTINS: &[Cmd] = &[
     (["muhit", "окружение", "env"], &[], ["muhit özgaruvçisi: muhit NOM yoki muhit NOM=qiymat", "переменная: окружение ИМЯ=значение", "variable: env NAME or env NAME=value"]),
     (["örnat", "установить", "install"], &["ornat"], ["dasturni örnatiş: örnat fayl [nom]", "установить программу: установить файл [имя]", "install a program: install file [name]"]),
     (["işlat", "запуск", "run"], &["ishlat", "islat"], ["dasturni işga tuşiriş", "запустить программу", "run a program"]),
-    (["chiqiş", "выход", "exit"], &["chiqish", "ciqis"], ["chiqiş (qayta kiriş söraladi)", "выйти (снова запросит вход)", "log out"]),
+    (["çiqiş", "выход", "exit"], &["chiqish", "chiqiş", "ciqis"], ["çiqiş (qayta kiriş söraladi)", "выйти (снова запросит вход)", "log out"]),
 ];
 
 /// Yadroga uzatiladigan tizim buyruqlari

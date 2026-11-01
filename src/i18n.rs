@@ -408,7 +408,7 @@ pub mod msg {
         "  Диск не найден: настройки действуют только в этом сеансе.",
         "  No disk found: settings are kept for this session only.",
     ];
-    pub const LOGIN_WELCOME: Text = ["  Xush kelibsiz, {}!", "  Добро пожаловать, {}!", "  Welcome, {}!"];
+    pub const LOGIN_WELCOME: Text = ["  Xuş kelibsiz, {}!", "  Добро пожаловать, {}!", "  Welcome, {}!"];
     pub const LOGIN_PROMPT: Text = ["  {} — parol: ", "  {} — пароль: ", "  {} — password: "];
     pub const LOGIN_FAIL: Text = ["  Notöğri parol.", "  Неверный пароль.", "  Wrong password."];
 

@@ -125,7 +125,7 @@ abbosjon@zamin:~/Hujjatlar> hisobla 50000000              # Ctrl+C — töxtati�
 abbosjon@zamin:~> soat &                                   # fonda
 abbosjon@zamin:~> muhit SALOM=dunyo                        # muhit özgaruvçisi
 abbosjon@zamin:~> örnat /dasturlar/salom meningsalom       # ~/dasturlar ga örnatiş
-abbosjon@zamin:~> chiqiş                                   # chiqiş (qayta kiriş)
+abbosjon@zamin:~> çiqiş                                    # çiqiş (qayta kiriş)
 ```
 
 - har bir jarayonda standart kiriş/çiqiş/xato (0, 1, 2): konsol, quvur yoki fayl;
