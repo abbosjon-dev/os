@@ -1,4 +1,4 @@
-//! Nur OS — Rust'da noldan yozilgan, ARM64 uchun operatsion tizim yadrosi.
+//! Zamin OS — Rust'da noldan yozilgan, ARM64 uchun operatsion tizim yadrosi.
 
 #![no_std]
 #![no_main]
@@ -24,19 +24,22 @@ fn current_el() -> u64 {
     (el >> 2) & 0b11
 }
 
+const BANNER: &str = r"
+ _____               _          ___  ____
+|__  /__ _ _ __ ___ (_)_ __    / _ \/ ___|
+  / // _` | '_ ` _ \| | '_ \  | | | \___ \
+ / /| (_| | | | | | | | | | | | |_| |___) |
+/____\__,_|_| |_| |_|_|_| |_|  \___/|____/
+";
+
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
     uart::console().init();
     exceptions::init();
 
-    println!();
-    println!("  _   _              ___  ____  ");
-    println!(" | \\ | |_   _ _ __  / _ \\/ ___| ");
-    println!(" |  \\| | | | | '__|| | | \\___ \\ ");
-    println!(" | |\\  | |_| | |   | |_| |___) |");
-    println!(" |_| \\_|\\__,_|_|    \\___/|____/ ");
-    println!();
-    println!("Nur OS v{} — AArch64", env!("CARGO_PKG_VERSION"));
+    println!("{}", BANNER);
+    println!("Zamin OS v{} — AArch64", env!("CARGO_PKG_VERSION"));
+    println!("Dasturchi: Abbosjon Dev | zamin.app | info@zamin.app");
     println!("Exception level: EL{}", current_el());
     let (start, end) = (&raw const __kernel_start as usize, &raw const __kernel_end as usize);
     println!("Yadro xotirada: {:#x}..{:#x} ({} KiB)", start, end, (end - start) / 1024);

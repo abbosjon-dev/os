@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "nur-kernel"
+name = "zamin-kernel"
 version = "0.1.0"

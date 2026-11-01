@@ -1,4 +1,6 @@
-# Nur OS
+# Zamin OS
+
+**Dasturchi:** Abbosjon Dev · **Veb-sayt:** [zamin.app](https://zamin.app) · **Email:** [info@zamin.app](mailto:info@zamin.app)
 
 Rust tilida **noldan** yozilayotgan, **ARM64 (AArch64)** protsessorlari uchun operatsion tizim.
 macOS'dan ilhomlangan (toza dizayn, mikroyadroga yaqin arxitektura, silliq UI), lekin undan nusxa ko'chirilmaydi.

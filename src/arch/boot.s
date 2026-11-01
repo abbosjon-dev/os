@@ -1,4 +1,4 @@
-// Nur OS — AArch64 boot kodi.
+// Zamin OS — AArch64 boot kodi.
 // QEMU yadroni EL1 yoki EL2 da boshlaydi. Biz:
 //   1) faqat core 0 ni qoldiramiz, qolganlarini uxlatamiz,
 //   2) EL2 bo'lsak — EL1 ga tushamiz,
