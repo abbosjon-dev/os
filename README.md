@@ -113,6 +113,21 @@ Zamin OS protsessorning barça yadrolarini işlatadi (`cargo run` — 4 ta yadro
   nomsiz kanallar faqat dastak orqali beriladi.
 - `mintaqa +5` — vaqt mintaqasi (administrator); `vaqt` — sana va vaqt.
 
+## Işonçlilik
+
+- **Yadro jurnali** — yadro çiqargan barça xabarlar xotiradagi halqa buferda saqlanadi;
+  `jurnal [qatorlar]` ularni körsatadi.
+- **Panic diskka yoziladi** — yadro xatosi (panic) yuz bersa, xabar (qaysi yadro, vaqt, sabab)
+  qulfsiz va uzilişsiz diskka yoziladi; keyingi yuklanişda `[xavf] oldingi işga tuşirişda...`
+  körinadi. Şunda sabab elektr öçsa ham yöqolmaydi.
+- **Fuzz sinovi** — `fuzz` dasturi tizim çaqiruvlariga minglab tasodifiy argumentlar yuboradi
+  (yadro manzillari, xaritalanmagan manzillar, ulkan sonlar...). Yadro heç qaçon qulamasligi va
+  har bir foydalanuvçi manzilini tekşirişi kerak. Yuklanişda 15000 ta çaqiruv bilan avtomatik
+  sinaladi; `fuzz [son]` bilan qölda ham işga tuşiriş mumkin.
+
+Fuzz sinovi tufayli uçta haqiqiy xato topildi va tuzatildi: `SYS_SLEEP` va `SYS_MAP` da
+son töliş (overflow), hamda kanallar dastak yopilganda böşatilmay, jadvalni töldirişi.
+
 ## Tillar
 
 Asosiy til — **özbekça**, 2026-yilgi yangi lotin alifbosida (Ş, Ç, Ö, Ğ va tutuq belgisi ʼ).
@@ -250,7 +265,7 @@ user/src/heap.rs     Foydalanuvçi xotira ajratuvçisi (Vec, String, format! iş
 user/src/thread.rs   Oqimlar: spawn, join
 user/src/sync.rs     Futex asosidagi Mutex
 user/src/fs.rs       Fayllar: File, read, write, list, mkdir, remove
-user/src/bin/        Dasturlar: terminal, oqimlar, ekran, izla, sana, tartib, salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz, katta
+user/src/bin/        Dasturlar: terminal, oqimlar, qafas, fuzz, ekran, izla, sana, tartib, salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz, katta
 src/setup.rs         Birinçi sozlaş (til, ism, login, parol) va kiriş
 src/accounts.rs      Foydalanuvçi hisoblari, parol xeşi
 src/config.rs        Diskdagi sozlamalar
@@ -267,6 +282,8 @@ scripts/qemu.sh      `cargo run` uçun: disk obrazini yaratadi va QEMU ni işga 
 src/i18n.rs          Köp tillilik: özbekça (asosiy), русский, English
 src/shell.rs         Kiriş, terminalni işga tuşiriş, tizim buyruqlari (SYS_ADMIN), zaxira terminal
 src/pipe.rs          Quvurlar
+src/time.rs          Sana/vaqt, vaqt mintaqasi
+src/klog.rs          Yadro jurnali (halqa bufer)
 user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 ```
 
@@ -284,6 +301,7 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [ ] **7. Drayverlar** — virtio-blk disk tayyor; tarmoq, GPU, klaviatura/siçqonça — navbatda
 - [x] **7½. Birinçi sozlaş** — til, hisob (login + parol), tilga mos tizim papkalari, kiriş ekrani
 - [x] **8. Fayl tizimi** — VFS + ZaminFS 2 (bloklar, copy-on-write, şifrlangan daraxt)
+- [x] **9. Işonçlilik** — yadro jurnali, panic diskka yoziladi, fuzz sinovi
 - [x] **8½. Yadro himoyasi** — qörğonli yadro steklari, PAN, WXN, böşatilgan xotirani nollaş, ASLR
 - [ ] **9. Grafika** — framebuffer, kompozitor, oyna menejeri, şriftlar
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar

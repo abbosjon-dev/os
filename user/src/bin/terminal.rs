@@ -54,6 +54,7 @@ const ADMIN: &[Cmd] = &[
     (["saqla", "сохранить", "sync"], &[], ["fayllarni hozir saqlaş", "сохранить файлы сейчас", "save files now"]),
     (["xavfsizlik", "безопасность", "security"], &[], ["himoya holati", "состояние защиты", "protection status"]),
     (["mintaqa", "пояс", "tz"], &[], ["vaqt mintaqasi: mintaqa +5", "часовой пояс: пояс +5", "time zone: tz +5"]),
+    (["jurnal", "журнал", "log"], &[], ["yadro jurnali: jurnal [qatorlar]", "журнал ядра: журнал [строк]", "kernel log: log [lines]"]),
     (["tiklaş", "сброс", "reset"], &["tiklash"], ["sozlamalarni öçiriş", "стереть настройки", "erase settings"]),
     (["hisoblar", "пользователи", "users"], &[], ["foydalanuvçilar: hisoblar [qöş | öçir] login", "пользователи: [добавить | удалить] логин", "users: [add | del] login"]),
     (["qayta", "перезагрузка", "reboot"], &[], ["qayta yuklaş", "перезагрузить", "restart"]),

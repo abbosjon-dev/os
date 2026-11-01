@@ -24,6 +24,8 @@ struct Channel {
     owner: u32,
     queue: VecDeque<Vec<u8>>,
     sent: u64,
+    /// Neçta dastak şu kanalga işora qiladi; 0 ga tuşsa — kanal öçiriladi
+    refs: u32,
 }
 
 static CHANNELS: SpinLock<Vec<Channel>> = SpinLock::new(Vec::new());
@@ -59,17 +61,46 @@ pub fn open(name: &str, uid: u32) -> Result<ChanId, IpcError> {
     }
     let mut ch = CHANNELS.lock();
     if let Some(i) = ch.iter().position(|c| c.name == name) {
-        let c = &ch[i];
+        let c = &mut ch[i];
         if uid != 0 && c.owner != uid && !name.starts_with(PUBLIC_PREFIX) {
             return Err(IpcError::Denied);
         }
+        c.refs += 1;
+        return Ok(i);
+    }
+    place(&mut ch, Channel { name: String::from(name), owner: uid, queue: VecDeque::new(), sent: 0, refs: 1 })
+}
+
+/// Böş uyaçaga qöyadi (öçirilganlar örnida) yoki oxiriga qöşadi.
+fn place(ch: &mut Vec<Channel>, c: Channel) -> Result<ChanId, IpcError> {
+    if let Some(i) = ch.iter().position(|x| x.refs == 0 && x.name.is_empty() && x.queue.is_empty()) {
+        ch[i] = c;
         return Ok(i);
     }
     if ch.len() >= MAX_CHANNELS {
         return Err(IpcError::Full);
     }
-    ch.push(Channel { name: String::from(name), owner: uid, queue: VecDeque::new(), sent: 0 });
+    ch.push(c);
     Ok(ch.len() - 1)
+}
+
+/// Dastak nusxalandi (bolaga berildi).
+pub fn add_ref(id: ChanId) {
+    if let Some(c) = CHANNELS.lock().get_mut(id) {
+        c.refs += 1;
+    }
+}
+
+/// Dastak yopildi; oxirgisi bölsa — kanal öçiriladi (böş uyaça qoldiriladi).
+pub fn release(id: ChanId) {
+    if let Some(c) = CHANNELS.lock().get_mut(id) {
+        c.refs = c.refs.saturating_sub(1);
+        if c.refs == 0 {
+            c.name = String::new();
+            c.owner = 0;
+            c.queue.clear();
+        }
+    }
 }
 
 /// Nomsiz kanal: uni faqat dastagi bor jarayon (masalan, bolaga berilgan) işlata oladi.
@@ -78,8 +109,7 @@ pub fn create_anonymous(uid: u32) -> Result<ChanId, IpcError> {
     if ch.len() >= MAX_CHANNELS {
         return Err(IpcError::Full);
     }
-    ch.push(Channel { name: String::new(), owner: uid, queue: VecDeque::new(), sent: 0 });
-    Ok(ch.len() - 1)
+    place(&mut ch, Channel { name: String::new(), owner: uid, queue: VecDeque::new(), sent: 0, refs: 1 })
 }
 
 /// Xabarni navbatga qöyadi va kutayotganlarni uyğotadi.
@@ -130,6 +160,7 @@ pub fn list() -> Vec<(String, usize, u64)> {
     CHANNELS
         .lock()
         .iter()
+        .filter(|c| c.refs > 0)
         .map(|c| (if c.name.is_empty() { String::from("(nomsiz)") } else { c.name.clone() }, c.queue.len(), c.sent))
         .collect()
 }

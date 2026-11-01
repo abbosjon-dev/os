@@ -39,6 +39,7 @@ enum Cmd {
     Security,
     Users,
     Timezone,
+    Journal,
     Reboot,
     Shutdown,
 }
@@ -77,6 +78,7 @@ const COMMANDS: &[Command] = &[
     Command { cmd: Cmd::Security, names: ["xavfsizlik", "безопасность", "security"], aliases: &[], help: ["himoya holati", "состояние защиты", "protection status"] },
     Command { cmd: Cmd::Users, names: ["hisoblar", "пользователи", "users"], aliases: &[], help: ["foydalanuvçilar: hisoblar [qöş | öçir] [login]", "пользователи: пользователи [добавить | удалить] [логин]", "users: users [add | del] [login]"] },
     Command { cmd: Cmd::Timezone, names: ["mintaqa", "пояс", "tz"], aliases: &[], help: ["vaqt mintaqasi: mintaqa +5", "часовой пояс: пояс +5", "time zone: tz +5"] },
+    Command { cmd: Cmd::Journal, names: ["jurnal", "журнал", "log"], aliases: &[], help: ["yadro jurnali: jurnal [qatorlar soni]", "журнал ядра: журнал [строк]", "kernel log: log [lines]"] },
     Command { cmd: Cmd::Reboot, names: ["qayta", "перезагрузка", "reboot"], aliases: &[], help: ["qayta yuklaş", "перезагрузить", "restart"] },
     Command { cmd: Cmd::Shutdown, names: ["öçir", "выкл", "shutdown"], aliases: &["ocir", "ochir"], help: ["tizimni öçiriş", "выключить систему", "power off"] },
 ];
@@ -120,6 +122,11 @@ fn program_help(name: &str) -> Text {
             "tub sonlarni bir neçta oqimda sanaydi: oqimlar [son] [çegara]",
             "считает простые в нескольких потоках: oqimlar [n] [предел]",
             "counts primes in several threads: oqimlar [n] [limit]",
+        ],
+        "fuzz" => [
+            "tizim çaqiruvlariga tasodifiy argumentlar (barqarorlik sinovi)",
+            "случайные аргументы системным вызовам (тест устойчивости)",
+            "random arguments to system calls (stability test)",
         ],
         "qafas" => [
             "qafasdan qoçişga urinadi (çeklangan qafas)",
@@ -279,6 +286,19 @@ impl Shell {
             Cmd::About => {
                 tprintln!(msg::SH_VERSION, env!("CARGO_PKG_VERSION"));
                 tprintln!(msg::SH_ABOUT);
+            }
+            Cmd::Journal => {
+                let data = crate::klog::snapshot();
+                let text = String::from_utf8_lossy(&data);
+                let lines: alloc::vec::Vec<&str> = text.lines().collect();
+                if lines.is_empty() {
+                    tprintln!(msg::SH_JOURNAL_EMPTY);
+                    return;
+                }
+                let n: usize = args.parse().unwrap_or(20);
+                for l in &lines[lines.len().saturating_sub(n)..] {
+                    println!("  {}", l);
+                }
             }
             Cmd::Timezone => {
                 if args.is_empty() {

@@ -182,8 +182,19 @@ pub fn console() -> Uart {
 pub fn _print(args: fmt::Arguments) {
     use fmt::Write;
     with_console(|c| {
-        let _ = c.write_fmt(args);
+        let mut j = Journaled(c);
+        let _ = j.write_fmt(args);
     });
+}
+
+/// Ekranga yozadi va yadro jurnaliga ham qöşadi.
+pub struct Journaled<'a>(pub &'a mut Uart);
+
+impl fmt::Write for Journaled<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        crate::klog::append(s.as_bytes());
+        self.0.write_str(s)
+    }
 }
 
 #[macro_export]

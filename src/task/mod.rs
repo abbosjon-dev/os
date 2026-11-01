@@ -73,6 +73,7 @@ impl Handle {
         match self {
             Handle::PipeRead(id) => crate::pipe::add_ref(id, false),
             Handle::PipeWrite(id) => crate::pipe::add_ref(id, true),
+            Handle::Channel(id) => crate::ipc::add_ref(id),
             _ => {}
         }
         self
@@ -83,6 +84,7 @@ impl Handle {
         match self {
             Handle::PipeRead(id) => crate::pipe::release(id, false),
             Handle::PipeWrite(id) => crate::pipe::release(id, true),
+            Handle::Channel(id) => crate::ipc::release(id),
             _ => {}
         }
     }
@@ -601,7 +603,7 @@ pub fn check_killed() {
 }
 
 pub fn sleep_ms(ms: u64) {
-    block_current_if(State::Sleeping(timer::uptime_ms() + ms), || true);
+    block_current_if(State::Sleeping(timer::uptime_ms().saturating_add(ms)), || true);
 }
 
 /// Klaviaturadan maʼlumot kelgunça kutadi.
@@ -1027,7 +1029,8 @@ pub fn map_memory(size: usize) -> Option<usize> {
     let pages = size.div_ceil(PAGE_SIZE);
     with_proc(|t| {
         let start = t.heap_end;
-        if pages == 0 || start + pages * PAGE_SIZE > t.heap_base + USER_HEAP_MAX {
+        let bytes = pages.checked_mul(PAGE_SIZE)?;
+        if pages == 0 || start.checked_add(bytes)? > t.heap_base + USER_HEAP_MAX {
             return None;
         }
         let aspace = t.aspace.as_mut()?;

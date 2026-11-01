@@ -20,6 +20,7 @@ mod i18n;
 mod ipc;
 mod line;
 mod irq;
+mod klog;
 mod memory;
 mod pipe;
 mod power;
@@ -147,6 +148,9 @@ pub extern "C" fn kernel_main() -> ! {
         Some(bytes) => tprintln!(msg::DISK_FOUND, bytes >> 20),
         None => tprintln!(msg::DISK_NONE),
     }
+    if let Some(p) = config::take_panic() {
+        tprintln!(msg::PREV_PANIC, p);
+    }
     match config::load() {
         Some(s) => {
             i18n::set(s.lang);
@@ -269,6 +273,12 @@ extern "C" fn boot_tests(_: usize) {
     let (ca, cb) = (COUNTER_A.load(Ordering::Relaxed), COUNTER_B.load(Ordering::Relaxed));
     assert!(ca > 0 && cb > 0, "oqimlar almaşmayapti: {} / {}", ca, cb);
     tprintln!(msg::TEST_SCHED, ca, cb);
+
+    // Fuzz: tizim çaqiruvlariga köplab tasodifiy argumentlar — yadro qulamasligi kerak
+    let fz = task::programs::find("fuzz").expect("fuzz dasturi");
+    let pid = task::spawn_user("fuzz", fz, "15000", task::SpawnOptions::kernel(false)).expect("fuzz");
+    assert_eq!(task::wait(pid), Some(0), "fuzz tugamadi");
+    tprintln!(msg::TEST_FUZZ, 15000);
 
     // SMP: oqimlar turli yadrolarda işlaşi kerak
     if task::cpus_online() > 1 {
@@ -411,5 +421,18 @@ fn self_tests() {
 fn panic(info: &PanicInfo) -> ! {
     uart::force_unlock_console();
     println!("\n{}\n{}", i18n::pick(&msg::PANIC), info);
+    // Xabarni diskka ham yozamiz: keyingi yuklanişda körsatiladi (heap işlatilmaydi)
+    struct Buf([u8; 480], usize);
+    impl core::fmt::Write for Buf {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            let n = s.len().min(self.0.len() - self.1);
+            self.0[self.1..self.1 + n].copy_from_slice(&s.as_bytes()[..n]);
+            self.1 += n;
+            Ok(())
+        }
+    }
+    let mut b = Buf([0; 480], 0);
+    let _ = core::fmt::write(&mut b, format_args!("CPU {}, {} ms: {}", task::cpu_id(), timer::uptime_ms(), info));
+    config::save_panic(&b.0[..b.1]);
     power::halt();
 }

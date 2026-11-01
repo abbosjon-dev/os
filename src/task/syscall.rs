@@ -357,9 +357,6 @@ fn handle(num: u64, a: [u64; 6]) -> SysResult {
             Ok(0)
         }
 
-        _ => {
-            crate::tprintln!(i18n::msg::PROC_BAD_SYSCALL, task::current_pid(), num);
-            Err(ERR_UNKNOWN_SYSCALL)
-        }
+        _ => Err(ERR_UNKNOWN_SYSCALL), // nomaʼlum çaqiruv — dastur xatoni özi qayta işlaydi
     }
 }

@@ -117,6 +117,14 @@ impl<T> Mutex<T> {
     }
 }
 
+impl<T> Mutex<T> {
+    /// Faqat panic işlovçisi uçun: qulfni kutmasdan maʼlumotga yetiş (tizim baribir töxtaydi).
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn force_get(&self) -> &mut T {
+        unsafe { &mut *self.data.get() }
+    }
+}
+
 pub struct MutexGuard<'a, T> {
     lock: &'a Mutex<T>,
 }

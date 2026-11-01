@@ -106,6 +106,24 @@ impl VirtioBlk {
     }
 }
 
+/// Panic paytida: qulfsiz va uzilişsiz (javobni aylanib kutib) bitta sektor yozadi.
+pub fn write_polled(sector: u64, data: &[u8]) -> bool {
+    let Some(d) = (unsafe { DISK.force_get() }).as_mut() else { return false };
+    if sector >= d.capacity || data.len() > SECTOR {
+        return false;
+    }
+    unsafe {
+        core::ptr::write_bytes(d.data as *mut u8, 0, SECTOR);
+        core::ptr::copy_nonoverlapping(data.as_ptr(), d.data as *mut u8, data.len());
+        write_volatile(d.req as *mut u32, REQ_OUT);
+        write_volatile((d.req + 4) as *mut u32, 0);
+        write_volatile((d.req + 8) as *mut u64, sector);
+        write_volatile((d.req + 16) as *mut u8, 0xff);
+    }
+    d.t.submit(&[(d.req, 16, false), (d.data, SECTOR, false), (d.req + 16, 1, true)]);
+    unsafe { read_volatile((d.req + 16) as *const u8) == 0 }
+}
+
 /// `sector` dan boşlab öqiydi. `buf` uzunligi 512 ga karrali bölişi kerak.
 pub fn read(sector: u64, buf: &mut [u8]) -> Result<(), DiskError> {
     let mut guard = DISK.lock();

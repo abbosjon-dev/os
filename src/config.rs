@@ -141,6 +141,33 @@ pub fn save(s: &Settings) -> bool {
     disk::write(CONFIG_SECTOR, &buf).is_ok() && disk::write(0, &header).is_ok()
 }
 
+/// Yadro xatosi (panic) xabari uçun sektor (sozlamalar va fayl tizimi orasida).
+const PANIC_SECTOR: u64 = 40;
+const PANIC_MAGIC: &[u8; 8] = b"ZPANIC01";
+
+/// Panic işlovçisidan: xabarni diskka yozadi (qulfsiz, uzilişsiz).
+pub fn save_panic(text: &[u8]) {
+    let mut s = [0u8; SECTOR];
+    s[..8].copy_from_slice(PANIC_MAGIC);
+    let n = text.len().min(SECTOR - 12);
+    s[8..12].copy_from_slice(&(n as u32).to_le_bytes());
+    s[12..12 + n].copy_from_slice(&text[..n]);
+    disk::write_polled(PANIC_SECTOR, &s);
+}
+
+/// Oldingi işga tuşirişdagi yadro xatosi (bölsa) — öqiladi va öçiriladi.
+pub fn take_panic() -> Option<String> {
+    let mut s = [0u8; SECTOR];
+    disk::read(PANIC_SECTOR, &mut s).ok()?;
+    if &s[..8] != PANIC_MAGIC {
+        return None;
+    }
+    let n = (u32::from_le_bytes(s[8..12].try_into().ok()?) as usize).min(SECTOR - 12);
+    let text = String::from_utf8_lossy(&s[12..12 + n]).into_owned();
+    let _ = disk::write(PANIC_SECTOR, &[0u8; SECTOR]);
+    Some(text)
+}
+
 /// Sozlamalarni öçiradi: keyingi yuklanişda birinçi sozlaş qayta boşlanadi.
 /// Örangan kalit ham öçadi — ZaminFS dagi maʼlumotlar endi heç qaçon oçilmaydi ("kripto-öçiriş").
 pub fn wipe() -> bool {

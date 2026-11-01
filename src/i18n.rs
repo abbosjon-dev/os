@@ -63,9 +63,10 @@ pub fn write_template(w: &mut impl Write, tpl: &str, args: &[&dyn Display]) -> f
 #[doc(hidden)]
 pub fn _tprint(t: &Text, args: &[&dyn Display], newline: bool) {
     crate::uart::with_console(|c| {
-        let _ = write_template(c, pick(t), args);
+        let mut j = crate::uart::Journaled(c);
+        let _ = write_template(&mut j, pick(t), args);
         if newline {
-            let _ = c.write_str("\n");
+            let _ = j.write_str("\n");
         }
     });
 }
@@ -233,11 +234,6 @@ pub mod msg {
         "[jarayon {}] himoya xatosi: {} manzilga ruxsatsiz murojaat (EC {}) — jarayon tugatildi",
         "[процесс {}] ошибка защиты: недопустимый доступ к адресу {} (EC {}) — процесс завершён",
         "[process {}] protection fault: illegal access to address {} (EC {}) — process terminated",
-    ];
-    pub const PROC_BAD_SYSCALL: Text = [
-        "[jarayon {}] nomaʼlum tizim çaqiruvi: {}",
-        "[процесс {}] неизвестный системный вызов: {}",
-        "[process {}] unknown system call: {}",
     ];
     pub const STATE_READY: Text = ["tayyor", "готов", "ready"];
     pub const STATE_RUNNING: Text = ["işlamoqda", "работает", "running"];
@@ -452,6 +448,17 @@ pub mod msg {
     pub const SH_NO_ACCOUNT: Text = ["  Hisob yöq.", "  Нет учётной записи.", "  No account."];
 
     // --- Xavfsizlik va ZaminFS ---
+    pub const PREV_PANIC: Text = [
+        "[xavf] Oldingi işga tuşirişda yadro xatosi böldi: {}",
+        "[угр.] В прошлый запуск произошла ошибка ядра: {}",
+        "[risk] The kernel crashed during the previous run: {}",
+    ];
+    pub const SH_JOURNAL_EMPTY: Text = ["  (jurnal böş)", "  (журнал пуст)", "  (log is empty)"];
+    pub const TEST_FUZZ: Text = [
+        "[test] fuzz: {} ta tasodifiy tizim çaqiruvi — yadro barqaror — OK",
+        "[test] fuzz: {} случайных системных вызовов — ядро устойчиво — OK",
+        "[test] fuzz: {} random system calls — kernel stable — OK",
+    ];
     pub const TIME_NOW: Text = ["[vaqt] {} ({})", "[время] {} ({})", "[time] {} ({})"];
     pub const SH_DATE: Text = ["  Sana va vaqt: {} ({})", "  Дата и время: {} ({})", "  Date and time: {} ({})"];
     pub const SH_TZ_SET: Text = ["  Mintaqa: {}", "  Часовой пояс: {}", "  Time zone: {}"];
