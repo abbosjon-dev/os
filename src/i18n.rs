@@ -62,11 +62,12 @@ pub fn write_template(w: &mut impl Write, tpl: &str, args: &[&dyn Display]) -> f
 
 #[doc(hidden)]
 pub fn _tprint(t: &Text, args: &[&dyn Display], newline: bool) {
-    let mut c = crate::uart::console();
-    let _ = write_template(&mut c, pick(t), args);
-    if newline {
-        let _ = c.write_str("\n");
-    }
+    crate::uart::with_console(|c| {
+        let _ = write_template(c, pick(t), args);
+        if newline {
+            let _ = c.write_str("\n");
+        }
+    });
 }
 
 /// Joriy tilda çiqaradi: `tprintln!(msg::RAM, a, b)`.
@@ -247,9 +248,9 @@ pub mod msg {
     pub const KIND_USER: Text = ["dastur", "программа", "program"];
 
     pub const SH_PS_HEADER: Text = [
-        "  PID  TURI       HOLAT        NOM",
-        "  PID  ТИП        СОСТОЯНИЕ    ИМЯ",
-        "  PID  TYPE       STATE        NAME",
+        "  PID  CPU  TURI       HOLAT        NOM",
+        "  PID  CPU  ТИП        СОСТОЯНИЕ    ИМЯ",
+        "  PID  CPU  TYPE       STATE        NAME",
     ];
     pub const SH_EXITED: Text = [
         "  [{} {} tugadi, çiqiş kodi: {}]",
@@ -451,6 +452,16 @@ pub mod msg {
         "  Saved: {} bytes (encrypted)",
     ];
     pub const SH_SAVE_FAIL: Text = ["  Saqlab bölmadi: {}", "  Не удалось сохранить: {}", "  Save failed: {}"];
+    pub const SMP_READY: Text = [
+        "[smp ] {} ta protsessor yadrosi işlamoqda",
+        "[smp ] работает ядер процессора: {}",
+        "[smp ] {} CPU cores online",
+    ];
+    pub const TEST_SMP: Text = [
+        "[test] SMP: oqimlar {} ta yadroda parallel işladi — OK",
+        "[test] SMP: потоки параллельно работали на {} ядрах — OK",
+        "[test] SMP: threads ran in parallel on {} cores — OK",
+    ];
     pub const TEST_STACK_GUARD: Text = [
         "[test] yadro steki qörğoni: töliş aniqlandi, faqat aybdor oqim tugatildi — OK",
         "[test] защита стека ядра: переполнение обнаружено, завершён только виновный поток — OK",

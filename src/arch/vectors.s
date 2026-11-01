@@ -85,12 +85,18 @@ save_\kind:
     SAVE_AND_CALL \kind
 .endr
 
-// Yadro steki töldi: favqulodda stekka ötib, xatoni qayd qilamiz (tur 16).
+// Yadro steki töldi: şu yadroning favqulodda stekiga ötib, xatoni qayd qilamiz (tur 16).
 // x0 vaqtinça TPIDR_EL1 da saqlanadi (yadro bu registrni boşqa işlatmaydi).
+// Stek tepasi: __emergency_stacks + (yadro + 1) * 64 KiB.
 stack_overflow:
     msr     tpidr_el1, x0
-    ldr     x0, =__emergency_stack_top
+    mrs     x0, mpidr_el1
+    and     x0, x0, #3
+    add     x0, x0, #1
+    lsl     x0, x0, #16
     mov     sp, x0
+    ldr     x0, =__emergency_stacks
+    add     sp, sp, x0
     mrs     x0, tpidr_el1
     sub     sp, sp, #(34 * 8)
     SAVE_AND_CALL 16

@@ -55,6 +55,13 @@ impl<T> SpinLock<T> {
     }
 }
 
+impl<T> SpinLock<T> {
+    /// Faqat panic işlovçisi uçun: qulf egasi heç qaçon qaytmaydi.
+    pub unsafe fn force_unlock(&self) {
+        self.locked.store(false, Ordering::Release);
+    }
+}
+
 pub struct SpinLockGuard<'a, T> {
     lock: &'a SpinLock<T>,
     daif: u64,

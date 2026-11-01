@@ -255,7 +255,8 @@ impl Shell {
                     let st = state_text(t.state);
                     let pk = 11usize.saturating_sub(kind.chars().count());
                     let ps = 13usize.saturating_sub(st.chars().count());
-                    println!("  {:<4} {}{:pk$}{}{:ps$}{}", pid, kind, "", st, "", name, pk = pk, ps = ps);
+                    let cpu = if t.state == State::Running { alloc::format!("{}", t.cpu) } else { String::from("-") };
+                    println!("  {:<4} {:<4} {}{:pk$}{}{:ps$}{}", pid, cpu, kind, "", st, "", name, pk = pk, ps = ps);
                 }
             }
             Cmd::Programs => {

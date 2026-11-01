@@ -20,11 +20,14 @@ use crate::{fs, ipc};
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::arch::asm;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub type Pid = usize;
 
 const MAX_TASKS: usize = 64;
+/// Eng köp protsessor yadrolari (QEMU virt: -smp 4).
+pub const MAX_CPUS: usize = 4;
 const KSTACK_PAGES: usize = 8; // 32 KiB
 /// Stek oynasi: 64 KiB (pastki yarmi — qörğon). Qarang: arch/vectors.s
 const KSTACK_WINDOW: usize = 64 * 1024;
@@ -77,6 +80,10 @@ pub struct Task {
     pub parent: Pid,
     /// Heç kim kutmaydi — tugagaç avtomatik tozalanadi.
     detached: bool,
+    /// Konteksti hozir biror yadroda "jonli" (işlayapti yoki almaştiriş tugamagan)
+    on_cpu: bool,
+    /// Oxirgi marta qaysi yadroda işlagan
+    pub last_cpu: usize,
     handles: Vec<Option<Handle>>,
     heap_base: usize,
     heap_end: usize,
@@ -152,18 +159,38 @@ fn free_kstack(slot: usize) {
 
 struct Scheduler {
     tasks: [Option<Box<Task>>; MAX_TASKS],
-    current: usize,
+    /// Har bir yadroda hozir işlayotgan vazifa uyaçasi
+    current: [usize; MAX_CPUS],
     next_pid: Pid,
 }
 
-static SCHED: SpinLock<Scheduler> =
-    SpinLock::new(Scheduler { tasks: [const { None }; MAX_TASKS], current: 0, next_pid: 1 });
+static SCHED: SpinLock<Scheduler> = SpinLock::new(Scheduler {
+    tasks: [const { None }; MAX_TASKS],
+    current: [0; MAX_CPUS],
+    next_pid: 1,
+});
 static STARTED: AtomicBool = AtomicBool::new(false);
+/// Har bir yadro: oxirgi almaştirişda kimdan ketdik (`finish_switch` uçun).
+static PREV: [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(NO_TASK) }; MAX_CPUS];
+const NO_TASK: usize = usize::MAX;
+/// Işlayotgan yadrolar soni.
+static CPUS_ONLINE: AtomicUsize = AtomicUsize::new(0);
+
+/// Joriy yadro raqami (MPIDR_EL1.Aff0).
+pub fn cpu_id() -> usize {
+    let mpidr: u64;
+    unsafe { asm!("mrs {}, mpidr_el1", out(reg) mpidr, options(nomem, nostack)) };
+    (mpidr & 0xff) as usize % MAX_CPUS
+}
+
+pub fn cpus_online() -> usize {
+    CPUS_ONLINE.load(Ordering::Acquire)
+}
 
 unsafe extern "C" {
     fn switch_context(old: *mut Context, new: *const Context);
     fn kthread_trampoline();
-    fn restore_and_eret();
+    fn user_trampoline();
 }
 
 #[derive(Debug)]
@@ -175,33 +202,59 @@ pub enum SpawnError {
     BadImage(elf::ElfError),
 }
 
-/// Joriy kod (kernel_main) PID 0 — "yadro" vazifasiga aylanadi.
-pub fn init() {
-    let idle = Box::new(Task {
+fn idle_task(cpu: usize) -> Box<Task> {
+    Box::new(Task {
         pid: 0,
-        name: String::from("yadro"),
+        name: alloc::format!("yadro/{}", cpu),
         state: State::Running,
         user: false,
         parent: 0,
         detached: false,
+        on_cpu: true,
+        last_cpu: cpu,
         handles: Vec::new(),
         heap_base: USER_HEAP_BASE,
         heap_end: USER_HEAP_BASE,
         ctx: Context::default(),
         kstack: None,
         aspace: None,
-    });
-    SCHED.lock().tasks[0] = Some(idle);
+    })
+}
+
+/// Birinçi yadro: joriy kod (kernel_main) PID 0 — "yadro/0" vazifasiga aylanadi.
+pub fn init() {
+    init_cpu(0);
     STARTED.store(true, Ordering::Release);
 }
 
+/// Har bir yadro öz böş vazifasini (PID 0, uyaça = yadro raqami) röyxatga oladi.
+pub fn init_cpu(cpu: usize) {
+    {
+        let mut s = SCHED.lock();
+        s.tasks[cpu] = Some(idle_task(cpu));
+        s.current[cpu] = cpu;
+    }
+    CPUS_ONLINE.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Yangi tayyor vazifa bor — uxlab yotgan boşqa yadrolarni uyğotamiz.
+fn kick_others() {
+    if cpus_online() > 1 {
+        crate::gic::send_sgi_others(crate::irq::SGI_RESCHEDULE);
+    }
+}
+
 fn insert(mut task: Box<Task>) -> Result<Pid, SpawnError> {
-    let mut s = SCHED.lock();
-    let slot = (1..MAX_TASKS).find(|&i| s.tasks[i].is_none()).ok_or(SpawnError::TooManyTasks)?;
-    let pid = s.next_pid;
-    s.next_pid += 1;
-    task.pid = pid;
-    s.tasks[slot] = Some(task);
+    let pid = {
+        let mut s = SCHED.lock();
+        let slot = (MAX_CPUS..MAX_TASKS).find(|&i| s.tasks[i].is_none()).ok_or(SpawnError::TooManyTasks)?;
+        let pid = s.next_pid;
+        s.next_pid += 1;
+        task.pid = pid;
+        s.tasks[slot] = Some(task);
+        pid
+    };
+    kick_others();
     Ok(pid)
 }
 
@@ -225,6 +278,8 @@ pub fn spawn_kernel_ext(name: &str, entry: extern "C" fn(usize), arg: usize, det
         user: false,
         parent: 0,
         detached,
+        on_cpu: false,
+        last_cpu: 0,
         handles: Vec::new(),
         heap_base: USER_HEAP_BASE,
         heap_end: USER_HEAP_BASE,
@@ -280,7 +335,7 @@ pub fn spawn_user(name: &str, image: &[u8], args: &str, detached: bool, parent: 
         });
     }
     let mut ctx = Context::default();
-    ctx.lr = restore_and_eret as *const () as u64;
+    ctx.lr = user_trampoline as *const () as u64;
     ctx.sp = frame_ptr as u64;
 
     let task = Box::new(Task {
@@ -290,6 +345,8 @@ pub fn spawn_user(name: &str, image: &[u8], args: &str, detached: bool, parent: 
         user: true,
         parent,
         detached,
+        on_cpu: false,
+        last_cpu: 0,
         handles: Vec::new(),
         heap_base,
         heap_end: heap_base,
@@ -301,7 +358,12 @@ pub fn spawn_user(name: &str, image: &[u8], args: &str, detached: bool, parent: 
 }
 
 /// Keyingi tayyor vazifani tanlab, unga ötadi. IRQ öçiq holatda çaqirilişi kerak.
+///
+/// Köp yadroli xavfsizlik: tanlangan vazifa `on_cpu = true` bölib qoladi;
+/// eski vazifaning `on_cpu` belgisi faqat uning konteksti töliq saqlangandan keyin
+/// (`finish_switch`) tozalanadi — şungaça uni boşqa yadro olib keta olmaydi.
 fn schedule() {
+    let cpu = cpu_id();
     let (old, new) = {
         let mut guard = SCHED.lock();
         let s = &mut *guard;
@@ -314,24 +376,31 @@ fn schedule() {
             }
         }
 
-        let cur = s.current;
+        let cur = s.current[cpu];
         if let Some(t) = s.tasks[cur].as_mut() {
             if t.state == State::Running {
                 t.state = State::Ready;
             }
         }
-        // Round-robin: joriydan keyingi tayyor vazifa; heç kim bölmasa — PID 0.
+        // Round-robin: joriydan keyingi tayyor (va boşqa yadroda işlamayotgan) vazifa;
+        // heç kim bölmasa — şu yadroning böş vazifasi.
         let next = (1..=MAX_TASKS)
             .map(|k| (cur + k) % MAX_TASKS)
-            .find(|&i| i != 0 && matches!(s.tasks[i].as_ref().map(|t| t.state), Some(State::Ready)))
-            .unwrap_or(0);
+            .find(|&i| {
+                i >= MAX_CPUS
+                    && s.tasks[i].as_ref().is_some_and(|t| t.state == State::Ready && (!t.on_cpu || i == cur))
+            })
+            .unwrap_or(cpu);
 
         let next_task = s.tasks[next].as_mut().expect("vazifa yöq");
         next_task.state = State::Running;
+        next_task.on_cpu = true;
+        next_task.last_cpu = cpu;
         if next == cur {
             return;
         }
-        s.current = next;
+        s.current[cpu] = next;
+        PREV[cpu].store(cur, Ordering::Release);
         let new_root = next_task.aspace.as_ref().map_or(mmu::kernel_root_pa(), |a| a.root_pa());
         let new: *const Context = &next_task.ctx;
         let old: *mut Context = &mut s.tasks[cur].as_mut().unwrap().ctx;
@@ -339,6 +408,19 @@ fn schedule() {
         (old, new)
     };
     unsafe { switch_context(old, new) };
+    finish_switch();
+}
+
+/// Almaştirişdan keyin yangi vazifa içida çaqiriladi: eski vazifa endi
+/// boşqa yadroda işga tuşirilişi (yoki tozalanişi) mumkin.
+#[unsafe(no_mangle)]
+pub extern "C" fn finish_switch() {
+    let prev = PREV[cpu_id()].swap(NO_TASK, Ordering::AcqRel);
+    if prev != NO_TASK {
+        if let Some(t) = SCHED.lock().tasks[prev].as_mut() {
+            t.on_cpu = false;
+        }
+    }
 }
 
 /// Taymer yoki boşqa uziliş tugagaç çaqiriladi (IRQ kontekstida).
@@ -355,41 +437,54 @@ pub fn yield_now() {
     irq_restore(d);
 }
 
-fn block_current(state: State) {
+/// Şart rost bölsa, joriy vazifani `state` holatiga ötkazib uxlatadi.
+/// Şart rejalaştiruvçi qulfi ostida tekşiriladi: uyğotuvçi ham şu qulfni oladi,
+/// şuning uçun "tekşirdik → uyğotiş keldi → uxladik" poygasi (yöqolgan uyğotiş) bölmaydi.
+fn block_current_if(state: State, cond: impl Fn() -> bool) {
     let d = irq_save();
     {
         let mut s = SCHED.lock();
-        let cur = s.current;
-        s.tasks[cur].as_mut().unwrap().state = state;
+        let cur = s.current[cpu_id()];
+        let t = s.tasks[cur].as_mut().unwrap();
+        if t.state == State::Running && cond() {
+            t.state = state;
+        }
     }
     schedule();
     irq_restore(d);
 }
 
 pub fn sleep_ms(ms: u64) {
-    block_current(State::Sleeping(timer::uptime_ms() + ms));
+    block_current_if(State::Sleeping(timer::uptime_ms() + ms), || true);
 }
 
 /// Klaviaturadan maʼlumot kelgunça kutadi.
 pub fn wait_input(has_input: impl Fn() -> bool) {
-    let d = irq_save();
-    if !has_input() {
-        block_current(State::WaitingInput);
+    block_current_if(State::WaitingInput, || !has_input());
+}
+
+fn wake_where(pred: impl Fn(State) -> bool) {
+    if !STARTED.load(Ordering::Acquire) {
+        return;
     }
-    irq_restore(d);
+    let mut woke = false;
+    {
+        let mut s = SCHED.lock();
+        for t in s.tasks.iter_mut().flatten() {
+            if pred(t.state) {
+                t.state = State::Ready;
+                woke = true;
+            }
+        }
+    }
+    if woke {
+        kick_others();
+    }
 }
 
 /// Klaviatura uzilişidan çaqiriladi.
 pub fn wake_input() {
-    if !STARTED.load(Ordering::Acquire) {
-        return;
-    }
-    let mut s = SCHED.lock();
-    for t in s.tasks.iter_mut().flatten() {
-        if t.state == State::WaitingInput {
-            t.state = State::Ready;
-        }
-    }
+    wake_where(|st| st == State::WaitingInput);
 }
 
 /// Joriy vazifani tugatadi. Qaytmaydi.
@@ -397,7 +492,7 @@ pub fn exit_current(code: i64) -> ! {
     irq_save();
     {
         let mut s = SCHED.lock();
-        let cur = s.current;
+        let cur = s.current[cpu_id()];
         let pid = s.tasks[cur].as_ref().unwrap().pid;
         let me = s.tasks[cur].as_mut().unwrap();
         me.state = State::Dead(code);
@@ -412,6 +507,7 @@ pub fn exit_current(code: i64) -> ! {
             }
         }
     }
+    kick_others();
     schedule();
     unreachable!("tugagan vazifa qayta işga tuşdi");
 }
@@ -423,34 +519,40 @@ extern "C" fn kthread_exit() -> ! {
 
 /// `pid` tugagunça kutadi, çiqiş kodini qaytaradi va uni tozalaydi.
 pub fn wait(pid: Pid) -> Option<i64> {
+    enum Step {
+        Done(Option<i64>),
+        Sleep,
+        Retry,
+    }
     loop {
         let d = irq_save();
-        let found = {
+        let (step, task) = {
             let mut s = SCHED.lock();
-            let slot = s.tasks.iter().position(|t| t.as_ref().is_some_and(|t| t.pid == pid));
-            match slot {
-                None => Some(None),
-                Some(i) => match s.tasks[i].as_ref().unwrap().state {
-                    State::Dead(code) => {
-                        let task = s.tasks[i].take();
-                        drop(s);
-                        drop(task); // xotira qaytariladi
-                        Some(Some(code))
+            let cur = s.current[cpu_id()];
+            match s.tasks.iter().position(|t| t.as_ref().is_some_and(|t| t.pid == pid && t.pid != 0)) {
+                None => (Step::Done(None), None),
+                Some(i) => {
+                    let t = s.tasks[i].as_ref().unwrap();
+                    match (t.state, t.on_cpu) {
+                        // Tugagan va konteksti saqlangan — tozalaş mumkin
+                        (State::Dead(code), false) => (Step::Done(Some(code)), s.tasks[i].take()),
+                        // Tugagan, lekin hali boşqa yadrodan çiqib ulgurmagan
+                        (State::Dead(_), true) => (Step::Retry, None),
+                        _ => {
+                            s.tasks[cur].as_mut().unwrap().state = State::WaitingPid(pid);
+                            (Step::Sleep, None)
+                        }
                     }
-                    _ => {
-                        let cur = s.current;
-                        s.tasks[cur].as_mut().unwrap().state = State::WaitingPid(pid);
-                        None
-                    }
-                },
+                }
             }
         };
-        match found {
-            Some(r) => {
+        drop(task); // xotira qaytariladi (qulfsiz)
+        match step {
+            Step::Done(r) => {
                 irq_restore(d);
                 return r;
             }
-            None => {
+            Step::Sleep | Step::Retry => {
                 schedule();
                 irq_restore(d);
             }
@@ -458,15 +560,15 @@ pub fn wait(pid: Pid) -> Option<i64> {
     }
 }
 
-/// Heç kim kutmayotgan tugagan vazifalarni tozalaydi (PID 0 dan çaqiriladi).
+/// Heç kim kutmayotgan tugagan vazifalarni tozalaydi (böş vazifalardan çaqiriladi).
 pub fn reap_detached() {
     loop {
         let task = {
             let mut s = SCHED.lock();
-            let cur = s.current;
-            let slot = (1..MAX_TASKS).find(|&i| {
-                i != cur
-                    && s.tasks[i].as_ref().is_some_and(|t| t.detached && matches!(t.state, State::Dead(_)))
+            let slot = (MAX_CPUS..MAX_TASKS).find(|&i| {
+                s.tasks[i]
+                    .as_ref()
+                    .is_some_and(|t| t.detached && !t.on_cpu && matches!(t.state, State::Dead(_)))
             });
             match slot {
                 Some(i) => s.tasks[i].take(),
@@ -477,32 +579,36 @@ pub fn reap_detached() {
     }
 }
 
-/// Foydalanuvçi jarayonini tugatadi (joriy bölmasa). Yadro oqimlarini tugatib bölmaydi.
+/// Foydalanuvçi jarayonini tugatadi. Yadro oqimlarini tugatib bölmaydi.
+/// Boşqa yadroda işlayotgan jarayon keyingi almaştirişda töxtaydi.
 pub fn kill(pid: Pid) -> bool {
-    let mut s = SCHED.lock();
-    let cur = s.current;
-    let Some(i) = s.tasks.iter().position(|t| t.as_ref().is_some_and(|t| t.pid == pid)) else {
-        return false;
-    };
-    let t = s.tasks[i].as_mut().unwrap();
-    if !t.user || i == cur || matches!(t.state, State::Dead(_)) {
-        return false;
-    }
-    t.state = State::Dead(-9);
-    for t in s.tasks.iter_mut().flatten() {
-        if t.state == State::WaitingPid(pid) {
-            t.state = State::Ready;
+    {
+        let mut s = SCHED.lock();
+        let cur = s.current[cpu_id()];
+        let Some(i) = s.tasks.iter().position(|t| t.as_ref().is_some_and(|t| t.pid == pid)) else {
+            return false;
+        };
+        let t = s.tasks[i].as_mut().unwrap();
+        if !t.user || i == cur || matches!(t.state, State::Dead(_)) {
+            return false;
         }
-        if t.parent == pid {
-            t.detached = true;
+        t.state = State::Dead(-9);
+        for t in s.tasks.iter_mut().flatten() {
+            if t.state == State::WaitingPid(pid) {
+                t.state = State::Ready;
+            }
+            if t.parent == pid {
+                t.detached = true;
+            }
         }
     }
+    kick_others();
     true
 }
 
 pub fn current_pid() -> Pid {
     let s = SCHED.lock();
-    s.tasks[s.current].as_ref().map_or(0, |t| t.pid)
+    s.tasks[s.current[cpu_id()]].as_ref().map_or(0, |t| t.pid)
 }
 
 /// Joriy jarayonning manzil maydonida `[addr, addr+len)` foydalanuvçi xotirasimi
@@ -513,7 +619,7 @@ pub fn user_range_ok(addr: usize, len: usize, write: bool) -> bool {
         return false;
     }
     let s = SCHED.lock();
-    let Some(aspace) = s.tasks[s.current].as_ref().and_then(|t| t.aspace.as_ref()) else {
+    let Some(aspace) = s.tasks[s.current[cpu_id()]].as_ref().and_then(|t| t.aspace.as_ref()) else {
         return false;
     };
     let mut page = addr & !(PAGE_SIZE - 1);
@@ -528,7 +634,7 @@ pub fn user_range_ok(addr: usize, len: usize, write: bool) -> bool {
 
 fn with_current<R>(f: impl FnOnce(&mut Task) -> R) -> R {
     let mut s = SCHED.lock();
-    let cur = s.current;
+    let cur = s.current[cpu_id()];
     f(s.tasks[cur].as_mut().expect("joriy vazifa yöq"))
 }
 
@@ -592,21 +698,12 @@ pub fn parent_of(pid: Pid) -> Option<Pid> {
 
 /// Kanal xabarini kutadi (`ready()` rost bölsa — kutmaydi).
 pub fn wait_channel(id: ipc::ChanId, ready: impl Fn() -> bool) {
-    let d = irq_save();
-    if !ready() {
-        block_current(State::WaitingChannel(id));
-    }
-    irq_restore(d);
+    block_current_if(State::WaitingChannel(id), || !ready());
 }
 
 /// Kanalga xabar kelganda çaqiriladi.
 pub fn wake_channel(id: ipc::ChanId) {
-    let mut s = SCHED.lock();
-    for t in s.tasks.iter_mut().flatten() {
-        if t.state == State::WaitingChannel(id) {
-            t.state = State::Ready;
-        }
-    }
+    wake_where(|st| st == State::WaitingChannel(id));
 }
 
 /// `jarayonlar` buyruği uçun maʼlumot.
@@ -615,6 +712,7 @@ pub struct TaskInfo {
     pub name: String,
     pub state: State,
     pub user: bool,
+    pub cpu: usize,
 }
 
 /// Barça vazifalar, PID böyiça tartiblangan.
@@ -624,7 +722,7 @@ pub fn snapshot() -> alloc::vec::Vec<TaskInfo> {
         s.tasks
             .iter()
             .flatten()
-            .map(|t| TaskInfo { pid: t.pid, name: t.name.clone(), state: t.state, user: t.user })
+            .map(|t| TaskInfo { pid: t.pid, name: t.name.clone(), state: t.state, user: t.user, cpu: t.last_cpu })
             .collect()
     };
     v.sort_by_key(|t| t.pid);

@@ -32,18 +32,17 @@ SECTIONS
         __bss_end = .;
     }
 
-    /* Yuklaniş steki (PID 0). 64 KiB oyna, 64 KiB ga tekislangan: faqat yuqori
-       32 KiB işlatiladi. Stek köpaytirgiçining 15-biti 0 bölib qolsa — stek töldi
-       (yadro steklari bilan bir xil qoida, qarang: arch/vectors.s). */
+    /* Yuklaniş steklari (har bir yadroning PID 0 vazifasi): 4 ta 64 KiB oyna,
+       64 KiB ga tekislangan; har birida faqat yuqori 32 KiB işlatiladi. Stek
+       körsatkiçining 15-biti 0 bölib qolsa — stek töldi (qarang: arch/vectors.s). */
     . = ALIGN(0x10000);
-    __stack_bottom = .;
-    . += 0x10000;
-    __stack_top = .;
+    __boot_stacks = .;
+    . += 4 * 0x10000;
 
-    /* Favqulodda stek: yadro steki tölganda xatoni şu yerda qayta işlaymiz. */
+    /* Favqulodda steklar (har bir yadroga): yadro steki tölganda xato şu yerda işlanadi. */
     . = ALIGN(0x10000);
-    . += 0x10000;
-    __emergency_stack_top = .;
+    __emergency_stacks = .;
+    . += 4 * 0x10000;
 
     __kernel_end = .;
 

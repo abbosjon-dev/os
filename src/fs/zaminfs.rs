@@ -27,6 +27,26 @@ static ACTIVE_SLOT: AtomicU64 = AtomicU64::new(1);
 /// Diskdagi nusxalarni oçib bölmagan bölsa — ularni ustidan yozmaymiz
 /// (maʼlumotni tiklaş imkoniyati yöqolmasin). `tiklaş` bilan tozalanadi.
 static WRITE_BLOCKED: AtomicBool = AtomicBool::new(false);
+/// Bir vaqtda faqat bitta saqlaş (masalan, fon oqimi va `saqla` turli yadrolarda).
+/// Uzoq amal, şuning uçun IRQ öçirmaydigan "band" belgisi: kutuvçi navbatni böşatib turadi.
+static SYNC_BUSY: AtomicBool = AtomicBool::new(false);
+
+struct SyncGuard;
+
+impl SyncGuard {
+    fn acquire() -> SyncGuard {
+        while SYNC_BUSY.swap(true, Ordering::Acquire) {
+            crate::task::yield_now();
+        }
+        SyncGuard
+    }
+}
+
+impl Drop for SyncGuard {
+    fn drop(&mut self) {
+        SYNC_BUSY.store(false, Ordering::Release);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZfsError {
@@ -114,6 +134,7 @@ pub fn sync(key: &[u8; 32]) -> Result<usize, ZfsError> {
     if WRITE_BLOCKED.load(Ordering::Relaxed) {
         return Err(ZfsError::Corrupt);
     }
+    let _guard = SyncGuard::acquire();
     let mut data = super::export();
     let max = (slot_sectors().saturating_sub(1)) as usize * SECTOR;
     if data.len() > max {

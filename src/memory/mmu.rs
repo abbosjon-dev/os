@@ -165,6 +165,15 @@ pub fn init(ram_start: usize, ram_size: usize) {
         let kl2: *mut u64 = (&raw mut KSTACK_L2).cast();
         write_volatile(l1.add(KSTACK_BASE / GIB), kl2 as u64 | VALID | TABLE_OR_PAGE);
 
+    }
+    enable_this_cpu();
+}
+
+/// MMU, keşlar va WXN ni joriy yadroda yoqadi (birinçi va ikkilamçi yadrolar uçun).
+/// Jadvallar umumiy: barça yadrolar bir xil yadro xaritasini körinadi.
+pub fn enable_this_cpu() {
+    let l1 = kernel_root();
+    unsafe {
         let mair: u64 = 0x00 | (0xff << 8); // 0: Device-nGnRnE, 1: Normal WB/WA
         let mmfr0: u64;
         asm!("mrs {}, id_aa64mmfr0_el1", out(reg) mmfr0);

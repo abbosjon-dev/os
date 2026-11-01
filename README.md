@@ -77,6 +77,21 @@ Tizim papkalari joriy tilda körsatiladi, lekin uç tildagi istalgan nomi bilan 
 Hisob buyruqlari: `kimman` (kimligingiz), `parol` (parolni özgartiriş),
 `tiklaş` (sozlamalarni öçirib, birinçi sozlaşga qaytiş).
 
+## Köp yadrolilik (SMP)
+
+Zamin OS protsessorning barça yadrolarini işlatadi (`cargo run` — 4 ta yadro):
+
+- birinçi yadro tizimni tayyorlab, qolganlarini PSCI `CPU_ON` bilan uyğotadi; har bir yadro öz
+  MMU, PAN, istisnolar vektori, GIC interfeysi va taymerini sozlaydi;
+- rejalaştiruvçi umumiy: istalgan tayyor vazifa istalgan böş yadroda işlaydi. Vazifa konteksti
+  töliq saqlanmaguncha (`on_cpu`) uni boşqa yadro ola olmaydi; tozalaş ham şundan keyin;
+- uxlaş/uyğotiş şarti rejalaştiruvçi qulfi ostida tekşiriladi — yöqolgan uyğotiş bölmaydi;
+- yangi vazifa tayyor bölganda uxlab yotgan yadrolar SGI bilan darhol uyğotiladi;
+- har bir yadroning öz yuklaniş va favqulodda steklari (qörğon qoidasi bilan);
+- konsol qulfi — bir neçta yadro yozsa ham qatorlar aralaşmaydi.
+
+`jarayonlar` buyruği har bir işlayotgan vazifa qaysi yadroda ekanini (CPU) körsatadi.
+
 ## Tillar
 
 Asosiy til — **özbekça**, 2026-yilgi yangi lotin alifbosida (Ş, Ç, Ö, Ğ va tutuq belgisi ʼ).
@@ -191,7 +206,7 @@ src/shell.rs         Zamin terminali (yordam, jarayonlar, işlat, tugat, til, ö
 - [x] **4. Jarayonlar** — kontekst almaştiriş, rejalaştiruvçi, EL0 foydalanuvçi rejimi, har jarayonga öz manzil maydoni, ELF yuklovçi
 - [x] **5. Syscallʼlar va IPC** — 20 ta tizim çaqiruvi; "Zamin kanallari" — nomli xabar kanallari
 - [x] **5½. Yadro markazi** — W^X himoya, foydalanuvçi heapʼi, dastur işga tuşiriş/kutiş, argumentlar, VFS + ramfs
-- [ ] **6. SMP** — barça coreʼlarni işga tuşiriş, spinlockʼlar
+- [x] **6. SMP** — barça yadrolar (PSCI CPU_ON), köp yadroli rejalaştiruvçi, yadrolararo uzilişlar (SGI)
 - [ ] **7. Drayverlar** — virtio-blk disk tayyor; tarmoq, GPU, klaviatura/siçqonça — navbatda
 - [x] **7½. Birinçi sozlaş** — til, hisob (login + parol), tilga mos tizim papkalari, kiriş ekrani
 - [x] **8. Fayl tizimi** — VFS + ZaminFS (diskda, şifrlangan); bloklarga asoslangan 2-versiya — navbatda

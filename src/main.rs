@@ -164,7 +164,35 @@ pub extern "C" fn kernel_main() -> ! {
     task::spawn_kernel("tekşiruv", boot_tests, 0).expect("tekşiruv oqimi");
     task::spawn_kernel("saqlovçi", saver, 0).expect("saqlovçi oqimi");
 
+    // 9) Qolgan protsessor yadrolarini uyğotamiz (PSCI CPU_ON)
+    unsafe extern "C" {
+        fn secondary_entry();
+    }
+    for cpu in 1..task::MAX_CPUS {
+        power::cpu_on(cpu as u64, secondary_entry as *const () as usize, cpu as u64);
+    }
+    let t0 = timer::uptime_ms();
+    while task::cpus_online() < task::MAX_CPUS && timer::uptime_ms() - t0 < 500 {
+        core::hint::spin_loop();
+    }
+    tprintln!(msg::SMP_READY, task::cpus_online());
+
     // PID 0: boşqa iş bölmaganda — tugagan vazifalarni tozalaş va uxlaş
+    loop {
+        task::reap_detached();
+        unsafe { asm!("wfi") };
+    }
+}
+
+/// Ikkilamçi yadro: MMU, istisnolar, uzilişlar, keyin öz böş vazifasi.
+#[unsafe(no_mangle)]
+pub extern "C" fn secondary_main(cpu: usize) -> ! {
+    mmu::enable_this_cpu();
+    mmu::enable_pan();
+    exceptions::init();
+    irq::init_secondary();
+    task::init_cpu(cpu);
+    gic::irqs_enable();
     loop {
         task::reap_detached();
         unsafe { asm!("wfi") };
@@ -200,6 +228,16 @@ extern "C" fn busy_counter(which: usize) {
     }
 }
 
+static SEEN_CPUS: AtomicU64 = AtomicU64::new(0);
+
+/// 100 ms band işlaydi va qaysi yadrolarda işlaganini belgilaydi.
+extern "C" fn smp_probe(_: usize) {
+    let start = timer::uptime_ms();
+    while timer::uptime_ms() - start < 100 {
+        SEEN_CPUS.fetch_or(1 << task::cpu_id(), Ordering::Relaxed);
+    }
+}
+
 /// Ataylab yadro stekini töldiradi: har darajada 1 KiB, 100 daraja > 32 KiB.
 #[inline(never)]
 fn deep_recursion(n: u64) -> u64 {
@@ -222,6 +260,19 @@ extern "C" fn boot_tests(_: usize) {
     let (ca, cb) = (COUNTER_A.load(Ordering::Relaxed), COUNTER_B.load(Ordering::Relaxed));
     assert!(ca > 0 && cb > 0, "oqimlar almaşmayapti: {} / {}", ca, cb);
     tprintln!(msg::TEST_SCHED, ca, cb);
+
+    // SMP: oqimlar turli yadrolarda işlaşi kerak
+    if task::cpus_online() > 1 {
+        let ids: Vec<_> = (0..task::cpus_online())
+            .map(|i| task::spawn_kernel_ext("smp-sinovi", smp_probe, i, false).expect("oqim"))
+            .collect();
+        for id in ids {
+            task::wait(id);
+        }
+        let seen = SEEN_CPUS.load(Ordering::Relaxed).count_ones();
+        assert!(seen >= 2, "oqimlar faqat bitta yadroda işladi");
+        tprintln!(msg::TEST_SMP, seen);
+    }
 
     // Yadro steki qörğoni: töliş aniqlanişi va faqat şu oqim tugatilişi kerak
     let bomb = task::spawn_kernel_ext("stek-sinovi", stack_bomb, 0, false).expect("oqim");
@@ -331,6 +382,7 @@ fn self_tests() {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    uart::force_unlock_console();
     println!("\n{}\n{}", i18n::pick(&msg::PANIC), info);
     power::halt();
 }

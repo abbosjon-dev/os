@@ -42,6 +42,7 @@ pub fn line_count() -> u32 {
     ((rd(GICD + GICD_TYPER) & 0x1f) + 1) * 32
 }
 
+/// Distributor (umumiy qism) — faqat birinçi yadro sozlaydi.
 pub fn init() {
     wr(GICD + GICD_CTLR, 0);
     let lines = line_count();
@@ -57,22 +58,36 @@ pub fn init() {
     }
     wr(GICD + GICD_CTLR, 1);
 
+    init_cpu();
+}
+
+/// CPU interfeysi — har bir yadroda alohida (registrlar yadroga xos).
+pub fn init_cpu() {
     wr(GICC + GICC_PMR, 0xff); // barça ustuvorliklarni qabul qilamiz
     wr(GICC + GICC_BPR, 0);
     wr(GICC + GICC_CTLR, 1);
+}
+
+const GICD_SGIR: usize = 0xf00;
+
+/// Qolgan barça yadrolarga dasturiy uziliş (SGI) yuboradi.
+pub fn send_sgi_others(id: u32) {
+    unsafe { core::arch::asm!("dsb ishst") };
+    wr(GICD + GICD_SGIR, (1 << 24) | (id & 0xf));
 }
 
 pub fn enable(id: u32) {
     wr(GICD + GICD_ISENABLER + 4 * (id / 32) as usize, 1 << (id % 32));
 }
 
-/// Kelgan uzilişni tasdiqlaydi va uning raqamini qaytaradi.
+/// Kelgan uzilişni tasdiqlaydi. Natija: IAR ning töliq qiymati —
+/// uni `end_of_interrupt` ga özgarişsiz beriş kerak (SGI da yuboruvçi yadro raqami bor).
 pub fn acknowledge() -> u32 {
-    rd(GICC + GICC_IAR) & 0x3ff
+    rd(GICC + GICC_IAR)
 }
 
-pub fn end_of_interrupt(id: u32) {
-    wr(GICC + GICC_EOIR, id);
+pub fn end_of_interrupt(iar: u32) {
+    wr(GICC + GICC_EOIR, iar);
 }
 
 pub fn irqs_enable() {

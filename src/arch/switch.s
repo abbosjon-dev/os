@@ -30,8 +30,15 @@ switch_context:
 // u qaytsa — oqim tugaydi.
 .global kthread_trampoline
 kthread_trampoline:
+    bl      finish_switch           // eski vazifani boşqa yadrolarga "böşatamiz"
     msr     daifclr, #2
     mov     x0, x20
     blr     x19
     bl      kthread_exit
 1:  b       1b
+
+// Yangi foydalanuvçi jarayonining boşlaniş nuqtasi: yadro stekida tayyor kadr bor.
+.global user_trampoline
+user_trampoline:
+    bl      finish_switch
+    b       restore_and_eret

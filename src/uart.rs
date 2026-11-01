@@ -132,13 +132,28 @@ pub fn handle_irq() {
 
 /// Xom baytlarni yozadi (`\n` → `\r\n`). Foydalanuvçi dasturlari uçun.
 pub fn write_bytes(bytes: &[u8]) {
-    let u = console();
-    for &b in bytes {
-        if b == b'\n' {
-            u.put_byte(b'\r');
+    with_console(|u| {
+        for &b in bytes {
+            if b == b'\n' {
+                u.put_byte(b'\r');
+            }
+            u.put_byte(b);
         }
-        u.put_byte(b);
-    }
+    })
+}
+
+/// Bir neçta yadro bir vaqtda yozganda qatorlar aralaşib ketmasligi uçun.
+static CONSOLE_LOCK: crate::sync::SpinLock<()> = crate::sync::SpinLock::new(());
+
+/// Konsolga qulf ostida yozadi.
+pub fn with_console<R>(f: impl FnOnce(&mut Uart) -> R) -> R {
+    let _g = CONSOLE_LOCK.lock();
+    f(&mut console())
+}
+
+/// Panic paytida: qulfni majburan böşatadi (uni uşlagan kod qaytmaydi).
+pub fn force_unlock_console() {
+    unsafe { CONSOLE_LOCK.force_unlock() };
 }
 
 /// Klaviaturadan kelgan keyingi bayt (bölmasa — None).
@@ -159,7 +174,9 @@ pub fn console() -> Uart {
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     use fmt::Write;
-    let _ = console().write_fmt(args);
+    with_console(|c| {
+        let _ = c.write_fmt(args);
+    });
 }
 
 #[macro_export]
