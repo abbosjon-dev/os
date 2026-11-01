@@ -1,4 +1,4 @@
-//! ÇaÇa20 oqimli şifri (RFC 8439). Jadvalsiz — vaqt orqali sizib çiqmaydi.
+//! ChaCha20 oqimli şifri (RFC 8439). Jadvalsiz — vaqt orqali sizib çiqmaydi.
 
 fn quarter(s: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
     s[a] = s[a].wrapping_add(s[b]);

@@ -2,7 +2,7 @@
 //!
 //! - `sha256`  — SHA-256 xeş
 //! - `hmac`    — HMAC-SHA256 va PBKDF2-HMAC-SHA256 (paroldan kalit oliş)
-//! - `chacha20`, `poly1305`, `aead` — ÇaÇa20-Poly1305 (RFC 8439): şifrlaş + yaxlitlik
+//! - `chacha20`, `poly1305`, `aead` — ChaCha20-Poly1305 (RFC 8439): şifrlaş + yaxlitlik
 //!
 //! Har bir algoritm yuklanişda standart test vektorlari bilan tekşiriladi (`self_test`).
 
@@ -52,7 +52,7 @@ pub fn self_test() -> Result<(), &'static str> {
     if dk[..] != hex("c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a")[..] {
         return Err("PBKDF2");
     }
-    // ÇaÇa20-Poly1305 AEAD (RFC 8439, 2.8.2)
+    // ChaCha20-Poly1305 AEAD (RFC 8439, 2.8.2)
     let key: [u8; 32] = core::array::from_fn(|i| 0x80 + i as u8);
     let nonce: [u8; 12] = hex("070000004041424344454647").try_into().unwrap();
     let aad = hex("50515253c0c1c2c3c4c5c6c7");

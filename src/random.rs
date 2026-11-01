@@ -4,7 +4,7 @@
 //!   1. virtio-rng — gipervizor/emulyator beradigan tasodifiy baytlar
 //!   2. RNDR — protsessorning apparat generatori (ARMv8.5 FEAT_RNG)
 //!   3. taymer "tebranişi" — yuqori aniqlikdagi hisoblagiç va klaviatura bosiş vaqtlari
-//! Hammasi SHA-256 orqali 256-bitli kalitga yigʼiladi. Çiqiş — ÇaÇa20 oqimi.
+//! Hammasi SHA-256 orqali 256-bitli kalitga yiğiladi. Çiqiş — ChaCha20 oqimi.
 //! Har bir sörövdan keyin kalit almaştiriladi ("fast key erasure"): xotira
 //! öğirlansa ham, avvalgi tasodifiy sonlarni tiklab bölmaydi.
 

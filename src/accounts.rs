@@ -3,7 +3,7 @@
 //! Sxema:
 //!   - har bir hisobga tasodifiy 256-bitli **asosiy kalit** yaratiladi — disk (ZaminFS) şu kalit bilan şifrlanadi;
 //!   - paroldan PBKDF2-HMAC-SHA256 (300 000 takror, tasodifiy tuz) orqali **örov kaliti** olinadi;
-//!   - asosiy kalit örov kaliti bilan ÇaÇa20-Poly1305 da şifrlanib ("örab") diskka yoziladi.
+//!   - asosiy kalit örov kaliti bilan ChaCha20-Poly1305 da şifrlanib ("örab") diskka yoziladi.
 //!
 //! Natijada: parol heç qayerda saqlanmaydi; parolsiz disk maʼlumotlarini öqib bölmaydi;
 //! parol özgarganda faqat kalit qayta öraladi (maʼlumotlarni qayta şifrlaş şart emas);

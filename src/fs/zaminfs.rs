@@ -1,8 +1,8 @@
 //! ZaminFS — diskdagi şifrlangan fayl tizimi (1-versiya).
 //!
 //! Dizayn:
-//!   - foydalanuvçi fayllari (uy papkalari) bitta tasvirga yigʼiladi va
-//!     ÇaÇa20-Poly1305 bilan şifrlanadi; kalit — hisobning asosiy kaliti;
+//!   - foydalanuvçi fayllari (uy papkalari) bitta tasvirga yiğiladi va
+//!     ChaCha20-Poly1305 bilan şifrlanadi; kalit — hisobning asosiy kaliti;
 //!   - har bir yozuvda yangi tasodifiy nonce (bir xil nonce heç qaçon takrorlanmaydi);
 //!   - diskda ikki nusxa (A/B) va avlod raqami: yangi nusxa eski nusxa ustiga emas,
 //!     ikkinçi joyga yoziladi, sarlavha eng oxirida. Yoziş yarmida tok öçsa ham

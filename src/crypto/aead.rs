@@ -1,4 +1,4 @@
-//! ÇaÇa20-Poly1305 AEAD (RFC 8439): şifrlaydi va maʼlumot buzilmaganini kafolatlaydi.
+//! ChaCha20-Poly1305 AEAD (RFC 8439): şifrlaydi va maʼlumot buzilmaganini kafolatlaydi.
 //! Bitta kalit bilan har bir nonce (12 bayt) faqat bir marta işlatilişi şart.
 
 use super::chacha20;

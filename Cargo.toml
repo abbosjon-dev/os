@@ -17,8 +17,8 @@ bench = false
 
 [profile.dev]
 panic = "abort"
-# Kriptografiya (PBKDF2, ÇaÇa20) optimallaştirişsiz juda sekin; tekşiruvlar
-# (overflow-çecks, debug_assert) va debug maʼlumoti saqlanib qoladi.
+# Kriptografiya (PBKDF2, ChaCha20) optimallaştirişsiz juda sekin; tekşiruvlar
+# (overflow-checks, debug_assert) va debug maʼlumoti saqlanib qoladi.
 opt-level = 2
 
 [profile.release]

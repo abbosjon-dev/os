@@ -414,7 +414,7 @@ pub fn stats() -> (usize, usize, usize) {
     (files, dirs, bytes)
 }
 
-// --- ZaminFS uçun: foydalanuvçi fayllarini tasvirga yigʼiş va tiklaş ---
+// --- ZaminFS uçun: foydalanuvçi fayllarini tasvirga yiğiş va tiklaş ---
 //
 // Format: yozuvlar ketma-ketligi
 //   [tur: 1 = papka, 2 = fayl] [yöl uzunligi: u16] [yöl] ([maʼlumot uzunligi: u32] [maʼlumot])
@@ -456,7 +456,7 @@ impl Vfs {
     }
 }
 
-/// Barça foydalanuvçi papka va fayllarini bitta tasvirga yigʼadi.
+/// Barça foydalanuvçi papka va fayllarini bitta tasvirga yiğadi.
 pub fn export() -> Vec<u8> {
     let v = VFS.lock();
     let mut out = Vec::from(&b"ZFS-TASVIR-1"[..]);
