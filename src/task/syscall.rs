@@ -334,6 +334,46 @@ fn handle(num: u64, a: [u64; 6]) -> SysResult {
             Ok(0)
         }
         SYS_TID => Ok(task::current_tid() as i64),
+        SYS_NET_INFO => {
+            use crate::net;
+            let mut b = [0u8; 23];
+            b[0..4].copy_from_slice(&net::our_ip());
+            b[4..8].copy_from_slice(&net::gateway());
+            b[8..12].copy_from_slice(&[255, 255, 255, 0]);
+            b[12..16].copy_from_slice(&net::dns_server());
+            b[16..22].copy_from_slice(&net::our_mac());
+            b[22] = net::is_configured() as u8;
+            copy_to_user(a[0], &b)?;
+            Ok(0)
+        }
+        SYS_DNS => {
+            let host = user_str(a[0], a[1])?;
+            let ip = crate::net::dns::resolve(&host).ok_or(ERR_NOT_FOUND)?;
+            copy_to_user(a[2], &ip)?;
+            Ok(0)
+        }
+        SYS_PING => {
+            let ip = copy_from_user(a[0], 4)?;
+            crate::net::ping([ip[0], ip[1], ip[2], ip[3]], a[1] as u16).map(|ms| ms as i64).ok_or(ERR_NOT_FOUND)
+        }
+        SYS_TCP_CONNECT => {
+            let ip = copy_from_user(a[0], 4)?;
+            crate::net::tcp::connect([ip[0], ip[1], ip[2], ip[3]], a[1] as u16).map(|h| h as i64).ok_or(ERR_NOT_FOUND)
+        }
+        SYS_TCP_SEND => {
+            let data = copy_from_user(a[1], a[2])?;
+            if crate::net::tcp::send(a[0] as usize, &data) { Ok(data.len() as i64) } else { Err(ERR_BAD_HANDLE) }
+        }
+        SYS_TCP_RECV => {
+            check_writable(a[1], a[2])?;
+            let data = crate::net::tcp::recv(a[0] as usize, (a[2] as usize).min(task::uaccess::MAX_COPY), a[3]);
+            copy_to_user(a[1], &data)?;
+            Ok(data.len() as i64)
+        }
+        SYS_TCP_CLOSE => {
+            crate::net::tcp::close(a[0] as usize);
+            Ok(0)
+        }
         SYS_TIME => Ok(crate::timer::unix_time() as i64),
         SYS_TZ => Ok(crate::time::tz_minutes() as i64),
         SYS_CHMOD => {

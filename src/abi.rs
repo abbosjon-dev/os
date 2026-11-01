@@ -87,6 +87,22 @@ pub const SYS_TID: u64 = 31;
 pub const SYS_CHMOD: u64 = 32;
 /// Nomsiz kanal yaratadi (faqat dastak orqali beriladi). Natija: dastak.
 pub const SYS_CHAN_CREATE: u64 = 33;
+
+// --- Tarmoq ---
+/// Tarmoq holati. x0 = 23-baytli bufer: ip[4] gw[4] mask[4] dns[4] mac[6] configured[1].
+pub const SYS_NET_INFO: u64 = 36;
+/// DNS: domen → IP. x0,x1 = nom; x2 = 4-baytli bufer. Natija: 0 yoki xato.
+pub const SYS_DNS: u64 = 37;
+/// Ping. x0 = IP (4 bayt bufer), x1 = ketma-ketlik raqami. Natija: ms yoki -1.
+pub const SYS_PING: u64 = 38;
+/// TCP ulaniş. x0 = IP (4 bayt), x1 = port. Natija: ulaniş raqami (handle) yoki xato.
+pub const SYS_TCP_CONNECT: u64 = 39;
+/// TCP jönatiş. x0 = ulaniş, x1 = manzil, x2 = uzunlik. Natija: 0 yoki xato.
+pub const SYS_TCP_SEND: u64 = 40;
+/// TCP oliş. x0 = ulaniş, x1 = bufer, x2 = siğim, x3 = kutiş (ms). Natija: öqilgan (0 = yopildi).
+pub const SYS_TCP_RECV: u64 = 41;
+/// TCP yopiş. x0 = ulaniş.
+pub const SYS_TCP_CLOSE: u64 = 42;
 /// Hozirgi vaqt: Unix soniyalar (UTC).
 pub const SYS_TIME: u64 = 34;
 /// Vaqt mintaqasi: UTC dan farq (daqiqalarda).

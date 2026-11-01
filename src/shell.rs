@@ -128,6 +128,9 @@ fn program_help(name: &str) -> Text {
             "случайные аргументы системным вызовам (тест устойчивости)",
             "random arguments to system calls (stability test)",
         ],
+        "ping" => ["manzilga ping yuboradi", "ping до адреса", "ping an address"],
+        "tarmoq" => ["tarmoq holati (IP, gateway, DNS)", "состояние сети", "network status"],
+        "yukla" => ["HTTP sahifani yuklaydi: yukla host /", "загрузка HTTP-страницы", "fetch an HTTP page"],
         "qafas" => [
             "qafasdan qoçişga urinadi (çeklangan qafas)",
             "пытается выйти из песочницы (песочница qafas)",

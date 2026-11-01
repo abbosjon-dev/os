@@ -99,6 +99,27 @@ Zamin OS protsessorning barça yadrolarini işlatadi (`cargo run` — 4 ta yadro
 
 `jarayonlar` buyruği har bir işlayotgan vazifa qaysi yadroda ekanini (CPU) körsatadi.
 
+## Tarmoq
+
+To'liq TCP/IP stegi — noldan yozilgan (QEMU SLIRP user-net bilan sinaldi):
+
+- **virtio-net** drayveri (eski v1 va modern v2); qabul uzilişlar orqali, jönatiş sinxron;
+- **Ethernet → ARP → IPv4**; **ICMP** (ping), **UDP**, **TCP** (mijoz: ulaniş, jönatiş, oliş, yopiş);
+- **DHCP** mijozi — yuklanişda avtomatik IP, gateway va DNS oladi;
+- **DNS** mijozi — domen nomidan IP;
+- dasturlar: `tarmoq` (holat), `ping`, `yukla` (HTTP sahifa).
+
+```
+abbosjon@zamin:~> tarmoq
+  IP: 10.0.2.15   Gateway: 10.0.2.2   DNS: 10.0.2.3
+abbosjon@zamin:~> ping 10.0.2.2
+  10.0.2.2 seq=0 vaqt=9 ms ... 4/4 javob
+abbosjon@zamin:~> yukla example.com /          # DNS → TCP → HTTP
+```
+
+Çeklovlar: tashqi manzilga ICMP ni QEMU SLIRP ötkazmaydi (TCP/UDP ötadi); TCP oddiy
+(bitta oyna, qayta jönatişsiz); HTTPS/TLS hali yöq.
+
 ## Foydalanuvçilar va ruxsatlar
 
 - `hisoblar` — röyxat; administrator `hisoblar qöş dilnoza` / `hisoblar öçir dilnoza`.
@@ -265,7 +286,7 @@ user/src/heap.rs     Foydalanuvçi xotira ajratuvçisi (Vec, String, format! iş
 user/src/thread.rs   Oqimlar: spawn, join
 user/src/sync.rs     Futex asosidagi Mutex
 user/src/fs.rs       Fayllar: File, read, write, list, mkdir, remove
-user/src/bin/        Dasturlar: terminal, oqimlar, qafas, fuzz, ekran, izla, sana, tartib, salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz, katta
+user/src/bin/        Dasturlar: terminal, tarmoq, ping, yukla, oqimlar, qafas, fuzz, ekran, izla, sana, tartib, salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz, katta
 src/setup.rs         Birinçi sozlaş (til, ism, login, parol) va kiriş
 src/accounts.rs      Foydalanuvçi hisoblari, parol xeşi
 src/config.rs        Diskdagi sozlamalar
@@ -284,6 +305,8 @@ src/shell.rs         Kiriş, terminalni işga tuşiriş, tizim buyruqlari (SYS_A
 src/pipe.rs          Quvurlar
 src/time.rs          Sana/vaqt, vaqt mintaqasi
 src/klog.rs          Yadro jurnali (halqa bufer)
+src/drivers/virtio_net.rs  virtio-net drayveri
+src/net/              Tarmoq stegi: Ethernet, ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS
 user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 ```
 
@@ -298,7 +321,7 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [x] **6. SMP** — barça yadrolar (PSCI CPU_ON), köp yadroli rejalaştiruvçi, yadrolararo uzilişlar (SGI)
 - [x] **5. Foydalanuvçilar va ruxsatlar** — bir neçta hisob, fayl ruxsatlari, jarayon egasi, qafas, kanal huquqlari
 - [x] **6. Vaqt** — RTC, vaqt mintaqasi (standart Toşkent, UTC+5), fayl vaqtlari
-- [ ] **7. Drayverlar** — virtio-blk disk tayyor; tarmoq, GPU, klaviatura/siçqonça — navbatda
+- [x] **7. Drayverlar** — virtio-blk disk, virtio-net tarmoq, virtio-rng; GPU/klaviatura — grafika bilan
 - [x] **7½. Birinçi sozlaş** — til, hisob (login + parol), tilga mos tizim papkalari, kiriş ekrani
 - [x] **8. Fayl tizimi** — VFS + ZaminFS 2 (bloklar, copy-on-write, şifrlangan daraxt)
 - [x] **9. Işonçlilik** — yadro jurnali, panic diskka yoziladi, fuzz sinovi

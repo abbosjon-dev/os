@@ -12,6 +12,7 @@
 extern crate alloc;
 
 pub mod fs;
+pub mod net;
 mod heap;
 pub mod sync;
 pub mod thread;

@@ -43,7 +43,8 @@ fn main() -> i64 {
         use zamin::abi::*;
         // Özini tugatadigan, çeksiz kutadigan yoki köpaytiradigan çaqiruvlarni taşlaymiz:
         // ularda "xato" yöq, lekin dasturni tugatib, sinovni buzadi.
-        if matches!(num, SYS_EXIT | SYS_THREAD_EXIT | SYS_SPAWN | SYS_THREAD_CREATE | SYS_FUTEX_WAIT | SYS_CHAN_RECV | SYS_READ | SYS_SLEEP | SYS_YIELD | SYS_WAIT | SYS_THREAD_JOIN) {
+        // Özini tugatadigan yoki uzoq kutadigan (tarmoq, kiriş) çaqiruvlarni taşlaymiz.
+        if matches!(num, SYS_EXIT | SYS_THREAD_EXIT | SYS_SPAWN | SYS_THREAD_CREATE | SYS_FUTEX_WAIT | SYS_CHAN_RECV | SYS_READ | SYS_SLEEP | SYS_YIELD | SYS_WAIT | SYS_THREAD_JOIN | SYS_DNS | SYS_PING | SYS_TCP_CONNECT | SYS_TCP_RECV) {
             continue;
         }
         let mut a = [0u64; 6];

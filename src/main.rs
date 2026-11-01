@@ -22,6 +22,7 @@ mod line;
 mod irq;
 mod klog;
 mod memory;
+mod net;
 mod pipe;
 mod power;
 mod random;
@@ -184,6 +185,16 @@ pub extern "C" fn kernel_main() -> ! {
         core::hint::spin_loop();
     }
     tprintln!(msg::SMP_READY, task::cpus_online());
+
+    // 10) Tarmoq: virtio-net, stek va DHCP (fon)
+    match drivers::virtio_net::init() {
+        Some(mac) => {
+            tprintln!(msg::NET_NIC, format_args!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]));
+            net::init();
+            task::spawn_kernel("dhcp", net::dhcp::worker, 0).expect("dhcp oqimi");
+        }
+        None => tprintln!(msg::NET_NONE),
+    }
 
     // PID 0: boşqa iş bölmaganda — tugagan vazifalarni tozalaş va uxlaş
     loop {

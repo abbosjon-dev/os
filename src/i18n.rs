@@ -500,6 +500,22 @@ pub mod msg {
     ];
     pub const FS_IO: Text = ["disk xatosi", "ошибка диска", "disk error"];
     pub const SH_SAVE_FAIL: Text = ["  Saqlab bölmadi: {}", "  Не удалось сохранить: {}", "  Save failed: {}"];
+    pub const NET_NIC: Text = ["[net ] virtio-net: MAC {}", "[net ] virtio-net: MAC {}", "[net ] virtio-net: MAC {}"];
+    pub const NET_NONE: Text = [
+        "[net ] tarmoq qurilmasi topilmadi",
+        "[net ] сетевое устройство не найдено",
+        "[net ] no network device",
+    ];
+    pub const NET_READY: Text = [
+        "[net ] DHCP: IP {}, gateway {}, DNS {}",
+        "[net ] DHCP: IP {}, шлюз {}, DNS {}",
+        "[net ] DHCP: IP {}, gateway {}, DNS {}",
+    ];
+    pub const NET_NO_DHCP: Text = [
+        "[net ] DHCP javob bermadi (tarmoq sozlanmagan böliş mumkin)",
+        "[net ] DHCP не ответил (сеть может быть не настроена)",
+        "[net ] DHCP did not respond (network may be unconfigured)",
+    ];
     pub const SMP_READY: Text = [
         "[smp ] {} ta protsessor yadrosi işlamoqda",
         "[smp ] работает ядер процессора: {}",
