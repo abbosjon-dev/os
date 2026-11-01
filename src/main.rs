@@ -29,6 +29,7 @@ mod setup;
 mod shell;
 mod sync;
 mod task;
+mod time;
 mod timer;
 mod uart;
 
@@ -133,6 +134,7 @@ pub extern "C" fn kernel_main() -> ! {
 
     // 6) Tasodifiy sonlar generatori (kalitlar, nonce, tuz uçun)
     random::init();
+    tprintln!(msg::TIME_NOW, time::format_datetime(&time::now()), time::tz_name());
     let (virtio, rndr) = random::sources();
     tprintln!(
         msg::RNG_READY,

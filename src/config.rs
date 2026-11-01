@@ -94,6 +94,10 @@ pub fn load() -> Option<Settings> {
         let Some((k, v)) = line.split_once('=') else { continue };
         if k == "til" && !in_section {
             lang = Lang::from_code(v).unwrap_or(Lang::Uz);
+        } else if k == "mintaqa" && !in_section {
+            if let Ok(m) = v.parse::<i32>() {
+                crate::time::set_tz_minutes(m);
+            }
         } else {
             cur.push((String::from(k), String::from(v)));
         }
@@ -107,7 +111,11 @@ pub fn save(s: &Settings) -> bool {
     if !disk::present() {
         return false;
     }
-    let mut text = format!("# Zamin OS sozlamalari\ntil={}\n", lang_code(s.lang));
+    let mut text = format!(
+        "# Zamin OS sozlamalari\ntil={}\nmintaqa={}\n",
+        lang_code(s.lang),
+        crate::time::tz_minutes()
+    );
     for a in &s.accounts {
         text += &format!(
             "[hisob]\nlogin={}\nism={}\nuid={}\nadmin={}\nkdf=pbkdf2-sha256\ntakror={}\ntuz={}\nkalit={}\n",

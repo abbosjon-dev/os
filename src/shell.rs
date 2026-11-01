@@ -38,6 +38,7 @@ enum Cmd {
     Save,
     Security,
     Users,
+    Timezone,
     Reboot,
     Shutdown,
 }
@@ -75,6 +76,7 @@ const COMMANDS: &[Command] = &[
     Command { cmd: Cmd::Save, names: ["saqla", "сохранить", "sync"], aliases: &[], help: ["fayllarni hozir diskka saqlaş (şifrlangan)", "сохранить файлы на диск сейчас (зашифровано)", "save files to disk now (encrypted)"] },
     Command { cmd: Cmd::Security, names: ["xavfsizlik", "безопасность", "security"], aliases: &[], help: ["himoya holati", "состояние защиты", "protection status"] },
     Command { cmd: Cmd::Users, names: ["hisoblar", "пользователи", "users"], aliases: &[], help: ["foydalanuvçilar: hisoblar [qöş | öçir] [login]", "пользователи: пользователи [добавить | удалить] [логин]", "users: users [add | del] [login]"] },
+    Command { cmd: Cmd::Timezone, names: ["mintaqa", "пояс", "tz"], aliases: &[], help: ["vaqt mintaqasi: mintaqa +5", "часовой пояс: пояс +5", "time zone: tz +5"] },
     Command { cmd: Cmd::Reboot, names: ["qayta", "перезагрузка", "reboot"], aliases: &[], help: ["qayta yuklaş", "перезагрузить", "restart"] },
     Command { cmd: Cmd::Shutdown, names: ["öçir", "выкл", "shutdown"], aliases: &["ocir", "ochir"], help: ["tizimni öçiriş", "выключить систему", "power off"] },
 ];
@@ -278,7 +280,29 @@ impl Shell {
                 tprintln!(msg::SH_VERSION, env!("CARGO_PKG_VERSION"));
                 tprintln!(msg::SH_ABOUT);
             }
+            Cmd::Timezone => {
+                if args.is_empty() {
+                    tprintln!(msg::SH_TZ_SET, crate::time::tz_name());
+                    return;
+                }
+                if !accounts::current().is_some_and(|a| a.admin) {
+                    tprintln!(msg::USER_NEED_ADMIN);
+                    return;
+                }
+                let negative = args.starts_with('-');
+                let (h, m) = args.trim_start_matches(['+', '-']).split_once(':').map_or((args.trim_start_matches(['+', '-']), "0"), |(h, m)| (h, m));
+                match (h.parse::<i32>(), m.parse::<i32>()) {
+                    (Ok(h), Ok(m)) if h <= 14 && (0..60).contains(&m) => {
+                        let total = (h * 60 + m) * if negative { -1 } else { 1 };
+                        crate::time::set_tz_minutes(total);
+                        config::save_current();
+                        tprintln!(msg::SH_TZ_SET, crate::time::tz_name());
+                    }
+                    _ => tprintln!(msg::SH_TZ_USAGE),
+                }
+            }
             Cmd::Uptime => {
+                tprintln!(msg::SH_DATE, crate::time::format_datetime(&crate::time::now()), crate::time::tz_name());
                 let ms = timer::uptime_ms();
                 let s = ms / 1000;
                 tprintln!(

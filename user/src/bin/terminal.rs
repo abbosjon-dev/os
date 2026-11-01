@@ -53,6 +53,7 @@ const ADMIN: &[Cmd] = &[
     (["parol", "пароль", "passwd"], &[], ["parolni özgartiriş", "сменить пароль", "change password"]),
     (["saqla", "сохранить", "sync"], &[], ["fayllarni hozir saqlaş", "сохранить файлы сейчас", "save files now"]),
     (["xavfsizlik", "безопасность", "security"], &[], ["himoya holati", "состояние защиты", "protection status"]),
+    (["mintaqa", "пояс", "tz"], &[], ["vaqt mintaqasi: mintaqa +5", "часовой пояс: пояс +5", "time zone: tz +5"]),
     (["tiklaş", "сброс", "reset"], &["tiklash"], ["sozlamalarni öçiriş", "стереть настройки", "erase settings"]),
     (["hisoblar", "пользователи", "users"], &[], ["foydalanuvçilar: hisoblar [qöş | öçir] login", "пользователи: [добавить | удалить] логин", "users: [add | del] login"]),
     (["qayta", "перезагрузка", "reboot"], &[], ["qayta yuklaş", "перезагрузить", "restart"]),
@@ -282,7 +283,8 @@ impl Shell {
                             let shown = if e.is_dir { format!("{}/", e.name) } else { e.name.clone() };
                             let size = if e.is_dir { format!("{} {}", e.size, tr(["ta", "шт.", "items"])) } else { format!("{} B", e.size) };
                             let po = 10usize.saturating_sub(e.owner.chars().count());
-                            println!("  {} {}{:po$} {:>10}  {}", fs::mode_string(e.mode, e.is_dir), e.owner, "", size, shown, po = po);
+                            let when = if e.mtime > 0 { zamin::time::short(&zamin::time::local(e.mtime)) } else { String::from("-") };
+                            println!("  {} {}{:po$} {:>10}  {}  {}", fs::mode_string(e.mode, e.is_dir), e.owner, "", size, when, shown, po = po);
                         }
                     }
                     Err(e) => println!("  {}: {}", path, e),

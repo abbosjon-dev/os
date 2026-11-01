@@ -15,6 +15,7 @@ pub mod fs;
 mod heap;
 pub mod sync;
 pub mod thread;
+pub mod time;
 
 use core::arch::asm;
 use core::fmt::{self, Write};

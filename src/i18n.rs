@@ -452,6 +452,14 @@ pub mod msg {
     pub const SH_NO_ACCOUNT: Text = ["  Hisob yöq.", "  Нет учётной записи.", "  No account."];
 
     // --- Xavfsizlik va ZaminFS ---
+    pub const TIME_NOW: Text = ["[vaqt] {} ({})", "[время] {} ({})", "[time] {} ({})"];
+    pub const SH_DATE: Text = ["  Sana va vaqt: {} ({})", "  Дата и время: {} ({})", "  Date and time: {} ({})"];
+    pub const SH_TZ_SET: Text = ["  Mintaqa: {}", "  Часовой пояс: {}", "  Time zone: {}"];
+    pub const SH_TZ_USAGE: Text = [
+        "  Foydalaniş: mintaqa +5 (Toşkent), +3 (Moskva), 0 (UTC), +5:30",
+        "  Использование: пояс +5 (Ташкент), +3 (Москва), 0 (UTC), +5:30",
+        "  Usage: tz +5 (Tashkent), +3 (Moscow), 0 (UTC), +5:30",
+    ];
     pub const RNG_READY: Text = [
         "[rand] tasodifiy sonlar generatori: ChaCha20, manbalar: {}",
         "[rand] генератор случайных чисел: ChaCha20, источники: {}",

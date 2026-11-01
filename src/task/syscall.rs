@@ -334,6 +334,8 @@ fn handle(num: u64, a: [u64; 6]) -> SysResult {
             Ok(0)
         }
         SYS_TID => Ok(task::current_tid() as i64),
+        SYS_TIME => Ok(crate::timer::unix_time() as i64),
+        SYS_TZ => Ok(crate::time::tz_minutes() as i64),
         SYS_CHMOD => {
             let path = user_path(a[0], a[1])?;
             fs::chmod(&path, a[2] as u16).map_err(fs_err)?;

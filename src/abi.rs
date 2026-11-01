@@ -87,6 +87,10 @@ pub const SYS_TID: u64 = 31;
 pub const SYS_CHMOD: u64 = 32;
 /// Nomsiz kanal yaratadi (faqat dastak orqali beriladi). Natija: dastak.
 pub const SYS_CHAN_CREATE: u64 = 33;
+/// Hozirgi vaqt: Unix soniyalar (UTC).
+pub const SYS_TIME: u64 = 34;
+/// Vaqt mintaqasi: UTC dan farq (daqiqalarda).
+pub const SYS_TZ: u64 = 35;
 
 /// Standart dastaklar
 pub const STDIN: u64 = 0;
