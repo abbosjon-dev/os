@@ -3,11 +3,13 @@
 use core::arch::asm;
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct TrapFrame {
     pub x: [u64; 31],
     pub elr: u64,
     pub spsr: u64,
-    _pad: u64,
+    /// Foydalanuvçi steki (SP_EL0)
+    pub sp_el0: u64,
 }
 
 unsafe extern "C" {
@@ -20,6 +22,10 @@ pub fn init() {
         asm!("msr vbar_el1, {}", "isb", in(reg) addr);
     }
 }
+
+const EC_SVC64: u64 = 0x15;
+const EC_INSN_ABORT_LOWER: u64 = 0x20;
+const EC_DATA_ABORT_LOWER: u64 = 0x24;
 
 const KIND_NAMES: [&str; 4] = ["Sync", "IRQ", "FIQ", "SError"];
 
@@ -37,6 +43,23 @@ extern "C" fn handle_exception(frame: &mut TrapFrame, kind: u64) {
         asm!("mrs {}, far_el1", out(reg) far);
     }
     let ec = (esr >> 26) & 0x3f;
+
+    // Foydalanuvçi rejimidan (EL0) kelgan sinxron istisno
+    if kind == 8 {
+        if ec == EC_SVC64 {
+            crate::task::syscall::dispatch(frame);
+            return;
+        }
+        // Boşqa har qanday xato (taqiqlangan xotira, nomaʼlum buyruq...) — jarayon tugatiladi.
+        let addr = if ec == EC_DATA_ABORT_LOWER || ec == EC_INSN_ABORT_LOWER { far } else { frame.elr };
+        crate::tprintln!(
+            crate::i18n::msg::PROC_FAULT,
+            crate::task::current_pid(),
+            format_args!("{:#x}", addr),
+            format_args!("{:#x}", ec)
+        );
+        crate::task::exit_current(-1);
+    }
 
     match (kind % 4, ec) {
         // BRK — dasturiy breakpoint: xabar beramiz va keyingi instruksiyaga ötamiz.

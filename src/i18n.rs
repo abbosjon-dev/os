@@ -206,4 +206,81 @@ pub mod msg {
         "Выключение. До свидания!",
         "Shutting down. Goodbye!",
     ];
+
+    // --- Jarayonlar ---
+    pub const SCHED_READY: Text = [
+        "[task] rejalaştiruvçi işga tuşdi (vaqt böligi {} ms), dasturlar: {} ta",
+        "[task] планировщик запущен (квант {} мс), программ: {}",
+        "[task] scheduler started (time slice {} ms), programs: {}",
+    ];
+    pub const TEST_SCHED: Text = [
+        "[test] rejalaştiruvçi: 2 ta oqim bir vaqtda işladi ({} / {} aylanish) — OK",
+        "[test] планировщик: 2 потока работали одновременно ({} / {} итераций) — OK",
+        "[test] scheduler: 2 threads ran concurrently ({} / {} iterations) — OK",
+    ];
+    pub const TEST_USER: Text = [
+        "[test] foydalanuvçi rejimi (EL0): tizim çaqiruvlari va himoya, çiqiş kodi {} — OK",
+        "[test] режим пользователя (EL0): системные вызовы и защита, код выхода {} — OK",
+        "[test] user mode (EL0): system calls and protection, exit code {} — OK",
+    ];
+    pub const PROC_FAULT: Text = [
+        "[jarayon {}] himoya xatosi: {} manzilga ruxsatsiz murojaat (EC {}) — jarayon tugatildi",
+        "[процесс {}] ошибка защиты: недопустимый доступ к адресу {} (EC {}) — процесс завершён",
+        "[process {}] protection fault: illegal access to address {} (EC {}) — process terminated",
+    ];
+    pub const PROC_BAD_SYSCALL: Text = [
+        "[jarayon {}] nomaʼlum tizim çaqiruvi: {}",
+        "[процесс {}] неизвестный системный вызов: {}",
+        "[process {}] unknown system call: {}",
+    ];
+    pub const STATE_READY: Text = ["tayyor", "готов", "ready"];
+    pub const STATE_RUNNING: Text = ["işlamoqda", "работает", "running"];
+    pub const STATE_SLEEPING: Text = ["uxlamoqda", "спит", "sleeping"];
+    pub const STATE_WAITING: Text = ["kutmoqda", "ожидает", "waiting"];
+    pub const STATE_DEAD: Text = ["tugagan", "завершён", "exited"];
+    pub const KIND_KERNEL: Text = ["yadro", "ядро", "kernel"];
+    pub const KIND_USER: Text = ["dastur", "программа", "program"];
+
+    pub const SH_PS_HEADER: Text = [
+        "  PID  TURI       HOLAT        NOM",
+        "  PID  ТИП        СОСТОЯНИЕ    ИМЯ",
+        "  PID  TYPE       STATE        NAME",
+    ];
+    pub const SH_EXITED: Text = [
+        "  [{} {} tugadi, çiqiş kodi: {}]",
+        "  [{} {} завершён, код выхода: {}]",
+        "  [{} {} exited, code: {}]",
+    ];
+    pub const SH_STARTED_BG: Text = [
+        "  [{} {} fonda işga tuşirildi]",
+        "  [{} {} запущен в фоне]",
+        "  [{} {} started in background]",
+    ];
+    pub const SH_NO_PROGRAM: Text = [
+        "  bunday dastur yöq: {} (dasturlar deb yozing)",
+        "  нет такой программы: {} (введите: программы)",
+        "  no such program: {} (type: programs)",
+    ];
+    pub const SH_RUN_USAGE: Text = [
+        "  Foydalaniş: işlat <dastur> [&]   (& — fonda işlatiş)",
+        "  Использование: запуск <программа> [&]   (& — в фоне)",
+        "  Usage: run <program> [&]   (& — in background)",
+    ];
+    pub const SH_SPAWN_FAIL: Text = [
+        "  dasturni işga tuşirib bölmadi: {}",
+        "  не удалось запустить программу: {}",
+        "  failed to start program: {}",
+    ];
+    pub const SH_KILL_USAGE: Text = ["  Foydalaniş: tugat <PID>", "  Использование: завершить <PID>", "  Usage: kill <PID>"];
+    pub const SH_KILLED: Text = ["  {} tugatildi", "  {} завершён", "  {} terminated"];
+    pub const SH_KILL_FAIL: Text = [
+        "  {} ni tugatib bölmaydi (faqat fondagi dasturlarni tugatiş mumkin)",
+        "  невозможно завершить {} (можно завершать только фоновые программы)",
+        "  cannot terminate {} (only background programs can be terminated)",
+    ];
+    pub const SH_PROGRAMS_HEADER: Text = [
+        "  Dasturlar (işlatiş: işlat <nom>):",
+        "  Программы (запуск: запуск <имя>):",
+        "  Programs (start: run <name>):",
+    ];
 }

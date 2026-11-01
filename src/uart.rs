@@ -126,6 +126,18 @@ pub fn handle_irq() {
         rx::push(b);
     }
     unsafe { write_volatile(u.reg(ICR), INT_RX | INT_RT) };
+    crate::task::wake_input();
+}
+
+/// Xom baytlarni yozadi (`\n` → `\r\n`). Foydalanuvçi dasturlari uçun.
+pub fn write_bytes(bytes: &[u8]) {
+    let u = console();
+    for &b in bytes {
+        if b == b'\n' {
+            u.put_byte(b'\r');
+        }
+        u.put_byte(b);
+    }
 }
 
 /// Klaviaturadan kelgan keyingi bayt (bölmasa — None).

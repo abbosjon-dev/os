@@ -10,6 +10,7 @@ pub fn init() {
 }
 
 pub fn handle() {
+    let mut handled = false;
     loop {
         let id = gic::acknowledge();
         if id >= gic::SPURIOUS {
@@ -21,5 +22,10 @@ pub fn handle() {
             _ => crate::tprintln!(crate::i18n::msg::IRQ_UNKNOWN, id),
         }
         gic::end_of_interrupt(id);
+        handled = true;
+    }
+    // Uziliş tasdiqlangandan keyin (EOI) boşqa vazifaga ötiş mumkin.
+    if handled {
+        crate::task::preempt();
     }
 }

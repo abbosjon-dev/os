@@ -1,5 +1,6 @@
 // Istisnolar (exception) vektor jadvali: 16 ta yozuv, har biri 0x80 bayt.
-// Har bir kirişda barça umumiy registrlarni `TrapFrame` ga saqlaymiz.
+// Har bir kirişda barça umumiy registrlarni va foydalanuvçi stekini (SP_EL0)
+// `TrapFrame` ga saqlaymiz. Kadr hajmi: 34 * 8 = 272 bayt.
 
 .macro SAVE_AND_CALL kind
     sub     sp, sp, #(34 * 8)
@@ -20,8 +21,9 @@
     stp     x28, x29, [sp, #(28 * 8)]
     mrs     x0, elr_el1
     mrs     x1, spsr_el1
+    mrs     x2, sp_el0
     stp     x30, x0,  [sp, #(30 * 8)]
-    str     x1,       [sp, #(32 * 8)]
+    stp     x1, x2,   [sp, #(32 * 8)]
     mov     x0, sp
     mov     x1, #\kind
     bl      handle_exception
@@ -58,11 +60,15 @@ exception_vectors:
     VECTOR 14
     VECTOR 15
 
+// Yangi foydalanuvçi jarayoni ham şu yerdan boşlanadi: uning yadro stekida
+// tayyorlangan kadr bor (ELR = kiriş nuqtasi, SPSR = EL0, SP_EL0 = stek).
+.global restore_and_eret
 restore_and_eret:
     ldp     x30, x0,  [sp, #(30 * 8)]
-    ldr     x1,       [sp, #(32 * 8)]
+    ldp     x1, x2,   [sp, #(32 * 8)]
     msr     elr_el1, x0
     msr     spsr_el1, x1
+    msr     sp_el0, x2
     ldp     x0, x1,   [sp, #(0 * 8)]
     ldp     x2, x3,   [sp, #(2 * 8)]
     ldp     x4, x5,   [sp, #(4 * 8)]

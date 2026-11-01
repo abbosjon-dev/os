@@ -3,7 +3,8 @@
 
 use crate::i18n::{self, Lang, Text, msg};
 use crate::memory::{frame, heap};
-use crate::{print, println, power, timer, tprintln};
+use crate::task::{self, State};
+use crate::{print, println, power, timer, tprintln, uart};
 use alloc::string::String;
 
 const PROMPT: &str = "zamin> ";
@@ -18,6 +19,10 @@ enum Cmd {
     Echo,
     Clear,
     Lang,
+    Ps,
+    Programs,
+    Run,
+    Kill,
     Reboot,
     Shutdown,
 }
@@ -39,9 +44,59 @@ const COMMANDS: &[Command] = &[
     Command { cmd: Cmd::Echo, names: ["aks", "эхо", "echo"], aliases: &[], help: ["matnni qaytaradi", "выводит текст", "prints text"] },
     Command { cmd: Cmd::Clear, names: ["tozala", "очистить", "clear"], aliases: &[], help: ["ekranni tozalaş", "очистить экран", "clear the screen"] },
     Command { cmd: Cmd::Lang, names: ["til", "язык", "lang"], aliases: &[], help: ["tilni almaştiriş: uz, ru, en", "сменить язык: uz, ru, en", "change language: uz, ru, en"] },
+    Command { cmd: Cmd::Ps, names: ["jarayonlar", "процессы", "ps"], aliases: &[], help: ["işlayotgan jarayonlar", "запущенные процессы", "running processes"] },
+    Command { cmd: Cmd::Programs, names: ["dasturlar", "программы", "programs"], aliases: &[], help: ["mavjud dasturlar", "доступные программы", "available programs"] },
+    Command { cmd: Cmd::Run, names: ["işlat", "запуск", "run"], aliases: &["ishlat", "islat"], help: ["dasturni işga tuşiriş: işlat salom", "запустить программу: запуск salom", "start a program: run salom"] },
+    Command { cmd: Cmd::Kill, names: ["tugat", "завершить", "kill"], aliases: &[], help: ["jarayonni tugatiş: tugat <PID>", "завершить процесс: завершить <PID>", "terminate a process: kill <PID>"] },
     Command { cmd: Cmd::Reboot, names: ["qayta", "перезагрузка", "reboot"], aliases: &[], help: ["qayta yuklaş", "перезагрузить", "restart"] },
     Command { cmd: Cmd::Shutdown, names: ["öçir", "выкл", "shutdown"], aliases: &["ocir", "ochir"], help: ["tizimni öçiriş", "выключить систему", "power off"] },
 ];
+
+/// Dasturlar tavsifi: [uz, ru, en]
+fn program_help(name: &str) -> Text {
+    match name {
+        "salom" => ["salomlaşadi", "приветствует", "says hello"],
+        "hisobla" => [
+            "tub sonlarni sanaydi (köp vazifalilikni körsatadi)",
+            "считает простые числа (показывает многозадачность)",
+            "counts primes (shows multitasking)",
+        ],
+        "soat" => [
+            "har soniyada vaqtni körsatadi (5 marta)",
+            "показывает время каждую секунду (5 раз)",
+            "shows the time every second (5 times)",
+        ],
+        "buzuq" => [
+            "yadro xotirasiga kirişga urinadi (himoyani körsatadi)",
+            "пытается обратиться к памяти ядра (показывает защиту)",
+            "tries to access kernel memory (shows protection)",
+        ],
+        "sinov" => ["tizim çaqiruvlarini tekşiradi", "проверяет системные вызовы", "tests system calls"],
+        _ => ["", "", ""],
+    }
+}
+
+fn state_text(st: State) -> &'static str {
+    i18n::pick(match st {
+        State::Ready => &msg::STATE_READY,
+        State::Running => &msg::STATE_RUNNING,
+        State::Sleeping(_) => &msg::STATE_SLEEPING,
+        State::WaitingInput | State::WaitingPid(_) => &msg::STATE_WAITING,
+        State::Dead(_) => &msg::STATE_DEAD,
+    })
+}
+
+/// Terminal yadro oqimi sifatida işlaydi.
+pub extern "C" fn run(_: usize) {
+    let mut shell = Shell::new();
+    shell.start();
+    loop {
+        while let Some(b) = uart::read_byte() {
+            shell.feed(b);
+        }
+        task::wait_input(uart::has_input);
+    }
+}
 
 fn find(name: &str) -> Option<Cmd> {
     COMMANDS
@@ -169,6 +224,53 @@ impl Shell {
                     tprintln!(msg::SH_LANG_SET, i18n::pick(&msg::LANG_NAME));
                 }
                 None => tprintln!(msg::SH_LANG_USAGE),
+            },
+            Cmd::Ps => {
+                tprintln!(msg::SH_PS_HEADER);
+                for t in task::snapshot() {
+                    let (pid, name) = (t.pid, t.name);
+                    let kind = i18n::pick(if t.user { &msg::KIND_USER } else { &msg::KIND_KERNEL });
+                    let st = state_text(t.state);
+                    let pk = 11usize.saturating_sub(kind.chars().count());
+                    let ps = 13usize.saturating_sub(st.chars().count());
+                    println!("  {:<4} {}{:pk$}{}{:ps$}{}", pid, kind, "", st, "", name, pk = pk, ps = ps);
+                }
+            }
+            Cmd::Programs => {
+                tprintln!(msg::SH_PROGRAMS_HEADER);
+                let lang = i18n::current() as usize;
+                for (name, _) in task::programs::PROGRAMS {
+                    let pad = 10usize.saturating_sub(name.len());
+                    println!("    {}{:pad$}— {}", name, "", program_help(name)[lang], pad = pad);
+                }
+            }
+            Cmd::Run => {
+                let (prog, background) = match args.strip_suffix('&') {
+                    Some(p) => (p.trim(), true),
+                    None => (args, false),
+                };
+                if prog.is_empty() {
+                    tprintln!(msg::SH_RUN_USAGE);
+                    return;
+                }
+                let Some(image) = task::programs::find(prog) else {
+                    tprintln!(msg::SH_NO_PROGRAM, prog);
+                    return;
+                };
+                match task::spawn_user(prog, image, background) {
+                    Ok(pid) if background => tprintln!(msg::SH_STARTED_BG, pid, prog),
+                    Ok(pid) => {
+                        if let Some(code) = task::wait(pid) {
+                            tprintln!(msg::SH_EXITED, pid, prog, code);
+                        }
+                    }
+                    Err(e) => tprintln!(msg::SH_SPAWN_FAIL, format_args!("{:?}", e)),
+                }
+            }
+            Cmd::Kill => match args.parse::<usize>() {
+                Ok(pid) if task::kill(pid) => tprintln!(msg::SH_KILLED, pid),
+                Ok(pid) => tprintln!(msg::SH_KILL_FAIL, pid),
+                Err(_) => tprintln!(msg::SH_KILL_USAGE),
             },
             Cmd::Reboot => {
                 tprintln!(msg::SH_REBOOT);

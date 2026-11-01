@@ -78,18 +78,3 @@ pub fn end_of_interrupt(id: u32) {
 pub fn irqs_enable() {
     unsafe { asm!("msr daifclr, #2", options(nomem, nostack)) };
 }
-
-pub fn irqs_disable() {
-    unsafe { asm!("msr daifset, #2", options(nomem, nostack)) };
-}
-
-/// Uzilişlar kelmagunça protsessorni uxlatadi (quvvatni tejaş).
-/// Avval tekşiruv bajariladi — şunda "tekşirdik, keyin uziliş keldi, keyin uxladik"
-/// poygasi bölmaydi: WFI maskalangan uzilişda ham uyğonadi.
-pub fn wait_for_interrupt_unless(ready: impl Fn() -> bool) {
-    irqs_disable();
-    if !ready() {
-        unsafe { asm!("wfi", options(nomem, nostack)) };
-    }
-    irqs_enable();
-}

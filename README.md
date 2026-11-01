@@ -30,12 +30,44 @@ Qöşimça tillar: **русский** va **English**.
 
 Kod içidagi barça izohlar va hujjatlar ham yangi alifboda yoziladi.
 
+## Dasturlar va jarayonlar
+
+Terminalda:
+
+```
+zamin> dasturlar            # mavjud dasturlar röyxati
+zamin> işlat salom          # dasturni işga tuşiriş (tugaguncha kutadi)
+zamin> işlat soat &         # fonda işga tuşiriş
+zamin> jarayonlar           # işlayotgan jarayonlar
+zamin> tugat 6              # jarayonni tugatiş
+```
+
+Har bir dastur EL0 (foydalanuvçi) rejimida, öz manzil maydonida işlaydi. U yadro
+xotirasiga kira olmaydi — urinsa, faqat şu dastur tugatiladi (`işlat buzuq`).
+
+Yangi dastur yoziş: `user/src/bin/` ga fayl qöşing:
+
+```rust
+#![no_std]
+#![no_main]
+use zamin::{println, tr};
+zamin::entry!(main);
+
+fn main() -> i64 {
+    println!("{}", tr(["Salom!", "Привет!", "Hello!"]));
+    0 // çiqiş kodi
+}
+```
+
+`cargo run` uni avtomatik yigʼadi va yadroga joylaydi.
+
 ## Tuzilma
 
 ```
 linker.ld            Xotira xaritasi (yadro 0x4020_0000 da, oldidagi 2 MiB — DTB uçun)
 src/arch/boot.s      Boot: coreʼlarni ajratiş, EL2->EL1, stek, .bss
 src/arch/vectors.s   Istisnolar vektor jadvali (16 ta kiriş)
+src/arch/switch.s    Kontekst almaştiriş, yadro oqimi boşlaniş nuqtasi
 src/main.rs          kernel_main, panic handler
 src/uart.rs          PL011 UART drayveri, print!/println!
 src/exceptions.rs    Istisnolarni qayta işlaş (ESR/ELR/FAR)
@@ -48,8 +80,15 @@ src/memory/heap.rs   Kernel heap (free list) — Box/Vec/String işlaydi
 src/gic.rs           GICv2 uzilişlar boşqaruvçisi
 src/timer.rs         ARM taymeri (100 Hz)
 src/irq.rs           Uzilişlarni drayverlarga tarqatiş
+src/task/mod.rs      Jarayonlar va rejalaştiruvçi (round-robin, 10 ms)
+src/task/elf.rs      ELF64 yuklovçi
+src/task/syscall.rs  Tizim çaqiruvlari
+src/abi.rs           Tizim çaqiruvlari raqamlari (yadro va dasturlar uçun umumiy)
+build.rs             Foydalanuvçi dasturlarini yigʼib, yadroga joylaydi
+user/src/lib.rs      `zamin` kutubxonasi: tizim çaqiruvlari, println!, tr()
+user/src/bin/        Dasturlar: salom, hisobla, soat, buzuq, sinov
 src/i18n.rs          Köp tillilik: özbekça (asosiy), русский, English
-src/shell.rs         Zamin terminali (yordam, haqida, vaqt, xotira, til, öçir...)
+src/shell.rs         Zamin terminali (yordam, jarayonlar, işlat, tugat, til, öçir...)
 ```
 
 ## Yöl xaritasi
@@ -57,8 +96,8 @@ src/shell.rs         Zamin terminali (yordam, haqida, vaqt, xotira, til, öçir.
 - [x] **1. Boot** — AArch64 entry, EL2→EL1, UART konsol, istisnolar vektori, PSCI
 - [x] **2. Xotira** — DTB, fizik sahifa allokatori, MMU + sahifa jadvallari, kernel heap (`alloc`)
 - [x] **3. Uzilişlar** — GICv2 drayveri, ARM taymeri, klaviatura uzilişi, Zamin terminali
-- [ ] **4. Jarayonlar** — kontekst almaştiriş, rejalaştiruvçi (scheduler), EL0 user mode
-- [ ] **5. Syscallʼlar va IPC** — `svc`, xabar almaşiş — "Zamin kanallari" (öz dizaynimiz)
+- [x] **4. Jarayonlar** — kontekst almaştiriş, rejalaştiruvçi, EL0 foydalanuvçi rejimi, har jarayonga öz manzil maydoni, ELF yuklovçi
+- [ ] **5. Syscallʼlar va IPC** — `svc` va 7 ta tizim çaqiruvi tayyor; xabar almaşiş — "Zamin kanallari" (öz dizaynimiz) — navbatda
 - [ ] **6. SMP** — barça coreʼlarni işga tuşiriş, spinlockʼlar
 - [ ] **7. Drayverlar** — virtio (blok, tarmoq, GPU, klaviatura/siçqonça), Device Tree parser
 - [ ] **8. Fayl tizimi** — VFS + öz fayl tizimimiz

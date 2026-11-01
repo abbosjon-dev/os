@@ -6,6 +6,7 @@
 
 extern crate alloc;
 
+mod abi;
 mod dtb;
 mod exceptions;
 mod gic;
@@ -15,6 +16,7 @@ mod memory;
 mod power;
 mod shell;
 mod sync;
+mod task;
 mod timer;
 mod uart;
 
@@ -23,11 +25,13 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
+use core::sync::atomic::{AtomicU64, Ordering};
 use i18n::msg;
 use memory::{PAGE_SIZE, frame, heap, mmu};
 
 global_asm!(include_str!("arch/boot.s"));
 global_asm!(include_str!("arch/vectors.s"));
+global_asm!(include_str!("arch/switch.s"));
 
 unsafe extern "C" {
     static __kernel_start: u8;
@@ -116,15 +120,53 @@ pub extern "C" fn kernel_main() -> ! {
 
     self_tests();
 
-    println!();
-    let mut shell = shell::Shell::new();
-    shell.start();
+    // 6) Jarayonlar: şu kod PID 0 ("yadro") bölib qoladi
+    task::init();
+    tprintln!(msg::SCHED_READY, 1000 / timer::HZ, task::programs::PROGRAMS.len());
+    task::spawn_kernel("tekşiruv", boot_tests, 0).expect("tekşiruv oqimi");
+
+    // PID 0: boşqa iş bölmaganda — tugagan vazifalarni tozalaş va uxlaş
     loop {
-        while let Some(b) = uart::read_byte() {
-            shell.feed(b);
-        }
-        gic::wait_for_interrupt_unless(uart::has_input);
+        task::reap_detached();
+        unsafe { asm!("wfi") };
     }
+}
+
+static COUNTER_A: AtomicU64 = AtomicU64::new(0);
+static COUNTER_B: AtomicU64 = AtomicU64::new(0);
+
+/// Hech qaçon navbat bermaydigan oqim: faqat taymer uni töxtata oladi.
+extern "C" fn busy_counter(which: usize) {
+    let c = if which == 0 { &COUNTER_A } else { &COUNTER_B };
+    let start = timer::uptime_ms();
+    while timer::uptime_ms() - start < 100 {
+        c.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Rejalaştiruvçi va foydalanuvçi rejimini tekşiradi, keyin terminalni oçadi.
+extern "C" fn boot_tests(_: usize) {
+    // Ikki "özgʼir" oqim bir vaqtda — ikkalasi ham oldinga siljişi kerak
+    let a = task::spawn_kernel("hisoblagiç-a", busy_counter, 0).expect("oqim");
+    let b = task::spawn_kernel("hisoblagiç-b", busy_counter, 1).expect("oqim");
+    task::sleep_ms(150);
+    task::wait(a);
+    task::wait(b);
+    let (ca, cb) = (COUNTER_A.load(Ordering::Relaxed), COUNTER_B.load(Ordering::Relaxed));
+    assert!(ca > 0 && cb > 0, "oqimlar almaşmayapti: {} / {}", ca, cb);
+    tprintln!(msg::TEST_SCHED, ca, cb);
+
+    // Foydalanuvçi rejimi: `sinov` dasturi 42 bilan çiqişi va xotira toʼliq qaytişi kerak
+    let frames_before = frame::stats().0;
+    let image = task::programs::find("sinov").expect("sinov dasturi yöq");
+    let pid = task::spawn_user("sinov", image, false).expect("sinov");
+    let code = task::wait(pid);
+    assert_eq!(code, Some(42), "sinov dasturi xato kod qaytardi");
+    assert_eq!(frame::stats().0, frames_before, "jarayon xotirasi toʼliq qaytmadi");
+    tprintln!(msg::TEST_USER, 42);
+
+    println!();
+    task::spawn_kernel("terminal", shell::run, 0).expect("terminal");
 }
 
 /// Yuklaş parametrlaridan tilni öqiydi: `til=uz|ru|en` (yoki `lang=`).
