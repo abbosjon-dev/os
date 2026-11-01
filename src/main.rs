@@ -67,7 +67,7 @@ pub extern "C" fn kernel_main() -> ! {
         }
     };
     if let Some(f) = fdt {
-        println!("[dtb ] model: {}, hajmi: {} bayt", f.model().unwrap_or("?"), f.total_size());
+        println!("[dtb ] qurilma tavsifi o'qildi ({} KiB)", f.total_size() / 1024);
     }
     println!("[mem ] RAM: {:#x}..{:#x} ({} MiB)", ram_start, ram_start + ram_size, ram_size >> 20);
 

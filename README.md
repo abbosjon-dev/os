@@ -3,7 +3,7 @@
 **Dasturchi:** Abbosjon Dev · **Veb-sayt:** [zamin.app](https://zamin.app) · **Email:** [info@zamin.app](mailto:info@zamin.app)
 
 Rust tilida **noldan** yozilayotgan, **ARM64 (AArch64)** protsessorlari uchun operatsion tizim.
-macOS'dan ilhomlangan (toza dizayn, mikroyadroga yaqin arxitektura, silliq UI), lekin undan nusxa ko'chirilmaydi.
+O'z g'oyalarimiz asosida: toza dizayn, mikroyadroga yaqin arxitektura, silliq interfeys. Boshqa tizimlardan kod, nom yoki dizayn ko'chirilmaydi.
 
 **Asosiy qoida:** hech qanday tashqi crate yoki boshqa OS kodi ishlatilmaydi — `Cargo.toml` dagi
 `[dependencies]` bo'sh. Faqat Rust kompilyatori va `core` kutubxonasi.
@@ -41,12 +41,12 @@ src/memory/heap.rs   Kernel heap (free list) — Box/Vec/String ishlaydi
 - [x] **2. Xotira** — DTB, fizik sahifa allokatori, MMU + sahifa jadvallari, kernel heap (`alloc`)
 - [ ] **3. Uzilishlar** — GICv2/v3 drayveri, ARM generic timer
 - [ ] **4. Jarayonlar** — kontekst almashtirish, rejalashtiruvchi (scheduler), EL0 user mode
-- [ ] **5. Syscall'lar va IPC** — `svc`, xabar almashish (mach-port'larga o'xshash g'oya, o'z dizaynimiz)
+- [ ] **5. Syscall'lar va IPC** — `svc`, xabar almashish — "Zamin kanallari" (o'z dizaynimiz)
 - [ ] **6. SMP** — barcha core'larni ishga tushirish, spinlock'lar
 - [ ] **7. Drayverlar** — virtio (blok, tarmoq, GPU, klaviatura/sichqoncha), Device Tree parser
 - [ ] **8. Fayl tizimi** — VFS + o'z fayl tizimimiz
 - [ ] **9. Grafika** — framebuffer, kompozitor, oyna menejeri, shriftlar
-- [ ] **10. Foydalanuvchi muhiti** — shell, dock, ilovalar
+- [ ] **10. Foydalanuvchi muhiti** — Zamin terminali, Zamin paneli, ilovalar
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
 
 ## Versiyalash

@@ -1,6 +1,6 @@
 //! Flattened Device Tree (DTB) o'quvchisi — noldan yozilgan.
 //! QEMU yalang'och (bare-metal) ELF yadro uchun DTB ni RAM boshiga qo'yadi.
-//! Biz undan RAM hajmini va mashina modelini o'qiymiz.
+//! Biz undan faqat RAM hajmini o'qiymiz.
 
 use core::ffi::CStr;
 
@@ -119,15 +119,5 @@ impl Fdt {
             }
         });
         result
-    }
-
-    pub fn model(&self) -> Option<&'static str> {
-        let mut model = None;
-        self.for_each_prop(|depth, _, prop, val| {
-            if depth == 1 && prop == "model" {
-                model = CStr::from_bytes_until_nul(val).ok().and_then(|s| s.to_str().ok());
-            }
-        });
-        model
     }
 }
