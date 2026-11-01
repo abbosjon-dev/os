@@ -23,6 +23,8 @@ fn main() {
     let flags = [
         format!("-Clink-arg=-T{}", user.join("user.ld").display()),
         "-Crelocation-model=static".to_string(),
+        // Segmentlar 4 KiB ga tekislansin (standart 64 KiB fayllarni keraksiz kattalaştiradi)
+        "-Clink-arg=-zmax-page-size=4096".to_string(),
     ]
     .join("\x1f");
 

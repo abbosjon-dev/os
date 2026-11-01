@@ -40,7 +40,22 @@ zamin> işlat salom          # dasturni işga tuşiriş (tugagunça kutadi)
 zamin> işlat soat &         # fonda işga tuşiriş
 zamin> jarayonlar           # işlayotgan jarayonlar
 zamin> tugat 6              # jarayonni tugatiş
+zamin> işlat hisobla 1000000 # argument bilan
+zamin> işlat mijoz 7 * 6    # mijoz kalkulyator serverini işga tuşirib, kanal orqali söröv yuboradi
+zamin> kanallar             # Zamin kanallari
 ```
+
+Fayllar (hozirça xotirada saqlanadi):
+
+```
+zamin> fayllar uy           # papka tarkibi
+zamin> yoz uy/a.txt Salom   # faylga yoziş
+zamin> öqi uy/a.txt         # faylni öqiş (yoki: oqi)
+zamin> papka uy/rasmlar     # papka yaratiş
+zamin> taşla uy/a.txt       # öçiriş (yoki: tashla)
+```
+
+`/dasturlar` va `/tizim` — tizim papkalari: ularni özgartirib bölmaydi.
 
 Har bir dastur EL0 (foydalanuvçi) rejimida, öz manzil maydonida işlaydi. U yadro
 xotirasiga kira olmaydi — urinsa, faqat şu dastur tugatiladi (`işlat buzuq`).
@@ -50,11 +65,13 @@ Yangi dastur yoziş: `user/src/bin/` ga fayl qöşing:
 ```rust
 #![no_std]
 #![no_main]
-use zamin::{println, tr};
+use zamin::{fs, format, println, tr};
 zamin::entry!(main);
 
 fn main() -> i64 {
     println!("{}", tr(["Salom!", "Привет!", "Hello!"]));
+    let ism = zamin::args();                       // işlat dasturim Abbos
+    let _ = fs::write("/uy/ism.txt", format!("{}\n", ism).as_bytes());
     0 // çiqiş kodi
 }
 ```
@@ -82,11 +99,15 @@ src/timer.rs         ARM taymeri (100 Hz)
 src/irq.rs           Uzilişlarni drayverlarga tarqatiş
 src/task/mod.rs      Jarayonlar va rejalaştiruvçi (round-robin, 10 ms)
 src/task/elf.rs      ELF64 yuklovçi
-src/task/syscall.rs  Tizim çaqiruvlari
+src/task/syscall.rs  Tizim çaqiruvlari (har bir foydalanuvçi manzili tekşiriladi)
+src/fs/mod.rs        VFS + ramfs: /dasturlar, /tizim, /uy
+src/ipc.rs           Zamin kanallari — jarayonlararo xabar almaşiş
 src/abi.rs           Tizim çaqiruvlari raqamlari (yadro va dasturlar uçun umumiy)
 build.rs             Foydalanuvçi dasturlarini yiğib, yadroga joylaydi
-user/src/lib.rs      `zamin` kutubxonasi: tizim çaqiruvlari, println!, tr()
-user/src/bin/        Dasturlar: salom, hisobla, soat, buzuq, sinov
+user/src/lib.rs      `zamin` kutubxonasi: tizim çaqiruvlari, println!, tr(), Channel, spawn/wait
+user/src/heap.rs     Foydalanuvçi xotira ajratuvçisi (Vec, String, format! işlaydi)
+user/src/fs.rs       Fayllar: File, read, write, list, mkdir, remove
+user/src/bin/        Dasturlar: salom, hisobla, soat, buzuq, sinov, fayl, kalkulyator, mijoz
 src/i18n.rs          Köp tillilik: özbekça (asosiy), русский, English
 src/shell.rs         Zamin terminali (yordam, jarayonlar, işlat, tugat, til, öçir...)
 ```
@@ -97,10 +118,11 @@ src/shell.rs         Zamin terminali (yordam, jarayonlar, işlat, tugat, til, ö
 - [x] **2. Xotira** — DTB, fizik sahifa allokatori, MMU + sahifa jadvallari, kernel heap (`alloc`)
 - [x] **3. Uzilişlar** — GICv2 drayveri, ARM taymeri, klaviatura uzilişi, Zamin terminali
 - [x] **4. Jarayonlar** — kontekst almaştiriş, rejalaştiruvçi, EL0 foydalanuvçi rejimi, har jarayonga öz manzil maydoni, ELF yuklovçi
-- [ ] **5. Syscallʼlar va IPC** — `svc` va 7 ta tizim çaqiruvi tayyor; xabar almaşiş — "Zamin kanallari" (öz dizaynimiz) — navbatda
+- [x] **5. Syscallʼlar va IPC** — 20 ta tizim çaqiruvi; "Zamin kanallari" — nomli xabar kanallari
+- [x] **5½. Yadro markazi** — W^X himoya, foydalanuvçi heapʼi, dastur işga tuşiriş/kutiş, argumentlar, VFS + ramfs
 - [ ] **6. SMP** — barça coreʼlarni işga tuşiriş, spinlockʼlar
 - [ ] **7. Drayverlar** — virtio (blok, tarmoq, GPU, klaviatura/siçqonça), Device Tree parser
-- [ ] **8. Fayl tizimi** — VFS + öz fayl tizimimiz
+- [ ] **8. Fayl tizimi** — VFS va xotiradagi fayl tizimi tayyor; diskdagi öz fayl tizimimiz — navbatda
 - [ ] **9. Grafika** — framebuffer, kompozitor, oyna menejeri, şriftlar
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti

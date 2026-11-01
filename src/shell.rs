@@ -3,9 +3,11 @@
 
 use crate::i18n::{self, Lang, Text, msg};
 use crate::memory::{frame, heap};
+use crate::fs::{self, FsError};
 use crate::task::{self, State};
 use crate::{print, println, power, timer, tprintln, uart};
 use alloc::string::String;
+use alloc::format;
 
 const PROMPT: &str = "zamin> ";
 const MAX_LINE: usize = 256;
@@ -23,6 +25,12 @@ enum Cmd {
     Programs,
     Run,
     Kill,
+    Ls,
+    Cat,
+    Write,
+    Mkdir,
+    Rm,
+    Channels,
     Reboot,
     Shutdown,
 }
@@ -48,6 +56,12 @@ const COMMANDS: &[Command] = &[
     Command { cmd: Cmd::Programs, names: ["dasturlar", "программы", "programs"], aliases: &[], help: ["mavjud dasturlar", "доступные программы", "available programs"] },
     Command { cmd: Cmd::Run, names: ["işlat", "запуск", "run"], aliases: &["ishlat", "islat"], help: ["dasturni işga tuşiriş: işlat salom", "запустить программу: запуск salom", "start a program: run salom"] },
     Command { cmd: Cmd::Kill, names: ["tugat", "завершить", "kill"], aliases: &[], help: ["jarayonni tugatiş: tugat <PID>", "завершить процесс: завершить <PID>", "terminate a process: kill <PID>"] },
+    Command { cmd: Cmd::Ls, names: ["fayllar", "файлы", "ls"], aliases: &[], help: ["papka tarkibi: fayllar uy", "содержимое папки: файлы uy", "list a directory: ls uy"] },
+    Command { cmd: Cmd::Cat, names: ["öqi", "читать", "cat"], aliases: &["oqi"], help: ["faylni körsatiş: öqi tizim/versiya", "показать файл: читать tizim/versiya", "show a file: cat tizim/versiya"] },
+    Command { cmd: Cmd::Write, names: ["yoz", "записать", "write"], aliases: &[], help: ["faylga yoziş: yoz uy/a.txt Salom", "записать в файл: записать uy/a.txt Привет", "write to a file: write uy/a.txt Hello"] },
+    Command { cmd: Cmd::Mkdir, names: ["papka", "папка", "mkdir"], aliases: &[], help: ["papka yaratiş: papka uy/rasmlar", "создать папку: папка uy/foto", "create a directory: mkdir uy/photos"] },
+    Command { cmd: Cmd::Rm, names: ["taşla", "удалить", "rm"], aliases: &["tashla"], help: ["fayl yoki böş papkani öçiriş", "удалить файл или пустую папку", "remove a file or empty directory"] },
+    Command { cmd: Cmd::Channels, names: ["kanallar", "каналы", "channels"], aliases: &[], help: ["Zamin kanallari (IPC)", "каналы Zamin (IPC)", "Zamin channels (IPC)"] },
     Command { cmd: Cmd::Reboot, names: ["qayta", "перезагрузка", "reboot"], aliases: &[], help: ["qayta yuklaş", "перезагрузить", "restart"] },
     Command { cmd: Cmd::Shutdown, names: ["öçir", "выкл", "shutdown"], aliases: &["ocir", "ochir"], help: ["tizimni öçiriş", "выключить систему", "power off"] },
 ];
@@ -57,9 +71,9 @@ fn program_help(name: &str) -> Text {
     match name {
         "salom" => ["salomlaşadi", "приветствует", "says hello"],
         "hisobla" => [
-            "tub sonlarni sanaydi (köp vazifalilikni körsatadi)",
-            "считает простые числа (показывает многозадачность)",
-            "counts primes (shows multitasking)",
+            "tub sonlarni sanaydi: hisobla [çegara]",
+            "считает простые числа: hisobla [предел]",
+            "counts primes: hisobla [limit]",
         ],
         "soat" => [
             "har soniyada vaqtni körsatadi (5 marta)",
@@ -72,6 +86,21 @@ fn program_help(name: &str) -> Text {
             "tries to access kernel memory (shows protection)",
         ],
         "sinov" => ["tizim çaqiruvlarini tekşiradi", "проверяет системные вызовы", "tests system calls"],
+        "kalkulyator" => [
+            "\"hisob\" kanalidagi sörövlarni bajaradigan server",
+            "сервер, выполняющий запросы из канала \"hisob\"",
+            "server answering requests on channel \"hisob\"",
+        ],
+        "mijoz" => [
+            "kalkulyator serverini işga tuşirib, kanal orqali sörövlar yuboradi",
+            "запускает сервер kalkulyator и отправляет ему запросы по каналу",
+            "starts the kalkulyator server and sends it requests over a channel",
+        ],
+        "fayl" => [
+            "fayl yaratadi, yozadi va öqiydi",
+            "создаёт, записывает и читает файл",
+            "creates, writes and reads a file",
+        ],
         _ => ["", "", ""],
     }
 }
@@ -81,9 +110,27 @@ fn state_text(st: State) -> &'static str {
         State::Ready => &msg::STATE_READY,
         State::Running => &msg::STATE_RUNNING,
         State::Sleeping(_) => &msg::STATE_SLEEPING,
-        State::WaitingInput | State::WaitingPid(_) => &msg::STATE_WAITING,
+        State::WaitingInput | State::WaitingPid(_) | State::WaitingChannel(_) => &msg::STATE_WAITING,
         State::Dead(_) => &msg::STATE_DEAD,
     })
+}
+
+fn fs_error_text(e: FsError) -> &'static str {
+    i18n::pick(match e {
+        FsError::NotFound => &msg::FS_NOT_FOUND,
+        FsError::Exists => &msg::FS_EXISTS,
+        FsError::NotDir => &msg::FS_NOT_DIR,
+        FsError::IsDir => &msg::FS_IS_DIR,
+        FsError::NotEmpty => &msg::FS_NOT_EMPTY,
+        FsError::Invalid => &msg::FS_INVALID,
+        FsError::TooBig => &msg::FS_TOO_BIG,
+        FsError::Denied => &msg::FS_DENIED,
+    })
+}
+
+/// Terminalda yöllar ildizga nisbatan: `uy/a.txt` == `/uy/a.txt`.
+fn abs_path(p: &str) -> String {
+    if p.starts_with('/') { String::from(p) } else { format!("/{}", p) }
 }
 
 /// Terminal yadro oqimi sifatida işlaydi.
@@ -215,6 +262,8 @@ impl Shell {
                 let (free, total) = frame::stats();
                 let (used, htotal) = heap::stats();
                 tprintln!(msg::SH_MEM, free * 4 / 1024, total * 4 / 1024, used / 1024, htotal / 1024);
+                let (files, dirs, bytes) = fs::stats();
+                tprintln!(msg::SH_MEM_FS, files, dirs, bytes);
             }
             Cmd::Echo => println!("{}", args),
             Cmd::Clear => print!("\x1b[2J\x1b[H"),
@@ -239,29 +288,39 @@ impl Shell {
             Cmd::Programs => {
                 tprintln!(msg::SH_PROGRAMS_HEADER);
                 let lang = i18n::current() as usize;
-                for (name, _) in task::programs::PROGRAMS {
-                    let pad = 10usize.saturating_sub(name.len());
-                    println!("    {}{:pad$}— {}", name, "", program_help(name)[lang], pad = pad);
+                for e in fs::list("/dasturlar").unwrap_or_default() {
+                    let pad = 13usize.saturating_sub(e.name.chars().count());
+                    println!("    {}{:pad$}— {}", e.name, "", program_help(&e.name)[lang], pad = pad);
                 }
             }
             Cmd::Run => {
-                let (prog, background) = match args.strip_suffix('&') {
+                let (line, background) = match args.strip_suffix('&') {
                     Some(p) => (p.trim(), true),
                     None => (args, false),
                 };
+                let (prog, prog_args) = line.split_once(' ').map_or((line, ""), |(p, a)| (p, a.trim()));
                 if prog.is_empty() {
                     tprintln!(msg::SH_RUN_USAGE);
                     return;
                 }
-                let Some(image) = task::programs::find(prog) else {
-                    tprintln!(msg::SH_NO_PROGRAM, prog);
-                    return;
+                let path = if prog.contains('/') { abs_path(prog) } else { format!("/dasturlar/{}", prog) };
+                let image = match fs::read_all(&path) {
+                    Ok(img) => img,
+                    Err(FsError::NotFound) => {
+                        tprintln!(msg::SH_NO_PROGRAM, prog);
+                        return;
+                    }
+                    Err(e) => {
+                        tprintln!(msg::SH_ERROR, path, fs_error_text(e));
+                        return;
+                    }
                 };
-                match task::spawn_user(prog, image, background) {
-                    Ok(pid) if background => tprintln!(msg::SH_STARTED_BG, pid, prog),
+                let name = path.rsplit('/').next().unwrap_or(prog);
+                match task::spawn_user(name, &image, prog_args, background, 0) {
+                    Ok(pid) if background => tprintln!(msg::SH_STARTED_BG, pid, name),
                     Ok(pid) => {
                         if let Some(code) = task::wait(pid) {
-                            tprintln!(msg::SH_EXITED, pid, prog, code);
+                            tprintln!(msg::SH_EXITED, pid, name, code);
                         }
                     }
                     Err(e) => tprintln!(msg::SH_SPAWN_FAIL, format_args!("{:?}", e)),
@@ -272,6 +331,92 @@ impl Shell {
                 Ok(pid) => tprintln!(msg::SH_KILL_FAIL, pid),
                 Err(_) => tprintln!(msg::SH_KILL_USAGE),
             },
+            Cmd::Ls => {
+                let path = abs_path(args);
+                match fs::list(&path) {
+                    Ok(entries) if entries.is_empty() => tprintln!(msg::SH_EMPTY_DIR),
+                    Ok(entries) => {
+                        for e in entries {
+                            let shown = if e.is_dir { format!("{}/", e.name) } else { e.name.clone() };
+                            let pad = 24usize.saturating_sub(shown.chars().count());
+                            if e.is_dir {
+                                print!("  {}{:pad$}", shown, "", pad = pad);
+                                tprintln!(msg::SH_ITEMS, e.size);
+                            } else {
+                                println!("  {}{:pad$}{} B", shown, "", e.size, pad = pad);
+                            }
+                        }
+                    }
+                    Err(e) => tprintln!(msg::SH_ERROR, path, fs_error_text(e)),
+                }
+            }
+            Cmd::Cat => {
+                if args.is_empty() {
+                    tprintln!(msg::SH_USAGE_PATH, name);
+                    return;
+                }
+                let path = abs_path(args);
+                match fs::read_all(&path) {
+                    Ok(data) => match core::str::from_utf8(&data) {
+                        Ok(text) => {
+                            print!("{}", text);
+                            if !text.is_empty() && !text.ends_with('\n') {
+                                println!();
+                            }
+                        }
+                        Err(_) => tprintln!(msg::SH_BINARY, data.len()),
+                    },
+                    Err(e) => tprintln!(msg::SH_ERROR, path, fs_error_text(e)),
+                }
+            }
+            Cmd::Write => {
+                let Some((file, text)) = args.split_once(' ') else {
+                    tprintln!(msg::SH_WRITE_USAGE);
+                    return;
+                };
+                let path = abs_path(file);
+                let data = format!("{}\n", text);
+                let res = fs::open(&path, crate::abi::OPEN_CREATE | crate::abi::OPEN_TRUNCATE)
+                    .and_then(|id| fs::write(id, Some(0), data.as_bytes()));
+                match res {
+                    Ok(n) => tprintln!(msg::SH_WRITTEN, n, path),
+                    Err(e) => tprintln!(msg::SH_ERROR, path, fs_error_text(e)),
+                }
+            }
+            Cmd::Mkdir => {
+                if args.is_empty() {
+                    tprintln!(msg::SH_USAGE_PATH, name);
+                    return;
+                }
+                let path = abs_path(args);
+                match fs::mkdir(&path) {
+                    Ok(_) => tprintln!(msg::SH_DIR_CREATED, path),
+                    Err(e) => tprintln!(msg::SH_ERROR, path, fs_error_text(e)),
+                }
+            }
+            Cmd::Rm => {
+                if args.is_empty() {
+                    tprintln!(msg::SH_USAGE_PATH, name);
+                    return;
+                }
+                let path = abs_path(args);
+                match fs::remove(&path) {
+                    Ok(()) => tprintln!(msg::SH_REMOVED, path),
+                    Err(e) => tprintln!(msg::SH_ERROR, path, fs_error_text(e)),
+                }
+            }
+            Cmd::Channels => {
+                let list = crate::ipc::list();
+                if list.is_empty() {
+                    tprintln!(msg::SH_NO_CHANNELS);
+                    return;
+                }
+                tprintln!(msg::SH_CHANNELS_HEADER);
+                for (name, queued, sent) in list {
+                    let pad = 21usize.saturating_sub(name.chars().count());
+                    println!("  {}{:pad$}{:<11}{}", name, "", queued, sent, pad = pad);
+                }
+            }
             Cmd::Reboot => {
                 tprintln!(msg::SH_REBOOT);
                 power::reboot();

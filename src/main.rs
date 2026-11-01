@@ -9,8 +9,10 @@ extern crate alloc;
 mod abi;
 mod dtb;
 mod exceptions;
+mod fs;
 mod gic;
 mod i18n;
+mod ipc;
 mod irq;
 mod memory;
 mod power;
@@ -122,6 +124,9 @@ pub extern "C" fn kernel_main() -> ! {
 
     // 6) Jarayonlar: şu kod PID 0 ("yadro") bölib qoladi
     task::init();
+    fs::init(task::programs::PROGRAMS);
+    let (files, dirs, _) = fs::stats();
+    tprintln!(msg::FS_READY, files, dirs);
     tprintln!(msg::SCHED_READY, 1000 / timer::HZ, task::programs::PROGRAMS.len());
     task::spawn_kernel("tekşiruv", boot_tests, 0).expect("tekşiruv oqimi");
 
@@ -159,7 +164,7 @@ extern "C" fn boot_tests(_: usize) {
     // Foydalanuvçi rejimi: `sinov` dasturi 42 bilan çiqişi va xotira töliq qaytişi kerak
     let frames_before = frame::stats().0;
     let image = task::programs::find("sinov").expect("sinov dasturi yöq");
-    let pid = task::spawn_user("sinov", image, false).expect("sinov");
+    let pid = task::spawn_user("sinov", image, "", false, 0).expect("sinov");
     let code = task::wait(pid);
     assert_eq!(code, Some(42), "sinov dasturi xato kod qaytardi");
     assert_eq!(frame::stats().0, frames_before, "jarayon xotirasi töliq qaytmadi");
@@ -219,6 +224,18 @@ fn self_tests() {
     tprintln!(msg::TEST_MMU, format_args!("{:#x}", TEST_VA), format_args!("{:#x}", pa));
 
     let _ = PAGE_SIZE;
+
+    // W^X: kod yozilmaydi, maʼlumot bajarilmaydi
+    let code = kernel_main as *const () as usize;
+    let ro = BANNER.as_ptr() as usize;
+    let data = &raw const COUNTER_A as usize;
+    let heap = Box::new(0u8);
+    assert_eq!(mmu::kernel_access(code), Some((false, true)), "kod sahifasi");
+    assert_eq!(mmu::kernel_access(ro), Some((false, false)), "rodata sahifasi");
+    assert_eq!(mmu::kernel_access(data), Some((true, false)), "data sahifasi");
+    assert_eq!(mmu::kernel_access(&*heap as *const u8 as usize), Some((true, false)), "heap sahifasi");
+    drop(heap);
+    tprintln!(msg::TEST_WX);
 
     // Taymer uzilişlari: 50 ms içida kamida 3 ta tick kelişi kerak
     let start_ticks = timer::ticks();

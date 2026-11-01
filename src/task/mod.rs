@@ -15,8 +15,10 @@ use crate::memory::mmu::{self, AddressSpace, Kind};
 use crate::memory::{PAGE_SIZE, frame};
 use crate::sync::{SpinLock, irq_restore, irq_save};
 use crate::timer;
+use crate::{fs, ipc};
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 pub type Pid = usize;
@@ -25,6 +27,11 @@ const MAX_TASKS: usize = 64;
 const KSTACK_PAGES: usize = 8; // 32 KiB
 pub const USER_STACK_TOP: usize = mmu::USER_END - PAGE_SIZE; // ostida böş "qörğon" sahifa
 const USER_STACK_PAGES: usize = 16; // 64 KiB
+/// Foydalanuvçi heapʼi şu manzildan boşlab yuqoriga östiriladi (SYS_MAP).
+pub const USER_HEAP_BASE: usize = 0x60_0000_0000;
+const USER_HEAP_MAX: usize = 256 << 20; // jarayonga 256 MiB gaça
+const MAX_HANDLES: usize = 32;
+pub const MAX_ARGS: usize = 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -33,7 +40,15 @@ pub enum State {
     Sleeping(u64),
     WaitingInput,
     WaitingPid(Pid),
+    WaitingChannel(ipc::ChanId),
     Dead(i64),
+}
+
+/// Jarayon oçgan resurs (fayl yoki kanal) — "dastak".
+#[derive(Clone, Copy)]
+pub enum Handle {
+    File { node: fs::NodeId, offset: usize, append: bool },
+    Channel(ipc::ChanId),
 }
 
 /// Saqlangan registrlar (arch/switch.s bilan bir xil tartibda).
@@ -51,8 +66,12 @@ pub struct Task {
     pub name: String,
     pub state: State,
     pub user: bool,
+    /// Uni işga tuşirgan jarayon
+    pub parent: Pid,
     /// Heç kim kutmaydi — tugagaç avtomatik tozalanadi.
     detached: bool,
+    handles: Vec<Option<Handle>>,
+    heap_end: usize,
     ctx: Context,
     kstack: Option<usize>,
     aspace: Option<AddressSpace>,
@@ -90,6 +109,7 @@ unsafe extern "C" {
 pub enum SpawnError {
     OutOfMemory,
     TooManyTasks,
+    ArgsTooLong,
     BadImage(elf::ElfError),
 }
 
@@ -100,7 +120,10 @@ pub fn init() {
         name: String::from("yadro"),
         state: State::Running,
         user: false,
+        parent: 0,
         detached: false,
+        handles: Vec::new(),
+        heap_end: USER_HEAP_BASE,
         ctx: Context::default(),
         kstack: None,
         aspace: None,
@@ -136,7 +159,10 @@ pub fn spawn_kernel(name: &str, entry: extern "C" fn(usize), arg: usize) -> Resu
         name: String::from(name),
         state: State::Ready,
         user: false,
+        parent: 0,
         detached: true,
+        handles: Vec::new(),
+        heap_end: USER_HEAP_BASE,
         ctx,
         kstack: Some(kstack),
         aspace: None,
@@ -144,7 +170,11 @@ pub fn spawn_kernel(name: &str, entry: extern "C" fn(usize), arg: usize) -> Resu
 }
 
 /// ELF faylidan foydalanuvçi jarayonini yaratadi.
-pub fn spawn_user(name: &str, image: &[u8], detached: bool) -> Result<Pid, SpawnError> {
+/// `args` foydalanuvçi stekining tepasiga yoziladi: dastur uni x0 (manzil), x1 (uzunlik) da oladi.
+pub fn spawn_user(name: &str, image: &[u8], args: &str, detached: bool, parent: Pid) -> Result<Pid, SpawnError> {
+    if args.len() > MAX_ARGS {
+        return Err(SpawnError::ArgsTooLong);
+    }
     let mut aspace = AddressSpace::new_user().ok_or(SpawnError::OutOfMemory)?;
     let entry = elf::load(&mut aspace, image).map_err(SpawnError::BadImage)?;
     for i in 1..=USER_STACK_PAGES {
@@ -155,6 +185,14 @@ pub fn spawn_user(name: &str, image: &[u8], detached: bool) -> Result<Pid, Spawn
         }
     }
 
+    // Argumentlar: stek tepasiga (16 bayt tekislangan), stek ulardan pastda boşlanadi.
+    let args_addr = (USER_STACK_TOP - args.len()) & !15;
+    for (i, b) in args.bytes().enumerate() {
+        let va = args_addr + i;
+        let pa = aspace.translate(va).ok_or(SpawnError::OutOfMemory)?;
+        unsafe { (pa as *mut u8).write(b) };
+    }
+
     let kstack = match alloc_kstack() {
         Ok(k) => k,
         Err(e) => return Err(e), // aspace özi böşatiladi
@@ -163,11 +201,14 @@ pub fn spawn_user(name: &str, image: &[u8], detached: bool) -> Result<Pid, Spawn
     let top = kstack + KSTACK_PAGES * PAGE_SIZE;
     let frame_ptr = (top - core::mem::size_of::<TrapFrame>()) as *mut TrapFrame;
     unsafe {
+        let mut x = [0u64; 31];
+        x[0] = args_addr as u64;
+        x[1] = args.len() as u64;
         frame_ptr.write(TrapFrame {
-            x: [0; 31],
+            x,
             elr: entry as u64,
             spsr: 0, // EL0t, uzilişlar yoqiq
-            sp_el0: USER_STACK_TOP as u64,
+            sp_el0: args_addr as u64,
         });
     }
     let mut ctx = Context::default();
@@ -179,7 +220,10 @@ pub fn spawn_user(name: &str, image: &[u8], detached: bool) -> Result<Pid, Spawn
         name: String::from(name),
         state: State::Ready,
         user: true,
+        parent,
         detached,
+        handles: Vec::new(),
+        heap_end: USER_HEAP_BASE,
         ctx,
         kstack: Some(kstack),
         aspace: Some(aspace),
@@ -286,10 +330,16 @@ pub fn exit_current(code: i64) -> ! {
         let mut s = SCHED.lock();
         let cur = s.current;
         let pid = s.tasks[cur].as_ref().unwrap().pid;
-        s.tasks[cur].as_mut().unwrap().state = State::Dead(code);
+        let me = s.tasks[cur].as_mut().unwrap();
+        me.state = State::Dead(code);
+        me.handles.clear();
         for t in s.tasks.iter_mut().flatten() {
             if t.state == State::WaitingPid(pid) {
                 t.state = State::Ready;
+            }
+            // Yetim qolgan bolalar endi heç kim kutmaydi — tugagaç özi tozalanadi.
+            if t.parent == pid {
+                t.detached = true;
             }
         }
     }
@@ -374,6 +424,9 @@ pub fn kill(pid: Pid) -> bool {
         if t.state == State::WaitingPid(pid) {
             t.state = State::Ready;
         }
+        if t.parent == pid {
+            t.detached = true;
+        }
     }
     true
 }
@@ -383,8 +436,9 @@ pub fn current_pid() -> Pid {
     s.tasks[s.current].as_ref().map_or(0, |t| t.pid)
 }
 
-/// Joriy jarayonning manzil maydonida `[addr, addr+len)` foydalanuvçi xotirasimi?
-pub fn user_range_ok(addr: usize, len: usize) -> bool {
+/// Joriy jarayonning manzil maydonida `[addr, addr+len)` foydalanuvçi xotirasimi
+/// (`write` bölsa — yoziş ham mumkinmi)?
+pub fn user_range_ok(addr: usize, len: usize, write: bool) -> bool {
     let Some(end) = addr.checked_add(len) else { return false };
     if addr < mmu::USER_BASE || end > mmu::USER_END {
         return false;
@@ -395,12 +449,95 @@ pub fn user_range_ok(addr: usize, len: usize) -> bool {
     };
     let mut page = addr & !(PAGE_SIZE - 1);
     while page < end {
-        if aspace.translate(page).is_none() {
+        if !aspace.user_accessible(page, write) {
             return false;
         }
         page += PAGE_SIZE;
     }
     true
+}
+
+fn with_current<R>(f: impl FnOnce(&mut Task) -> R) -> R {
+    let mut s = SCHED.lock();
+    let cur = s.current;
+    f(s.tasks[cur].as_mut().expect("joriy vazifa yöq"))
+}
+
+/// Joriy jarayonga yangi dastak qöşadi. Natija: dastak raqami.
+pub fn add_handle(h: Handle) -> Option<usize> {
+    with_current(|t| {
+        if let Some(i) = t.handles.iter().position(|x| x.is_none()) {
+            t.handles[i] = Some(h);
+            Some(i)
+        } else if t.handles.len() < MAX_HANDLES {
+            t.handles.push(Some(h));
+            Some(t.handles.len() - 1)
+        } else {
+            None
+        }
+    })
+}
+
+pub fn get_handle(i: usize) -> Option<Handle> {
+    with_current(|t| t.handles.get(i).copied().flatten())
+}
+
+pub fn set_handle(i: usize, h: Handle) {
+    with_current(|t| {
+        if let Some(slot) = t.handles.get_mut(i) {
+            *slot = Some(h);
+        }
+    })
+}
+
+pub fn close_handle(i: usize) -> bool {
+    with_current(|t| t.handles.get_mut(i).and_then(|h| h.take()).is_some())
+}
+
+/// Joriy jarayonga `size` bayt yangi (nollangan) xotira beradi. Natija: manzil.
+pub fn map_memory(size: usize) -> Option<usize> {
+    let pages = size.div_ceil(PAGE_SIZE);
+    with_current(|t| {
+        let start = t.heap_end;
+        if pages == 0 || start + pages * PAGE_SIZE > USER_HEAP_BASE + USER_HEAP_MAX {
+            return None;
+        }
+        let aspace = t.aspace.as_mut()?;
+        for i in 0..pages {
+            let pa = frame::alloc_zeroed()?;
+            if aspace.map(start + i * PAGE_SIZE, pa, Kind::UserData).is_err() {
+                frame::free(pa);
+                return None;
+            }
+            // Xaritalangan sahifalar jarayon bilan birga böşatiladi.
+            t.heap_end = start + (i + 1) * PAGE_SIZE;
+        }
+        Some(start)
+    })
+}
+
+pub fn parent_of(pid: Pid) -> Option<Pid> {
+    let s = SCHED.lock();
+    s.tasks.iter().flatten().find(|t| t.pid == pid).map(|t| t.parent)
+}
+
+/// Kanal xabarini kutadi (`ready()` rost bölsa — kutmaydi).
+pub fn wait_channel(id: ipc::ChanId, ready: impl Fn() -> bool) {
+    let d = irq_save();
+    if !ready() {
+        block_current(State::WaitingChannel(id));
+    }
+    irq_restore(d);
+}
+
+/// Kanalga xabar kelganda çaqiriladi.
+pub fn wake_channel(id: ipc::ChanId) {
+    let mut s = SCHED.lock();
+    for t in s.tasks.iter_mut().flatten() {
+        if t.state == State::WaitingChannel(id) {
+            t.state = State::Ready;
+        }
+    }
 }
 
 /// `jarayonlar` buyruği uçun maʼlumot.

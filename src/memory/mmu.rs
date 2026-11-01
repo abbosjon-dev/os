@@ -25,6 +25,20 @@ const USER_L1_FIRST: usize = USER_BASE / GIB; // 256
 struct Table([u64; ENTRIES]);
 
 static mut KERNEL_L1: Table = Table([0; ENTRIES]);
+/// Yadro joylaşgan 1 GiB uçun L2 jadval (2 MiB bloklar).
+static mut KERNEL_L2: Table = Table([0; ENTRIES]);
+/// Yadro kodi/maʼlumotlari joylaşgan 2 MiB lar uçun L3 jadvallar (4 KiB sahifalar).
+const KERNEL_L3_COUNT: usize = 4;
+static mut KERNEL_L3: [Table; KERNEL_L3_COUNT] = [const { Table([0; ENTRIES]) }; KERNEL_L3_COUNT];
+
+const MIB2: usize = 2 << 20;
+
+unsafe extern "C" {
+    static __text_start: u8;
+    static __text_end: u8;
+    static __rodata_start: u8;
+    static __rodata_end: u8;
+}
 
 // Deskriptor bitlari
 const VALID: u64 = 1 << 0;
@@ -92,16 +106,53 @@ const fn index(va: usize, level: usize) -> usize {
 }
 
 /// Identity xaritani quradi va MMU + keşlarni yoqadi.
+///
+/// RAM öqiş/yoziş uçun ruxsat etilgan, lekin bajarib bölmaydi. Faqat yadro kodi
+/// (.text) bajariladi va u yozib bölmaydi; .rodata — faqat öqiş (W^X).
 pub fn init(ram_start: usize, ram_size: usize) {
+    let text = (&raw const __text_start as usize, &raw const __text_end as usize);
+    let rodata_end = &raw const __rodata_end as usize;
+    let rodata = (&raw const __rodata_start as usize, rodata_end);
+    let kernel_gib = text.0 / GIB;
+    let data_block = VALID | AF | Kind::KernelData.bits(); // blok deskriptor (bit1 = 0)
+
     unsafe {
         let l1 = kernel_root();
         // Qurilmalar oynasi: birinçi 1 GiB.
         write_volatile(l1, VALID | AF | Kind::Device.bits());
-        // RAM: uni qoplaydigan 1 GiB bloklar (kod ham şu yerda — hozirça RWX).
+        // RAM: 1 GiB bloklar; yadro joylaşgan GiB — mayda sahifalarga bölinadi.
         let first = ram_start / GIB;
         let last = ((ram_start + ram_size - 1) / GIB).min(USER_L1_FIRST - 1);
         for i in first..=last {
-            write_volatile(l1.add(i), (i * GIB) as u64 | VALID | AF | ATTR_NORMAL | SH_INNER | UXN);
+            if i != kernel_gib {
+                write_volatile(l1.add(i), (i * GIB) as u64 | data_block);
+                continue;
+            }
+            let l2: *mut u64 = (&raw mut KERNEL_L2).cast();
+            let mut next_l3 = 0;
+            for j in 0..ENTRIES {
+                let base = i * GIB + j * MIB2;
+                if base + MIB2 <= text.0 || base >= rodata_end {
+                    write_volatile(l2.add(j), base as u64 | data_block);
+                    continue;
+                }
+                assert!(next_l3 < KERNEL_L3_COUNT, "yadro juda katta");
+                let l3: *mut u64 = (&raw mut KERNEL_L3[next_l3]).cast();
+                next_l3 += 1;
+                for k in 0..ENTRIES {
+                    let pa = base + k * PAGE_SIZE;
+                    let kind = if (text.0..text.1).contains(&pa) {
+                        Kind::KernelCode
+                    } else if (rodata.0..rodata.1).contains(&pa) {
+                        Kind::KernelRo
+                    } else {
+                        Kind::KernelData
+                    };
+                    write_volatile(l3.add(k), pa as u64 | VALID | TABLE_OR_PAGE | AF | kind.bits());
+                }
+                write_volatile(l2.add(j), l3 as u64 | VALID | TABLE_OR_PAGE);
+            }
+            write_volatile(l1.add(i), l2 as u64 | VALID | TABLE_OR_PAGE);
         }
 
         let mair: u64 = 0x00 | (0xff << 8); // 0: Device-nGnRnE, 1: Normal WB/WA
@@ -207,6 +258,33 @@ unsafe fn translate_in(root: *mut u64, va: usize) -> Option<usize> {
     None
 }
 
+/// Manzilga mos deskriptor (blok yoki sahifa) bitlari.
+unsafe fn leaf_bits(root: *mut u64, va: usize) -> Option<u64> {
+    if va >= USER_END {
+        return None;
+    }
+    unsafe {
+        let mut table = root;
+        for level in 1..=3 {
+            let v = read_volatile(table.add(index(va, level)));
+            if v & VALID == 0 {
+                return None;
+            }
+            if level == 3 || v & TABLE_OR_PAGE == 0 {
+                return Some(v);
+            }
+            table = (v & ADDR_MASK) as *mut u64;
+        }
+    }
+    None
+}
+
+/// Yadro jadvali böyiça sahifa ruxsatlari: (yoziş mumkinmi, EL1 bajara oladimi).
+pub fn kernel_access(va: usize) -> Option<(bool, bool)> {
+    let v = unsafe { leaf_bits(kernel_root(), va)? };
+    Some((v & AP_RO == 0, v & PXN == 0))
+}
+
 unsafe fn leaf_entry(root: *mut u64, va: usize) -> Option<*mut u64> {
     if va >= USER_END {
         return None;
@@ -296,6 +374,17 @@ impl AddressSpace {
             return None;
         }
         unsafe { translate_in(self.root as *mut u64, va) }
+    }
+
+    /// Sahifa foydalanuvçi uçun xaritalanganmi (va `write` bölsa — yoziş mumkinmi)?
+    pub fn user_accessible(&self, va: usize, write: bool) -> bool {
+        if va < USER_BASE {
+            return false;
+        }
+        match unsafe { leaf_bits(self.root as *mut u64, va) } {
+            Some(v) => v & AP_EL0 != 0 && (!write || v & AP_RO == 0),
+            None => false,
+        }
     }
 }
 

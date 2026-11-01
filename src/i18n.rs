@@ -161,6 +161,11 @@ pub mod msg {
         "[test] mmu: {} -> {} отображение, запись и снятие — OK",
         "[test] mmu: {} -> {} map, write and unmap — OK",
     ];
+    pub const TEST_WX: Text = [
+        "[test] W^X: yadro kodi — faqat öqiş, maʼlumotlar — bajarib bölmaydi — OK",
+        "[test] W^X: код ядра только для чтения, данные неисполняемые — OK",
+        "[test] W^X: kernel code read-only, data non-executable — OK",
+    ];
     pub const TEST_TIMER: Text = [
         "[test] taymer: 50 ms da {} ta uziliş — OK",
         "[test] таймер: {} прерываний за 50 мс — OK",
@@ -262,9 +267,9 @@ pub mod msg {
         "  no such program: {} (type: programs)",
     ];
     pub const SH_RUN_USAGE: Text = [
-        "  Foydalaniş: işlat <dastur> [&]   (& — fonda işlatiş)",
-        "  Использование: запуск <программа> [&]   (& — в фоне)",
-        "  Usage: run <program> [&]   (& — in background)",
+        "  Foydalaniş: işlat <dastur> [argumentlar] [&]   (& — fonda işlatiş)",
+        "  Использование: запуск <программа> [аргументы] [&]   (& — в фоне)",
+        "  Usage: run <program> [arguments] [&]   (& — in background)",
     ];
     pub const SH_SPAWN_FAIL: Text = [
         "  dasturni işga tuşirib bölmadi: {}",
@@ -283,4 +288,47 @@ pub mod msg {
         "  Программы (запуск: запуск <имя>):",
         "  Programs (start: run <name>):",
     ];
+
+    // --- Fayl tizimi ---
+    pub const FS_NOT_FOUND: Text = ["topilmadi", "не найдено", "not found"];
+    pub const FS_EXISTS: Text = ["allaqaçon mavjud", "уже существует", "already exists"];
+    pub const FS_NOT_DIR: Text = ["papka emas", "не папка", "not a directory"];
+    pub const FS_IS_DIR: Text = ["bu papka", "это папка", "is a directory"];
+    pub const FS_NOT_EMPTY: Text = ["papka böş emas", "папка не пуста", "directory not empty"];
+    pub const FS_INVALID: Text = ["notöğri nom", "неверное имя", "invalid name"];
+    pub const FS_TOO_BIG: Text = ["juda katta", "слишком большой", "too big"];
+    pub const FS_DENIED: Text = [
+        "ruxsat yöq (tizim fayli)",
+        "доступ запрещён (системный файл)",
+        "permission denied (system file)",
+    ];
+    pub const FS_READY: Text = [
+        "[fs  ] fayl tizimi tayyor: {} ta fayl, {} ta papka",
+        "[fs  ] файловая система готова: файлов — {}, папок — {}",
+        "[fs  ] file system ready: {} files, {} directories",
+    ];
+    pub const SH_ERROR: Text = ["  xato: {}: {}", "  ошибка: {}: {}", "  error: {}: {}"];
+    pub const SH_USAGE_PATH: Text = ["  Foydalaniş: {} <yöl>", "  Использование: {} <путь>", "  Usage: {} <path>"];
+    pub const SH_WRITE_USAGE: Text = [
+        "  Foydalaniş: yoz <fayl> <matn>",
+        "  Использование: записать <файл> <текст>",
+        "  Usage: write <file> <text>",
+    ];
+    pub const SH_WRITTEN: Text = ["  {} bayt yozildi: {}", "  записано {} байт: {}", "  wrote {} bytes: {}"];
+    pub const SH_DIR_CREATED: Text = ["  papka yaratildi: {}", "  папка создана: {}", "  directory created: {}"];
+    pub const SH_REMOVED: Text = ["  öçirildi: {}", "  удалено: {}", "  removed: {}"];
+    pub const SH_BINARY: Text = ["  (ikkilik fayl, {} bayt)", "  (двоичный файл, {} байт)", "  (binary file, {} bytes)"];
+    pub const SH_EMPTY_DIR: Text = ["  (böş papka)", "  (пустая папка)", "  (empty directory)"];
+    pub const SH_ITEMS: Text = ["{} ta", "{} шт.", "{} items"];
+    pub const SH_MEM_FS: Text = [
+        "  Fayllar: {} ta fayl, {} ta papka, {} bayt",
+        "  Файлы: файлов — {}, папок — {}, {} байт",
+        "  Files: {} files, {} directories, {} bytes",
+    ];
+    pub const SH_CHANNELS_HEADER: Text = [
+        "  KANAL                NAVBATDA   YUBORILGAN",
+        "  КАНАЛ                В ОЧЕРЕДИ  ОТПРАВЛЕНО",
+        "  CHANNEL              QUEUED     SENT",
+    ];
+    pub const SH_NO_CHANNELS: Text = ["  hozirça kanallar yöq", "  каналов пока нет", "  no channels yet"];
 }
