@@ -1,9 +1,14 @@
 //! virtio-blk disk drayveri. DMA buferlari identity xaritalangan RAMʼda (PA == VA).
+//!
+//! Söröv yuborilgaç vazifa uxlaydi; disk tugatganda uziliş uni uyğotadi — protsessor
+//! boşqa işlar bilan band böla oladi. Qurilma uxlaydigan qulf (`Mutex`) bilan himoyalangan.
+//! Rejalaştiruvçi işga tuşmagan paytda (yuklaniş) javob aylanib kutiladi.
 
 use super::virtio::{DEVICE_BLOCK, Transport};
 use crate::memory::{PAGE_SIZE, frame};
-use crate::sync::SpinLock;
+use crate::sync::Mutex;
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 pub const SECTOR: usize = 512;
 const REQ_IN: u32 = 0;
@@ -28,7 +33,15 @@ struct VirtioBlk {
     data: usize,
 }
 
-static DISK: SpinLock<Option<VirtioBlk>> = SpinLock::new(None);
+static DISK: Mutex<Option<VirtioBlk>> = Mutex::new(None);
+/// Uzilişlar işlovçisi uçun (u qulfni ola olmaydi)
+static DISK_BASE: AtomicUsize = AtomicUsize::new(0);
+static DISK_IRQ: AtomicU32 = AtomicU32::new(0);
+static CAPACITY: AtomicU64 = AtomicU64::new(0);
+/// Disk uzilişlari soni (tekşiruv uçun)
+static IRQ_COUNT: AtomicU64 = AtomicU64::new(0);
+/// `task::wait_event` kaliti
+const DISK_EVENT: usize = 0xd15c;
 
 /// Diskni qidiradi va işga tuşiradi. Natija: siğim (baytlarda).
 pub fn init() -> Option<u64> {
@@ -36,17 +49,37 @@ pub fn init() -> Option<u64> {
     let capacity = t.config_u32(0) as u64 | (t.config_u32(4) as u64) << 32;
     let req = frame::alloc_zeroed()?;
     let data = frame::alloc_zeroed()?;
+    DISK_BASE.store(t.base(), Ordering::Release);
+    DISK_IRQ.store(t.irq(), Ordering::Release);
+    crate::gic::enable(t.irq());
     *DISK.lock() = Some(VirtioBlk { t, capacity, req, data });
+    CAPACITY.store(capacity, Ordering::Release);
     Some(capacity * SECTOR as u64)
 }
 
 pub fn present() -> bool {
-    DISK.lock().is_some()
+    CAPACITY.load(Ordering::Acquire) != 0
 }
 
 /// Sektorlar soni.
 pub fn capacity_sectors() -> u64 {
-    DISK.lock().as_ref().map_or(0, |d| d.capacity)
+    CAPACITY.load(Ordering::Acquire)
+}
+
+/// Diskning GIC uzilişi (disk bölmasa — 0).
+pub fn irq() -> u32 {
+    DISK_IRQ.load(Ordering::Acquire)
+}
+
+pub fn irq_count() -> u64 {
+    IRQ_COUNT.load(Ordering::Relaxed)
+}
+
+/// Uzilişlar işlovçisi: qurilmani tasdiqlab, kutayotgan vazifani uyğotadi.
+pub fn handle_irq() {
+    super::virtio::ack_interrupt(DISK_BASE.load(Ordering::Acquire));
+    IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
+    crate::task::wake_event(DISK_EVENT);
 }
 
 impl VirtioBlk {
@@ -60,7 +93,12 @@ impl VirtioBlk {
             write_volatile((self.req + 8) as *mut u64, sector);
             write_volatile((self.req + 16) as *mut u8, 0xff);
         }
-        self.t.submit(&[(self.req, 16, false), (self.data, count * SECTOR, kind == REQ_IN), (self.req + 16, 1, true)]);
+        self.t.submit_async(&[(self.req, 16, false), (self.data, count * SECTOR, kind == REQ_IN), (self.req + 16, 1, true)]);
+        // Disk tugatgunça uxlaymiz (şart rejalaştiruvçi qulfi ostida tekşiriladi — uyğotiş yöqolmaydi)
+        let used = self.t.used_idx_addr();
+        let last = self.t.last_used();
+        crate::task::wait_event(DISK_EVENT, || unsafe { read_volatile(used as *const u16) } == last);
+        self.t.complete();
         if unsafe { read_volatile((self.req + 16) as *const u8) } != 0 {
             return Err(DiskError::Io);
         }

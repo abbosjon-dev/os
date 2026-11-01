@@ -25,9 +25,13 @@ fn fs_err(e: fs::FsError) -> i64 {
 pub fn dispatch(frame: &mut TrapFrame) {
     let num = frame.x[8];
     let a = [frame.x[0], frame.x[1], frame.x[2], frame.x[3]];
+    // Tizim çaqiruvi davomida uzilişlar yoqiq: uzoq amallar (disk, katta fayllar)
+    // paytida ham taymer işlaydi va jarayonni almaştiriş mumkin.
+    unsafe { core::arch::asm!("msr daifclr, #2", options(nomem, nostack)) };
     let ret = match handle(num, a) {
         Ok(v) | Err(v) => v,
     };
+    unsafe { core::arch::asm!("msr daifset, #2", options(nomem, nostack)) };
     frame.x[0] = ret as u64;
 }
 

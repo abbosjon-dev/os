@@ -18,7 +18,7 @@ pub mod zaminfs;
 use crate::abi::*;
 use crate::i18n::Lang;
 use core::sync::atomic::{AtomicBool, Ordering};
-use crate::sync::SpinLock;
+use crate::sync::Mutex;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -122,7 +122,8 @@ struct Vfs {
     home: Option<NodeId>,
 }
 
-static VFS: SpinLock<Vfs> = SpinLock::new(Vfs { nodes: Vec::new(), home: None });
+/// Uxlaydigan qulf: katta fayllar bilan işlaş boşqa vazifalarni (va uzilişlarni) töxtatmaydi.
+static VFS: Mutex<Vfs> = Mutex::new(Vfs { nodes: Vec::new(), home: None });
 
 /// Foydalanuvçi fayllari özgardi — diskka saqlaş kerak.
 static DIRTY: AtomicBool = AtomicBool::new(false);

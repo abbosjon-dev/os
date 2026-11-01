@@ -121,7 +121,9 @@ fn state_text(st: State) -> &'static str {
         State::Ready => &msg::STATE_READY,
         State::Running => &msg::STATE_RUNNING,
         State::Sleeping(_) => &msg::STATE_SLEEPING,
-        State::WaitingInput | State::WaitingPid(_) | State::WaitingChannel(_) => &msg::STATE_WAITING,
+        State::WaitingInput | State::WaitingPid(_) | State::WaitingChannel(_) | State::WaitingEvent(_) => {
+            &msg::STATE_WAITING
+        }
         State::Dead(_) => &msg::STATE_DEAD,
     })
 }

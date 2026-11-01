@@ -462,6 +462,16 @@ pub mod msg {
         "[test] SMP: потоки параллельно работали на {} ядрах — OK",
         "[test] SMP: threads ran in parallel on {} cores — OK",
     ];
+    pub const TEST_MUTEX: Text = [
+        "[test] mutex: 4 oqim, uxlab kutiş, natija {} — OK",
+        "[test] mutex: 4 потока, ожидание во сне, результат {} — OK",
+        "[test] mutex: 4 threads, sleeping waits, result {} — OK",
+    ];
+    pub const TEST_DISK_IRQ: Text = [
+        "[test] disk: söröv uziliş orqali tugadi (vazifa uxlab kutdi) — OK",
+        "[test] диск: запрос завершён по прерыванию (задача ждала во сне) — OK",
+        "[test] disk: request completed via interrupt (task slept) — OK",
+    ];
     pub const TEST_STACK_GUARD: Text = [
         "[test] yadro steki qörğoni: töliş aniqlandi, faqat aybdor oqim tugatildi — OK",
         "[test] защита стека ядра: переполнение обнаружено, завершён только виновный поток — OK",

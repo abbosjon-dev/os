@@ -141,9 +141,26 @@ impl Transport {
         Some(t)
     }
 
-    /// Buferlar zanjirini yuboradi va qurilma tugatgunça kutadi.
-    /// Natija: qurilma yozgan baytlar soni.
-    pub fn submit(&mut self, bufs: &[Buf]) -> usize {
+    /// Qurilmaning uzilişi (GIC INTID): virtio-mmio uyaçasi n → SPI 16+n → 48+n.
+    pub fn irq(&self) -> u32 {
+        48 + ((self.base - MMIO_BASE) / MMIO_STRIDE) as u32
+    }
+
+    pub fn base(&self) -> usize {
+        self.base
+    }
+
+    /// "used" halqa indeksining manzili — kutiş şarti uçun (qulfsiz öqiladi).
+    pub fn used_idx_addr(&self) -> usize {
+        self.queue + PAGE_SIZE + 2
+    }
+
+    pub fn last_used(&self) -> u16 {
+        self.last_used
+    }
+
+    /// Buferlar zanjirini yuboradi (kutmaydi).
+    pub fn submit_async(&mut self, bufs: &[Buf]) {
         assert!(!bufs.is_empty() && bufs.len() <= QSIZE);
         unsafe {
             let desc = self.queue as *mut Desc;
@@ -160,19 +177,40 @@ impl Transport {
             barrier();
             write_volatile(avail.add(1), idx.wrapping_add(1));
             barrier();
-            self.wr(QUEUE_NOTIFY, 0);
-
-            let used = self.queue + PAGE_SIZE;
-            while read_volatile((used + 2) as *const u16) == self.last_used {
-                core::hint::spin_loop();
-            }
-            barrier();
-            // used.ring[i] = { id: u32, len: u32 }
-            let slot = self.last_used as usize % QSIZE;
-            let written = read_volatile((used + 4 + slot * 8 + 4) as *const u32) as usize;
-            self.last_used = self.last_used.wrapping_add(1);
-            self.wr(INTERRUPT_ACK, self.rd(INTERRUPT_STATUS));
-            written
         }
+        self.wr(QUEUE_NOTIFY, 0);
+    }
+
+    pub fn is_done(&self) -> bool {
+        unsafe { read_volatile(self.used_idx_addr() as *const u16) != self.last_used }
+    }
+
+    /// Tugagan sörövni qabul qiladi. Natija: qurilma yozgan baytlar soni.
+    pub fn complete(&mut self) -> usize {
+        barrier();
+        let used = self.queue + PAGE_SIZE;
+        let slot = self.last_used as usize % QSIZE;
+        let written = unsafe { read_volatile((used + 4 + slot * 8 + 4) as *const u32) } as usize;
+        self.last_used = self.last_used.wrapping_add(1);
+        written
+    }
+
+    /// Yuboradi va tugaşini aylanib kutadi (uzilişsiz; yuklaniş paytida va kiçik qurilmalar uçun).
+    pub fn submit(&mut self, bufs: &[Buf]) -> usize {
+        self.submit_async(bufs);
+        while !self.is_done() {
+            core::hint::spin_loop();
+        }
+        let n = self.complete();
+        ack_interrupt(self.base);
+        n
+    }
+}
+
+/// Qurilma uzilişini tasdiqlaydi (uzilişlar işlovçisidan ham çaqiriladi).
+pub fn ack_interrupt(base: usize) {
+    unsafe {
+        let st = read_volatile((base + INTERRUPT_STATUS) as *const u32);
+        write_volatile((base + INTERRUPT_ACK) as *mut u32, st);
     }
 }

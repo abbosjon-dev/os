@@ -32,6 +32,7 @@ pub fn handle() {
             timer::IRQ => timer::handle_irq(),
             uart::IRQ => uart::handle_irq(),
             SGI_RESCHEDULE => {} // pastda preempt() — yangi vazifani olamiz
+            id if id == crate::drivers::virtio_blk::irq() => crate::drivers::virtio_blk::handle_irq(),
             _ => crate::tprintln!(crate::i18n::msg::IRQ_UNKNOWN, id),
         }
         gic::end_of_interrupt(iar);

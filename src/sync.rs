@@ -86,3 +86,57 @@ impl<T> Drop for SpinLockGuard<'_, T> {
         irq_restore(self.daif);
     }
 }
+
+/// Uxlaydigan qulf (mutex). Band bölsa, vazifa protsessorni böşatib kutadi;
+/// uzilişlar öçirilmaydi — uzoq amallar (disk, fayl tizimi) uçun.
+/// Uzilişlar işlovçisida işlatib bölmaydi (u yerda uxlab bölmaydi).
+pub struct Mutex<T> {
+    locked: AtomicBool,
+    data: UnsafeCell<T>,
+}
+
+unsafe impl<T: Send> Sync for Mutex<T> {}
+unsafe impl<T: Send> Send for Mutex<T> {}
+
+impl<T> Mutex<T> {
+    pub const fn new(data: T) -> Self {
+        Self { locked: AtomicBool::new(false), data: UnsafeCell::new(data) }
+    }
+
+    fn key(&self) -> usize {
+        self as *const Self as usize
+    }
+
+    pub fn lock(&self) -> MutexGuard<'_, T> {
+        loop {
+            if self.locked.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                return MutexGuard { lock: self };
+            }
+            crate::task::wait_event(self.key(), || self.locked.load(Ordering::Acquire));
+        }
+    }
+}
+
+pub struct MutexGuard<'a, T> {
+    lock: &'a Mutex<T>,
+}
+
+impl<T> Deref for MutexGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        unsafe { &*self.lock.data.get() }
+    }
+}
+
+impl<T> DerefMut for MutexGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.lock.data.get() }
+    }
+}
+
+impl<T> Drop for MutexGuard<'_, T> {
+    fn drop(&mut self) {
+        self.lock.locked.store(false, Ordering::Release);
+        crate::task::wake_event(self.lock.key());
+    }
+}

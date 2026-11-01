@@ -228,6 +228,18 @@ extern "C" fn busy_counter(which: usize) {
     }
 }
 
+const MUTEX_ROUNDS: u64 = 200;
+static MUTEX_COUNTER: sync::Mutex<u64> = sync::Mutex::new(0);
+
+extern "C" fn mutex_worker(_: usize) {
+    for _ in 0..MUTEX_ROUNDS {
+        let mut g = MUTEX_COUNTER.lock();
+        let v = *g;
+        task::yield_now(); // boşqalar şu payt qulfni kutib uxlaşi kerak
+        *g = v + 1;
+    }
+}
+
 static SEEN_CPUS: AtomicU64 = AtomicU64::new(0);
 
 /// 100 ms band işlaydi va qaysi yadrolarda işlaganini belgilaydi.
@@ -272,6 +284,24 @@ extern "C" fn boot_tests(_: usize) {
         let seen = SEEN_CPUS.load(Ordering::Relaxed).count_ones();
         assert!(seen >= 2, "oqimlar faqat bitta yadroda işladi");
         tprintln!(msg::TEST_SMP, seen);
+    }
+
+    // Mutex: 4 oqim, qulf içida ataylab navbat böşatiladi — natija aniq bölişi kerak
+    let ids: Vec<_> = (0..4).map(|i| task::spawn_kernel_ext("mutex-sinovi", mutex_worker, i, false).expect("oqim")).collect();
+    for id in ids {
+        task::wait(id);
+    }
+    let total = *MUTEX_COUNTER.lock();
+    assert_eq!(total, 4 * MUTEX_ROUNDS, "mutex himoyasi buzildi");
+    tprintln!(msg::TEST_MUTEX, total);
+
+    // Disk: söröv tugaşi uziliş orqali kelişi kerak (vazifa uxlab kutadi)
+    if drivers::virtio_blk::present() {
+        let before = drivers::virtio_blk::irq_count();
+        let mut sector = [0u8; drivers::virtio_blk::SECTOR];
+        drivers::virtio_blk::read(0, &mut sector).expect("disk öqiş");
+        assert!(drivers::virtio_blk::irq_count() > before, "disk uzilişi kelmadi");
+        tprintln!(msg::TEST_DISK_IRQ);
     }
 
     // Yadro steki qörğoni: töliş aniqlanişi va faqat şu oqim tugatilişi kerak

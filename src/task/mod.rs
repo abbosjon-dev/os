@@ -51,6 +51,8 @@ pub enum State {
     WaitingInput,
     WaitingPid(Pid),
     WaitingChannel(ipc::ChanId),
+    /// Umumiy hodisa (mutex, disk va h.k.) — kalit bilan
+    WaitingEvent(usize),
     Dead(i64),
 }
 
@@ -699,6 +701,23 @@ pub fn parent_of(pid: Pid) -> Option<Pid> {
 /// Kanal xabarini kutadi (`ready()` rost bölsa — kutmaydi).
 pub fn wait_channel(id: ipc::ChanId, ready: impl Fn() -> bool) {
     block_current_if(State::WaitingChannel(id), || !ready());
+}
+
+/// `still_waiting()` rost bölsa, `key` hodisasi kelgunça uxlaydi.
+/// Rejalaştiruvçi hali işga tuşmagan bölsa (yuklaniş), şunçaki kutib turadi.
+pub fn wait_event(key: usize, still_waiting: impl Fn() -> bool) {
+    if !STARTED.load(Ordering::Acquire) {
+        while still_waiting() {
+            core::hint::spin_loop();
+        }
+        return;
+    }
+    block_current_if(State::WaitingEvent(key), still_waiting);
+}
+
+/// `key` hodisasini kutayotgan barça vazifalarni uyğotadi (uzilişdan ham çaqirsa böladi).
+pub fn wake_event(key: usize) {
+    wake_where(|st| st == State::WaitingEvent(key));
 }
 
 /// Kanalga xabar kelganda çaqiriladi.
