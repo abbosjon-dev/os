@@ -15,11 +15,13 @@ mod ogg;
 mod sample_wav;
 pub mod sound;
 mod vorbis;
+mod vorbis_dbtab;
 mod vorbis_test;
 mod wav;
 
 pub use sample_wav::SAMPLE_WAV;
 pub use mp3_test::MP3 as SAMPLE_MP3;
+pub use vorbis_test::OGG as SAMPLE_OGG;
 
 /// Dekodlangan övoz: namuna chastotasi, kanallar, i16 namunalar (interleaved).
 pub struct Clip {
@@ -160,13 +162,29 @@ pub fn self_test() -> Result<(), &'static str> {
     if !(420..=460).contains(&freq) || !(2500..=5000).contains(&peak) {
         return Err("MP3");
     }
-    // OGG/Vorbis — taniş va metama'lumot (dekod 2-bosqiçda).
+    // OGG/Vorbis — taniş, metama'lumot va to'liq dekod (440 Hz ohang).
     if format_name(&vorbis_test::OGG) != Some("OGG/Vorbis") {
         return Err("OGG taniş");
     }
     let vi = vorbis::info(&vorbis_test::OGG).ok_or("OGG info")?;
     if vi.channels != 1 || vi.rate != 44100 || vi.bs1 != 2048 {
         return Err("OGG metama'lumot");
+    }
+    let oc = decode("a.ogg", &vorbis_test::OGG).ok_or("OGG dekod")?;
+    if oc.rate != 44100 || oc.channels != 1 || oc.samples.len() < 2000 {
+        return Err("OGG");
+    }
+    let seg = &oc.samples[1000..oc.samples.len().min(2000)];
+    let mut zc = 0usize;
+    for i in 1..seg.len() {
+        if seg[i - 1] < 0 && seg[i] >= 0 {
+            zc += 1;
+        }
+    }
+    let freq = zc * 44100 / seg.len();
+    let peak = seg.iter().map(|s| s.unsigned_abs() as u32).max().unwrap_or(0);
+    if !(420..=460).contains(&freq) || !(2000..=6000).contains(&peak) {
+        return Err("OGG");
     }
     Ok(())
 }

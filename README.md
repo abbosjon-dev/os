@@ -175,9 +175,10 @@ soddalaştirilgan.
   stereo (MS/intensity), antialias, IMDCT (uzun/qisqa bloklar), polifaz sintez
   filtri. Taniş barcha versiyalar uçun (MPEG-1/2/2.5, Layer I/II/III, VBR, ID3).
   ffmpeg bilan tekşirilgan (korrelyatsiya 1.0000).
-- **OGG/Vorbis** — konteyner (sahifa/paket yigʼiş) va Vorbis sarlavhalari:
-  kanallar, chastota, blok oʻlçamlari, davomiylik va teglar (vendor, izohlar).
-  To'liq audio dekod — keyingi bosqiçda.
+- **OGG/Vorbis** — to'liq dekod (noldan): OGG konteyner, Vorbis kodkitoblari
+  (Huffman + VQ qidiruv), floor1 egri chizigʼi, residue (0/1/2 turlari), kanal
+  birikuvi (coupling), teskari MDCT va oyna/overlap-add. Metama'lumot va teglar
+  (vendor, TITLE/ARTIST…) ham. ffmpeg bilan tekşirilgan (korrelyatsiya 1.0000).
 
 Grafik **Övoz köruvçi** toʻlqin shaklini chizadi va virtio-sound orqali chaladi.
 
@@ -407,7 +408,7 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [x] **9. Işonçlilik** — yadro jurnali, panic diskka yoziladi, fuzz sinovi
 - [x] **8½. Yadro himoyasi** — qörğonli yadro steklari, PAN, WXN, böşatilgan xotirani nollaş, ASLR
 - [x] **9. Grafika** — virtio-gpu framebuffer, şrift, oynalar menejeri, grafik terminal, sichqoncha/klaviatura
-- [x] **9½. Media** — rasm (16+ format), audio (WAV/AIFF/FLAC/MP3 + ADPCM/μ-law/A-law), video (MJPEG/AVI dekod; MP4/MOV/MKV/WebM taniş) — hammasi noldan
+- [x] **9½. Media** — rasm (16+ format), audio (WAV/AIFF/FLAC/MP3/OGG-Vorbis + ADPCM/μ-law/A-law), video (MJPEG/AVI dekod; MP4/MOV/MKV/WebM taniş) — hammasi noldan, ffmpeg bilan tekşirilgan
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar (davom etmoqda)
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
 
@@ -481,14 +482,14 @@ Keyin yana uchta yönaliş qoşildi:
     haqiqiy sertifikatlar (ISRG Root X1 — RSA, USERTrust ECC — ECDSA) bilan sinaldi.
 
 Yadro öz-özini tekşirişi (yuklanişda `[test]`): heap, MMU, W^X, PAN, kripto,
-X.509, rasm (15 format), audio (WAV/FLAC/MP3), video (MJPEG/AVI), taymer, KASLR,
+X.509, rasm (15 format), audio (WAV/FLAC/MP3/OGG), video (MJPEG/AVI), taymer, KASLR,
 rejalaştiruvçi, SMP, mutex, disk, fuzz, stek qörğoni, foydalanuvçi rejimi, va
 (ikkinchi disk bölsa) FAT yoziş.
 Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi.
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.9**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.10**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -505,5 +506,7 @@ bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.9 — **MP3** (MPEG-1 Layer III) dekoderi va kengaytirilgan WAV kodeklari
   (μ-law/A-law/ADPCM); **video**: MJPEG/AVI dekod, MP4/MOV/MKV/WebM taniş.
   Barça media dekoderlari ffmpeg bilan tekşirilgan.
+- 0.0.10 — **OGG/Vorbis** to'liq dekoderi (noldan): kodkitoblar, floor1,
+  residue, kanal birikuvi, teskari MDCT. ffmpeg bilan aniq mos (korr. 1.0000).
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
