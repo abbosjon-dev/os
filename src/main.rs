@@ -18,6 +18,7 @@ mod fs;
 mod gfx;
 mod gfx_font;
 mod gic;
+mod gui;
 mod i18n;
 mod ipc;
 mod line;
@@ -204,11 +205,16 @@ pub extern "C" fn kernel_main() -> ! {
         tprintln!(msg::FAT_MOUNTED, n);
     }
 
-    // 12) Grafika: virtio-gpu (bölsa) — ekranga ish stolini çizamiz
+    // 12) Grafika: virtio-gpu (bölsa) — ekranga iş stolini çizamiz
     if gfx::init(1024, 768) {
-        let (w, _) = gfx::size();
-        tprintln!(msg::GPU_READY, w, gfx::size().1);
+        let (w, h) = gfx::size();
+        tprintln!(msg::GPU_READY, w, h);
+        let inputs = drivers::virtio_input::init();
         draw_desktop();
+        if inputs > 0 {
+            // Grafik muhit — kiriş bilan (alohida oqim)
+            task::spawn_kernel("grafik", gui::run, 0).expect("grafik oqim");
+        }
     } else {
         tprintln!(msg::GPU_NONE);
     }
@@ -236,7 +242,7 @@ pub extern "C" fn secondary_main(cpu: usize) -> ! {
 }
 
 /// Fon oqimi: har 2 soniyada özgarişlarni şifrlab diskka yozadi.
-/// Oddiy grafik ish stoli (namuna): fon, yuqori panel, logotip, panellar.
+/// Oddiy grafik iş stoli (namuna): fon, yuqori panel, logotip, panellar.
 fn draw_desktop() {
     use gfx::*;
     let (w, h) = size();
