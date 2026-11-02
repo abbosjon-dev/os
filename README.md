@@ -175,6 +175,9 @@ soddalaştirilgan.
   stereo (MS/intensity), antialias, IMDCT (uzun/qisqa bloklar), polifaz sintez
   filtri. Taniş barcha versiyalar uçun (MPEG-1/2/2.5, Layer I/II/III, VBR, ID3).
   ffmpeg bilan tekşirilgan (korrelyatsiya 1.0000).
+- **OGG/Vorbis** — konteyner (sahifa/paket yigʼiş) va Vorbis sarlavhalari:
+  kanallar, chastota, blok oʻlçamlari, davomiylik va teglar (vendor, izohlar).
+  To'liq audio dekod — keyingi bosqiçda.
 
 Grafik **Övoz köruvçi** toʻlqin shaklini chizadi va virtio-sound orqali chaladi.
 
