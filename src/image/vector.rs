@@ -173,7 +173,8 @@ fn cross(x0: f32, y0: f32, x1: f32, y1: f32, px: f32, py: f32) -> f32 {
     (x1 - x0) * (py - y0) - (y1 - y0) * (px - x0)
 }
 
-/// Koʻpburçakni (AA) Image ga töldiradi (2x2 supersample).
+/// Koʻpburçakni (AA) Image ga töldiradi — tez skanlin rasterizatsiya.
+/// Vertikal 4x supersample + aniq gorizontal qoplaş (coverage).
 fn fill_shape(img: &mut Image, subpaths: &[Vec<Pt>], color: u32, nonzero: bool) {
     let (mut minx, mut miny, mut maxx, mut maxy) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for sp in subpaths {
@@ -189,24 +190,75 @@ fn fill_shape(img: &mut Image, subpaths: &[Vec<Pt>], color: u32, nonzero: bool) 
     }
     let x0 = fmax(minx, 0.0) as usize;
     let y0 = fmax(miny, 0.0) as usize;
-    let x1 = (fmin(maxx, img.w as f32 - 1.0) as usize).min(img.w.saturating_sub(1));
-    let y1 = (fmin(maxy, img.h as f32 - 1.0) as usize).min(img.h.saturating_sub(1));
-    for py in y0..=y1 {
-        for px in x0..=x1 {
-            let mut hit = 0u32;
-            for sy in 0..2 {
-                for sx in 0..2 {
-                    let fx = px as f32 + 0.25 + sx as f32 * 0.5;
-                    let fy = py as f32 + 0.25 + sy as f32 * 0.5;
-                    if winding(subpaths, fx, fy, nonzero) {
-                        hit += 1;
+    let x1 = (fmax(maxx, 0.0) as usize + 1).min(img.w);
+    let y1 = (fmax(maxy, 0.0) as usize + 1).min(img.h);
+    if x1 <= x0 {
+        return;
+    }
+    const SS: usize = 4; // vertikal subpiksel
+    let span_w = x1 - x0;
+    let mut acc = alloc::vec![0f32; span_w];
+    let mut xs: Vec<(f32, i32)> = Vec::new();
+    for py in y0..y1 {
+        for a in acc.iter_mut() {
+            *a = 0.0;
+        }
+        for s in 0..SS {
+            let sy = py as f32 + (s as f32 + 0.5) / SS as f32;
+            xs.clear();
+            for sp in subpaths {
+                let n = sp.len();
+                for i in 0..n {
+                    let (ax, ay) = sp[i];
+                    let (bx, by) = sp[(i + 1) % n];
+                    // sy chetini kesadimi?
+                    let (dir, lo, hi, x_lo, x_hi) = if ay < by {
+                        (1, ay, by, ax, bx)
+                    } else {
+                        (-1, by, ay, bx, ax)
+                    };
+                    if sy >= lo && sy < hi && (hi - lo) > 0.0 {
+                        let t = (sy - lo) / (hi - lo);
+                        xs.push((x_lo + (x_hi - x_lo) * t, dir));
                     }
                 }
             }
-            if hit > 0 {
-                let a = hit * 255 / 4;
-                blend_px(img, px, py, color, a);
+            if xs.len() < 2 {
+                continue;
             }
+            xs.sort_by(|p, q| p.0.partial_cmp(&q.0).unwrap_or(core::cmp::Ordering::Equal));
+            let weight = 1.0 / SS as f32;
+            let mut wind = 0i32;
+            for k in 0..xs.len() - 1 {
+                wind += xs[k].1;
+                let inside = if nonzero { wind != 0 } else { (k + 1) % 2 == 1 };
+                if inside {
+                    add_span(&mut acc, x0, xs[k].0, xs[k + 1].0, weight);
+                }
+            }
+        }
+        for (i, &c) in acc.iter().enumerate() {
+            if c > 0.003 {
+                blend_px(img, x0 + i, py, color, (c.min(1.0) * 255.0) as u32);
+            }
+        }
+    }
+}
+
+/// [xa,xb] oraligʻini `acc` (x0 dan boşlab) ga gorizontal qoplaş bilan qoşadi.
+fn add_span(acc: &mut [f32], x0: usize, xa: f32, xb: f32, weight: f32) {
+    let lo = fmax(xa, x0 as f32);
+    let hi = fmin(xb, (x0 + acc.len()) as f32);
+    if hi <= lo {
+        return;
+    }
+    let ia = lo as usize;
+    let ib = (hi.min((x0 + acc.len()) as f32) as usize).min(x0 + acc.len() - 1);
+    for px in ia..=ib {
+        let l = fmax(lo, px as f32);
+        let r = fmin(hi, (px + 1) as f32);
+        if r > l {
+            acc[px - x0] += (r - l) * weight;
         }
     }
 }

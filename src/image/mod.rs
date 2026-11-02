@@ -22,6 +22,7 @@ mod svg;
 mod testdata;
 mod tga;
 mod vector;
+mod wmf;
 
 pub use sample::SAMPLE_PNG;
 
@@ -71,6 +72,10 @@ pub fn format_name(data: &[u8]) -> Option<&'static str> {
         Some("SVG")
     } else if data[0] == b'P' && (b'1'..=b'6').contains(&data[1]) {
         Some("PNM")
+    } else if &data[..4] == b"\xd7\xcd\xc6\x9a" {
+        Some("WMF") // placeable WMF
+    } else if data.len() >= 44 && &data[..4] == b"\x01\x00\x00\x00" && &data[40..44] == b" EMF" {
+        Some("EMF")
     } else if data[0] == 0x0a && data[2] <= 1 {
         Some("PCX")
     } else if data[0] == 0 && data[1] == 0 && (data[2] == 1 || data[2] == 2) && data[3] == 0 && {
@@ -98,6 +103,7 @@ pub fn decode(data: &[u8]) -> Option<Image> {
         "SVG" => svg::decode(data),
         "EPS" => eps::decode(data),
         "PDF" => pdf::decode(data),
+        "WMF" | "EMF" => wmf::decode(data),
         _ => None,
     }
 }
@@ -124,6 +130,7 @@ pub fn decode_file(name: &str, data: &[u8]) -> Option<Image> {
         "svg" => svg::decode(data),
         "dxf" => dxf::decode(data),
         "eps" | "ps" | "ai" => eps::decode(data),
+        "wmf" | "emf" => wmf::decode(data),
         _ => None,
     }
 }
@@ -248,6 +255,11 @@ pub fn self_test() -> Result<usize, &'static str> {
     match decode_file("a.dxf", dxf) {
         Some(img) if img.px.iter().any(|&p| (p >> 16 & 0xff) < 0x60) => n += 1,
         _ => return Err("DXF"),
+    }
+    // WMF — qizil töğriburçak (GDI): markazda qizil piksel bölişi kerak
+    match decode(testdata::WMF) {
+        Some(img) if close(&img, 0.5, 0.5, rgb(255, 0, 0)) => n += 1,
+        _ => return Err("WMF"),
     }
     Ok(n)
 }
