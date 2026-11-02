@@ -149,11 +149,18 @@ tanib, mos ilovada oçadi:
 - dastur (ELF) bossangiz — maʼlumot körsatiladi.
 
 **Rasm dekoderlari — hammasi noldan yozilgan** (ochiq kutubxonasiz):
-PNG/APNG (zlib/inflate + 5 filtr), JPEG (baseline — Huffman, IDCT, YCbCr),
-GIF (LZW), BMP/DIB, TGA, PCX, ICO/CUR, QOI, PNM (PBM/PGM/PPM, P1-P6).
-`image::decode_file(nom, baytlar)` formatni aniqlaydi. Boşqa (murakkab)
-formatlar — SVG, PDF, HEIC/AVIF, JXL, RAW, PSD, TIFF, WebP — tur böyiça
-tanilади (ikona), ammo hali oçilmaydi (keyingi bosqichlarda).
+
+- Raster: PNG/APNG (zlib/inflate + 5 filtr), JPEG (baseline — Huffman, IDCT,
+  YCbCr), GIF (LZW), BMP/DIB, TGA, PCX, ICO/CUR, QOI, PNM (P1-P6).
+- Vektor/hujjat: **SVG** (XML + path tili + Bezier/yoy), **PDF** (tuzilma +
+  mazmun oqimi + FlateDecode), **EPS/AI/PS** (kiçik PostScript interpretatori),
+  **DXF** (CAD), **WMF/EMF** (Windows metafayl), **CDR** (joylangan önköriniş).
+  Umumiy vektor poydevori: tez skanlin rasterizator (AA toʻldiriş + chiziq).
+
+`image::decode_file(nom, baytlar)` formatni aniqlaydi. Juda murakkab formatlar
+— HEIC/AVIF, JXL, RAW (CR2/NEF…), PSD, JPEG2000 — tur böyiça tanilади (ikona),
+ammo hali oçilmaydi. Vektor/hujjat formatlarida matn/font va gradient
+soddalaştirilgan.
 
 ## Foydalanuvçilar va ruxsatlar
 
@@ -458,5 +465,7 @@ bosqiç (etap) yakunlanganda kötariladi.
   (yumaloq oynalar, dok, ikonalar), har qanday ekran ölçamiga moslaşuv.
 - 0.0.4 — fayllar bilan işlaş: Fayllar menejeri (tur tanib oçadi) va rasm
   köruvçi; PNG/JPEG/GIF/BMP/QOI/PNM dekoderlari (noldan).
+- 0.0.5 — vektor va hujjat formatlari (noldan): SVG, PDF, EPS/AI, DXF, WMF/EMF,
+  CDR; umumiy vektor rasterizator. Qoşimça raster: TGA, PCX, ICO/CUR, APNG.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
