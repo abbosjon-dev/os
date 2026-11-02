@@ -14,6 +14,7 @@ mod ico;
 mod inflate;
 mod jpeg;
 mod pcx;
+mod pdf;
 mod png;
 mod qoi;
 mod sample;
@@ -60,6 +61,8 @@ pub fn format_name(data: &[u8]) -> Option<&'static str> {
         Some("BMP")
     } else if &data[..4] == b"qoif" {
         Some("QOI")
+    } else if &data[..5.min(data.len())] == b"%PDF-" {
+        Some("PDF")
     } else if data.len() >= 4 && &data[..4] == b"%!PS" {
         Some("EPS")
     } else if data.len() >= 11 && &data[..4] == b"\xc5\xd0\xd3\xc6" {
@@ -94,6 +97,7 @@ pub fn decode(data: &[u8]) -> Option<Image> {
         "ICO" => ico::decode(data),
         "SVG" => svg::decode(data),
         "EPS" => eps::decode(data),
+        "PDF" => pdf::decode(data),
         _ => None,
     }
 }
@@ -223,6 +227,21 @@ pub fn self_test() -> Result<usize, &'static str> {
             n += 1
         }
         _ => return Err("EPS"),
+    }
+    // PDF — 4 kvadrant vektor (re/f/rg), chidamlilik bilan
+    match decode(testdata::PDF) {
+        None => return Err("PDF-none"),
+        Some(img) => {
+            if close(&img, 0.25, 0.25, rgb(220, 30, 30))
+                && close(&img, 0.75, 0.25, rgb(30, 200, 60))
+                && close(&img, 0.25, 0.75, rgb(40, 80, 230))
+                && close(&img, 0.75, 0.75, rgb(240, 200, 20))
+            {
+                n += 1;
+            } else {
+                return Err("PDF-color");
+            }
+        }
     }
     // DXF — chiziqli (CAD): dekod bölib, qora piksellar (chiziqlar) borligini tekşiramiz
     let dxf = b"0\nSECTION\n2\nENTITIES\n0\nLINE\n10\n0\n20\n0\n11\n100\n21\n0\n0\nLINE\n10\n0\n20\n0\n11\n0\n21\n100\n0\nCIRCLE\n10\n50\n20\n50\n40\n40\n0\nENDSEC\n0\nEOF\n";
