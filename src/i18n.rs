@@ -584,9 +584,9 @@ pub mod msg {
         "[snd ] no sound device",
     ];
     pub const TEST_AUDIO: Text = [
-        "[test] audio: WAV va FLAC dekoderlari — OK",
-        "[test] аудио: декодеры WAV и FLAC — OK",
-        "[test] audio: WAV and FLAC decoders — OK",
+        "[test] audio: WAV, FLAC va MP3 dekoderlari — OK",
+        "[test] аудио: декодеры WAV, FLAC и MP3 — OK",
+        "[test] audio: WAV, FLAC and MP3 decoders — OK",
     ];
     pub const TEST_X509: Text = [
         "[test] X.509: sertifikat tahlili, amal muddati va host nomi tekşiruvi — OK",

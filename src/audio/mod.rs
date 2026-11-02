@@ -8,11 +8,15 @@ use alloc::vec::Vec;
 mod aiff;
 mod flac;
 mod flac_test;
+mod mp3;
+mod mp3_tables;
+mod mp3_test;
 mod sample_wav;
 pub mod sound;
 mod wav;
 
 pub use sample_wav::SAMPLE_WAV;
+pub use mp3_test::MP3 as SAMPLE_MP3;
 
 /// Dekodlangan övoz: namuna chastotasi, kanallar, i16 namunalar (interleaved).
 pub struct Clip {
@@ -75,6 +79,8 @@ pub fn format_name(d: &[u8]) -> Option<&'static str> {
         Some("AIFF")
     } else if &d[..4] == b"fLaC" {
         Some("FLAC")
+    } else if &d[..3] == b"ID3" || (d[0] == 0xff && (d[1] & 0xe0) == 0xe0 && mp3::is_mp3(d)) {
+        Some("MP3")
     } else {
         None
     }
@@ -86,6 +92,7 @@ pub fn decode(_name: &str, d: &[u8]) -> Option<Clip> {
         "WAV" => wav::decode(d),
         "AIFF" => aiff::decode(d),
         "FLAC" => flac::decode(d),
+        "MP3" => mp3::decode(d),
         _ => None,
     }
 }
@@ -123,6 +130,25 @@ pub fn self_test() -> Result<(), &'static str> {
     }
     if fc.samples != flac_test::PCM {
         return Err("FLAC");
+    }
+    // MP3 — yöqotişli: aniq mos kelmaydi, lekin chastota/amplituda tekşiriladi.
+    // 440 Hz mono ohang: ~441 Hz asosiy chastota, cho'qqi ~3900.
+    let mc = decode("a.mp3", &mp3_test::MP3).ok_or("MP3")?;
+    if mc.rate != 44100 || mc.channels != 1 || mc.samples.len() < 4000 {
+        return Err("MP3");
+    }
+    // Barqaror sohada nol-kesişmalar böyiça asosiy chastotani tekşiramiz
+    let seg = &mc.samples[1200..mc.samples.len().min(2200)];
+    let mut zc = 0usize;
+    for i in 1..seg.len() {
+        if seg[i - 1] < 0 && seg[i] >= 0 {
+            zc += 1;
+        }
+    }
+    let freq = zc * 44100 / seg.len();
+    let peak = seg.iter().map(|s| s.unsigned_abs() as u32).max().unwrap_or(0);
+    if !(420..=460).contains(&freq) || !(2500..=5000).contains(&peak) {
+        return Err("MP3");
     }
     Ok(())
 }
