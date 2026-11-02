@@ -6,6 +6,8 @@
 
 use alloc::vec::Vec;
 
+mod apng;
+mod apng_test;
 mod bmp;
 mod cdr;
 mod dxf;
@@ -128,6 +130,10 @@ pub fn decode_frames(name: &str, data: &[u8]) -> Option<Vec<(Image, u32)>> {
     let is_gif = format_name(data) == Some("GIF") || name.rsplit_once('.').map(|(_, e)| e.eq_ignore_ascii_case("gif")).unwrap_or(false);
     if is_gif {
         return gif::decode_all(data);
+    }
+    // APNG (harakatli PNG)?
+    if format_name(data) == Some("PNG") && apng::is_apng(data) {
+        return apng::decode_all(data);
     }
     None
 }
@@ -277,6 +283,11 @@ pub fn self_test() -> Result<usize, &'static str> {
     match decode(testdata::WMF) {
         Some(img) if close(&img, 0.5, 0.5, rgb(255, 0, 0)) => n += 1,
         _ => return Err("WMF"),
+    }
+    // APNG — harakatli PNG: bir neçta kadr, kadrlar farqli
+    match decode_frames("a.apng", apng_test::APNG) {
+        Some(fr) if fr.len() >= 2 && fr[0].0.px != fr[fr.len() / 2].0.px => n += 1,
+        _ => return Err("APNG"),
     }
     Ok(n)
 }

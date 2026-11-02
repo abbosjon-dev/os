@@ -64,6 +64,11 @@ pub fn decode(d: &[u8]) -> Option<Image> {
         }
         pos = body + len + 4; // CRC ni ötkazamiz
     }
+    decode_frame(w, h, depth, color, interlace, &palette, &idat)
+}
+
+/// IHDR parametrlari + IDAT/fdAT baytlaridan bitta kadrni dekodlaydi (APNG uçun ham).
+pub fn decode_frame(w: usize, h: usize, depth: u8, color: u8, interlace: u8, palette: &[u32], idat: &[u8]) -> Option<Image> {
     if w == 0 || h == 0 || w > 8192 || h > 8192 || interlace != 0 {
         return None;
     }
@@ -78,7 +83,7 @@ pub fn decode(d: &[u8]) -> Option<Image> {
     let bits_pp = channels * depth as usize;
     let stride = (w * bits_pp).div_ceil(8);
     let limit = (stride + 1) * h + 64;
-    let raw = inflate::zlib(&idat, limit)?;
+    let raw = inflate::zlib(idat, limit)?;
     if raw.len() < (stride + 1) * h {
         return None;
     }
@@ -113,7 +118,7 @@ pub fn decode(d: &[u8]) -> Option<Image> {
     for y in 0..h {
         let line = &lines[y * stride..(y + 1) * stride];
         for x in 0..w {
-            img.px[y * w + x] = sample(line, x, depth, color, channels, &palette);
+            img.px[y * w + x] = sample(line, x, depth, color, channels, palette);
         }
     }
     Some(img)
