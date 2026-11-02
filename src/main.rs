@@ -491,6 +491,10 @@ fn self_tests() {
     }
     tprintln!(msg::TEST_SHA);
 
+    // X.509: sertifikat tahlilçisi (muddat va host nomi tekşiruvi)
+    net::x509::self_test().expect("X.509 tahlilçi tekşiruvi yiqildi");
+    tprintln!(msg::TEST_X509);
+
     // Taymer uzilişlari: 50 ms içida kamida 3 ta tick kelişi kerak
     let start_ticks = timer::ticks();
     let start = timer::uptime_ms();

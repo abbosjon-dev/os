@@ -9,6 +9,8 @@ pub mod dns;
 pub mod tcp;
 pub mod tls;
 pub mod udp;
+pub mod x509;
+mod x509_test_cert;
 
 use crate::drivers::virtio_net as nic;
 use crate::sync::SpinLock;

@@ -174,6 +174,7 @@ pub fn connect(ip: super::Ip, port: u16, hostname: &str) -> Option<usize> {
 
     // Server handshake yozuvlari (şifrlangan): EncryptedExtensions, Certificate*, Finished
     let mut saw_finished = false;
+    let mut cert_msg: Option<Vec<u8>> = None;
     let mut hs_buf: Vec<u8> = Vec::new();
     while !saw_finished {
         let (rtyp, body) = t.read_record()?;
@@ -201,6 +202,9 @@ pub fn connect(ip: super::Ip, port: u16, hostname: &str) -> Option<usize> {
                     let msg: Vec<u8> = hs_buf.drain(..4 + mlen).collect();
                     let msg_type = msg[0];
                     transcript.update(&msg);
+                    if msg_type == 11 {
+                        cert_msg = Some(msg.clone()); // server Certificate
+                    }
                     if msg_type == 20 {
                         saw_finished = true; // server Finished
                     }
@@ -210,6 +214,27 @@ pub fn connect(ip: super::Ip, port: u16, hostname: &str) -> Option<usize> {
                 tcp::close(tcp_id);
                 return None;
             }
+        }
+    }
+
+    // Sertifikatni tekşiramiz: amal muddati va host nomi.
+    // (Imzo zanjiri — CA işonçi — hozirça tekşirilmaydi; hujjatlaştirilgan keyingi qadam.)
+    match &cert_msg {
+        Some(cm) => match super::x509::validate(cm, hostname, &crate::time::now()) {
+            Ok(info) => {
+                let name = info.names.first().map(|s| s.as_str()).unwrap_or(hostname);
+                crate::tprintln!(crate::i18n::msg::TLS_CERT_OK, name);
+            }
+            Err(e) => {
+                crate::tprintln!(crate::i18n::msg::TLS_CERT_BAD, format_args!("{:?}", e));
+                tcp::close(tcp_id);
+                return None;
+            }
+        },
+        None => {
+            crate::tprintln!(crate::i18n::msg::TLS_CERT_BAD, "sertifikat yöq");
+            tcp::close(tcp_id);
+            return None;
         }
     }
 

@@ -568,6 +568,21 @@ pub mod msg {
         "[test] KASLR: стеки ядра при каждой загрузке в одном из {} мест — OK",
         "[test] KASLR: kernel stacks placed in one of {} spots each boot — OK",
     ];
+    pub const TEST_X509: Text = [
+        "[test] X.509: sertifikat tahlili, amal muddati va host nomi tekşiruvi — OK",
+        "[test] X.509: разбор сертификата, проверка срока и имени хоста — OK",
+        "[test] X.509: certificate parsing, validity and hostname checks — OK",
+    ];
+    pub const TLS_CERT_OK: Text = [
+        "[tls ] sertifikat qabul qilindi: {} (muddat va host nomi tekşirildi)",
+        "[tls ] сертификат принят: {} (срок и имя хоста проверены)",
+        "[tls ] certificate accepted: {} (validity and hostname checked)",
+    ];
+    pub const TLS_CERT_BAD: Text = [
+        "[tls ] sertifikat rad etildi: {} — ulaniş böldi",
+        "[tls ] сертификат отклонён: {} — соединение прервано",
+        "[tls ] certificate rejected: {} — connection aborted",
+    ];
     pub const SEC_TITLE: Text = ["  Zamin OS himoyasi:", "  Защита Zamin OS:", "  Zamin OS protection:"];
     pub const SEC_ON: Text = ["yoqiq", "включено", "on"];
     pub const SEC_OFF: Text = ["yöq (protsessor qöllamaydi)", "нет (не поддерживается процессором)", "off (not supported by CPU)"];
