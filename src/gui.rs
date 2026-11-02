@@ -153,6 +153,8 @@ struct Window {
     pout: usize,        // çiqiş quvuri (bola stdout → GUI öqiydi); NONE_PIPE — yöq
     cur: Vec<u8>,       // hali tugamagan çiqiş qatori (bayt oqimi)
     esc: Option<String>, // qayta işlanayotgan ESC ketma-ketligi
+    side: Vec<String>,  // Fayllar: yon panel papkalari (uy papkasidagi)
+    thumbs: Vec<Option<crate::image::Image>>, // Fayllar: rasm eskizlari (rows bilan bir xil tartibda)
 }
 
 impl Window {
@@ -187,9 +189,18 @@ impl Window {
         self.y + title_h() + body() / 3
     }
     /// Övoz oynasidagi ijro tugmasi (doira), markaz va radius.
+    /// Pleer geometriyasi: (muqova ölçami, öng qism x, öng qism kengligi, mazmun boşi).
+    fn audio_geo(&self) -> (usize, usize, usize, usize) {
+        let u = body();
+        let ct = self.y + title_h() + u;
+        let a = (self.h.saturating_sub(title_h() + u * 2)).min(self.w / 3);
+        let x0 = self.x + u + a + u;
+        (a, x0, (self.x + self.w).saturating_sub(x0 + u), ct)
+    }
     fn play_btn(&self) -> (usize, usize, usize) {
-        let r = body();
-        (self.x + body() + r, self.y + self.h - body() - r, r)
+        let (a, x0, _, ct) = self.audio_geo();
+        let r = body() * 6 / 5;
+        (x0 + r, ct + a - r, r)
     }
     fn in_play_btn(&self, cx: usize, cy: usize) -> bool {
         let (px, py, r) = self.play_btn();
@@ -254,6 +265,8 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         play_t: 0,
         pid: 0, pin: NONE_PIPE, pout: NONE_PIPE,
         cur: Vec::new(), esc: None,
+        side: Vec::new(),
+        thumbs: Vec::new(),
     }
 }
 
@@ -279,9 +292,14 @@ fn new_window(kind: Kind, n: usize) -> Window {
             win
         }
         Kind::Files => {
-            let (w, h) = (u * 26, u * 20);
+            let (w, h) = (u * 38, u * 24);
             let (x, y) = place(w, h);
             let mut win = base(x, y, w, h, kind, String::from("Fayllar"), Vec::new());
+            // Yon panel: uy papkasidagi papkalar
+            let mut dirs: Vec<String> =
+                fs::list("~").unwrap_or_default().into_iter().filter(|e| e.is_dir).map(|e| e.name).collect();
+            dirs.sort();
+            win.side = dirs;
             load_dir(&mut win, "~");
             win
         }
@@ -309,7 +327,7 @@ fn new_window(kind: Kind, n: usize) -> Window {
             base(x, y, w, h, kind, String::from("Rasm — Zamin"), Vec::new())
         }
         Kind::About => {
-            let (w, h) = (u * 25, u * 15);
+            let (w, h) = (u * 24, u * 20);
             let (x, y) = place(w, h);
             base(x, y, w, h, kind, String::from("Zamin OS haqida"), alloc::vec![
                 String::from("Zamin OS"),
@@ -327,12 +345,12 @@ fn new_window(kind: Kind, n: usize) -> Window {
             base(x, y, w, h, kind, String::from("Övoz"), Vec::new())
         }
         Kind::Browser => {
-            let (w, h) = (u * 28, u * 17);
+            let (w, h) = (u * 30, u * 22);
             let (x, y) = place(w, h);
             base(x, y, w, h, kind, String::from("Zamin Brauzer"), alloc::vec![
                 String::from("Zamin Brauzer"),
                 String::new(),
-                String::from("Veb brauzer tez orada qoʻşiladi."),
+                String::from("Veb brauzer tez orada qöşiladi."),
                 String::from("Tarmoq: virtio-net + TLS tayyor."),
             ])
         }
@@ -351,7 +369,7 @@ fn new_window(kind: Kind, n: usize) -> Window {
             let (w, h) = (u * 24, u * 13);
             let (x, y) = place(w, h);
             base(x, y, w, h, kind, String::from("Savat"), alloc::vec![
-                String::from("Savat boʻş"),
+                String::from("Savat böş"),
             ])
         }
         _ => {
@@ -366,13 +384,24 @@ fn new_window(kind: Kind, n: usize) -> Window {
 fn load_dir(win: &mut Window, path: &str) {
     win.path = String::from(path);
     win.rows.clear();
-    if path != "/" && path != "~" {
-        win.rows.push((String::from(".."), FKind::Dir));
-    }
     let mut entries = fs::list(path).unwrap_or_default();
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
+    win.thumbs.clear();
     for e in entries {
-        win.rows.push((e.name.clone(), FKind::of(&e.name, e.is_dir)));
+        let kind = FKind::of(&e.name, e.is_dir);
+        // Rasm bölsa — kiçik eskiz (bir marta dekodlanadi, keşlanadi)
+        let thumb = if kind == FKind::Image {
+            let fp = path_join(path, &e.name);
+            fs::read_all(&fp)
+                .ok()
+                .filter(|d| d.len() < 4 * 1024 * 1024)
+                .and_then(|d| crate::image::decode_file(&e.name, &d))
+                .map(|img| make_thumb(&img, 128))
+        } else {
+            None
+        };
+        win.thumbs.push(thumb);
+        win.rows.push((e.name.clone(), kind));
     }
     win.title = alloc::format!("Fayllar — {}", path);
 }
@@ -420,7 +449,7 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
         let mut win = base(x.min(sw - w), y, w, h, Kind::Audio, alloc::format!("Övoz — {}", name), Vec::new());
         win.path = String::from(path);
         if let Some(clip) = crate::audio::decode(name, &data) {
-            win.env = clip.envelope(u * 24);
+            win.env = clip.envelope(u * 5);
             win.clip = Some(clip);
         } else {
             let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_uppercase()).unwrap_or_default();
@@ -1083,6 +1112,17 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
         }
         // Fayllar oynasida qator bosiş: papka — kiradi; fayl — oçadi
         if windows[i].kind == Kind::Files {
+            let target = if files_back(&windows[i], cx, cy) {
+                Some(path_join(&windows[i].path, ".."))
+            } else {
+                files_side_at(&windows[i], cx, cy)
+            };
+            if let Some(p) = target {
+                let mut w = windows.remove(i);
+                load_dir(&mut w, &p);
+                windows.push(w);
+                return;
+            }
             if let Some(row) = file_row_at(&windows[i], cx, cy) {
                 // Oynani old planga olib, keyin faollaştiramiz
                 let w = windows.remove(i);
@@ -1212,7 +1252,7 @@ fn weekday_index(year: u64, month: u64, day: u64) -> usize {
     (((h + 5) % 7) as usize) % 7 // 0=Dush
 }
 fn weekday_short(year: u64, month: u64, day: u64) -> &'static str {
-    ["Dush", "Sesh", "Chor", "Pay", "Jum", "Shan", "Yak"][weekday_index(year, month, day)]
+    ["Duş", "Seş", "Çor", "Pay", "Jum", "Şan", "Yak"][weekday_index(year, month, day)]
 }
 
 // Holat belgilari (markaz cy, baland s)
@@ -1241,7 +1281,7 @@ fn status_battery(cx: usize, cy: usize, s: usize) {
 }
 
 /// Öng tomondagi vidjetlar paneli: ob-havo, kalendar, pleer, tizim halqalari.
-fn draw_widgets(w: usize, h: usize) {
+fn draw_widgets(w: usize, _h: usize) {
     let u = body();
     let pw = (w / 4).clamp(u * 15, u * 20);
     let px = w.saturating_sub(pw + u);
@@ -1251,7 +1291,7 @@ fn draw_widgets(w: usize, h: usize) {
     // --- Ob-havo ---
     let wh = u * 7;
     widget_card(px, py, pw, wh);
-    gfx::draw_text(px + u, py + u, "Toshkent", 0xeaf0f8, small());
+    gfx::draw_text(px + u, py + u, "Toşkent", 0xeaf0f8, small());
     gfx::fill_circle(px + pw - u * 3 / 2, py + u * 5 / 4, (u / 4).max(2), 0x8ab4ff);
     // bulut + quyoş
     gfx::fill_circle(px + u * 2, py + u * 3, u * 4 / 5, 0xffd36b);
@@ -1270,7 +1310,7 @@ fn draw_widgets(w: usize, h: usize) {
     gfx::draw_text(px + u, py + u * 2 / 3, &title, 0xeaf0f8, small());
     let cols = 7;
     let cellw = (pw - u) / cols;
-    let hdr = ["Du", "Se", "Ch", "Pa", "Ju", "Sh", "Ya"];
+    let hdr = ["Du", "Se", "Ço", "Pa", "Ju", "Şa", "Ya"];
     let gy0 = py + u * 2;
     for (i, d) in hdr.iter().enumerate() {
         gfx::draw_text_centered(px + u / 2 + i * cellw + cellw / 2, gy0, d, 0x7f8ea3, small() * 4 / 5);
@@ -1296,11 +1336,15 @@ fn draw_widgets(w: usize, h: usize) {
     // --- Pleer ---
     let mh = u * 5;
     widget_card(px, py, pw, mh);
-    gfx::gradient_rect(px + u, py + u, mh - u * 2, mh - u * 2, 0x6a7bbf, 0x314066);
-    gfx::round_outline(px + u, py + u, mh - u * 2, mh - u * 2, u / 4, 1, 0x5a6a9a);
+    let asz = mh - u * 2;
+    gradient_round_rect(px + u, py + u, asz, asz, u / 3, 0xff8a3d, 0x7a3cff);
+    let (nc, ny) = (px + u + asz / 2, py + u + asz / 2);
+    gfx::fill_circle(nc - asz / 8, ny + asz / 6, asz / 9, OQ);
+    fill_rect(nc - asz / 8 + asz / 9 - 2, ny - asz / 4, (asz / 18).max(2), asz * 5 / 12, OQ);
+    fill_rect(nc - asz / 8 + asz / 9 - 2, ny - asz / 4, asz / 4, (asz / 14).max(2), OQ);
     let tx = px + u + (mh - u * 2) + u;
     gfx::draw_text(tx, py + u * 3 / 2, "Zamin", 0xffffff, small());
-    gfx::draw_text(tx, py + u * 3 / 2 + small() + u / 4, "An'anaviy musiqa", 0xaebccf, small() * 9 / 10);
+    gfx::draw_text(tx, py + u * 3 / 2 + small() + u / 4, "Anʼanaviy musiqa", 0xaebccf, small() * 9 / 10);
     // tugmalar
     let by = py + mh - u * 3 / 2;
     gfx::fill_circle(tx + small() * 3, by, u * 3 / 5, 0x34c759);
@@ -1420,75 +1464,296 @@ fn draw_window(win: &Window, active: bool) {
         Kind::Audio => draw_text_window(win),
         Kind::Editor => draw_editor(win),
         Kind::Files => draw_files(win),
+        Kind::Terminal => draw_terminal(win),
+        Kind::About => draw_about(win),
+        Kind::Settings => draw_settings(win),
+        Kind::Browser => draw_browser(win),
+        Kind::Trash => draw_trash(win),
         _ => draw_text_window(win),
     }
     gfx::reset_clip();
 }
 
-/// Fayl qatori balandligi.
-fn file_rh() -> usize {
-    body() * 9 / 5
+/// Fayllar oynasi geometriyasi.
+struct FilesGeo {
+    sbw: usize,  // yon panel kengligi
+    top: usize,  // mazmun boşi (sarlavha ostida)
+    tx: usize,   // asboblar qatori x
+    th: usize,   // asboblar qatori balandligi
+    gx: usize,   // grid boşi
+    gy: usize,
+    gh: usize,
+    cw: usize,   // katak ölçami
+    ch: usize,
+    cols: usize,
+    item_h: usize, // yon panel qatori
+    side_y: usize, // yon panel birinçi qatori
 }
 
-/// Bosilgan nuqtadagi fayl qatori indeksi (Fayllar oynasi).
+fn files_geo(win: &Window) -> FilesGeo {
+    let u = body();
+    let top = win.y + title_h();
+    let sbw = u * 8;
+    let tx = win.x + sbw;
+    let th = u * 2;
+    let gx = tx + u / 2;
+    let gy = top + th + u / 2;
+    let gw = (win.x + win.w).saturating_sub(gx + u / 2);
+    let gh = (win.y + win.h).saturating_sub(gy + u / 2);
+    let cw = u * 5;
+    let ch = u * 5;
+    FilesGeo {
+        sbw, top, tx, th, gx, gy, gh, cw, ch,
+        cols: (gw / cw).max(1),
+        item_h: u * 7 / 4,
+        side_y: top + u * 2,
+    }
+}
+
+/// Bosilgan nuqtadagi grid elementi (Fayllar oynasi).
 fn file_row_at(win: &Window, cx: usize, cy: usize) -> Option<usize> {
-    let top = win.content_top();
-    if cx < win.x || cx >= win.x + win.w || cy < top || cy >= win.y + win.h - body() / 2 {
+    let g = files_geo(win);
+    if cx < g.gx || cy < g.gy || cx >= g.gx + g.cols * g.cw || cy >= g.gy + g.gh {
         return None;
     }
-    let i = (cy - top) / file_rh();
+    let i = ((cy - g.gy) / g.ch) * g.cols + (cx - g.gx) / g.cw;
     if i < win.rows.len() { Some(i) } else { None }
 }
 
-/// Fayllar oynasi: ikona + nom qatorlari.
-fn draw_files(win: &Window) {
-    let rh = file_rh();
-    let pad = body();
-    let isz = body() * 5 / 4;
-    let mut y = win.content_top();
-    for (name, kind) in &win.rows {
-        if y + rh > win.y + win.h - body() / 2 {
+/// Yon paneldagi bosilgan joy — papka yöli.
+fn files_side_at(win: &Window, cx: usize, cy: usize) -> Option<String> {
+    let g = files_geo(win);
+    if cx < win.x || cx >= win.x + g.sbw || cy < g.side_y {
+        return None;
+    }
+    let i = (cy - g.side_y) / g.item_h;
+    if i == 0 {
+        Some(String::from("~"))
+    } else {
+        win.side.get(i - 1).map(|n| alloc::format!("~/{}", n))
+    }
+}
+
+/// "Orqaga" tugmasi bosildimi?
+fn files_back(win: &Window, cx: usize, cy: usize) -> bool {
+    let g = files_geo(win);
+    let u = body();
+    let (bx, by, bs) = (g.tx + u / 2, g.top + u / 4, u * 3 / 2);
+    cx >= bx && cx < bx + bs && cy >= by && cy < by + bs
+}
+
+/// Matnni kenglikka sigʻdiradi (oşsa "…" bilan qisqartiradi).
+fn fit_text(s: &str, maxw: usize, px: usize) -> String {
+    if gfx::text_width(s, px) <= maxw {
+        return String::from(s);
+    }
+    let ell = gfx::text_width("…", px);
+    let mut out = String::new();
+    for ch in s.chars() {
+        out.push(ch);
+        if gfx::text_width(&out, px) + ell > maxw {
+            out.pop();
             break;
         }
-        // Ikona
-        file_icon(*kind, win.x + pad, y + (rh - isz) / 2, isz);
-        // Nom
-        let ty = y + (rh.saturating_sub(small())) / 2;
-        let label = if *kind == FKind::Dir && name != ".." {
-            alloc::format!("{}/", name)
+    }
+    out.push('…');
+    out
+}
+
+const SIDE_COLORS: [Color; 6] = [0x2f88ff, 0x34c759, 0xff9f0a, 0xbf5af2, 0xff375f, 0x64d2ff];
+
+/// Fayllar oynasi: yon panel + asboblar qatori + katta ikonali grid.
+fn draw_files(win: &Window) {
+    let u = body();
+    let g = files_geo(win);
+    let r = radius();
+    let bottom = win.y + win.h;
+    // --- Yon panel ---
+    let sh = bottom - g.top;
+    let scol = 0x151b27;
+    fill_rect(win.x, g.top, g.sbw, sh.saturating_sub(r), scol);
+    gfx::fill_round_rect(win.x, bottom.saturating_sub(2 * r), g.sbw, 2 * r, r, scol);
+    fill_rect(win.x + r, bottom.saturating_sub(2 * r), g.sbw - r, 2 * r, scol);
+    fill_rect(win.x + g.sbw, g.top, 1, sh, 0x2a3346);
+    gfx::draw_text(win.x + u * 3 / 4, g.top + u / 2, "Joylar", 0x6f7f95, small() * 4 / 5);
+    let n_items = 1 + win.side.len();
+    for i in 0..n_items {
+        let iy = g.side_y + i * g.item_h;
+        if iy + g.item_h > bottom - u / 2 {
+            break;
+        }
+        let (label, path) = if i == 0 {
+            (String::from("Uy"), String::from("~"))
         } else {
-            name.clone()
+            (win.side[i - 1].clone(), alloc::format!("~/{}", win.side[i - 1]))
         };
-        gfx::draw_text(win.x + pad * 2 + isz, ty, &label, 0xe7edf6, small());
-        y += rh;
+        if win.path == path {
+            fill_round_rect_a(win.x + u / 3, iy, g.sbw - u * 2 / 3, g.item_h - 2, u / 3, 0x2f88ff, 70);
+        }
+        let isz = small();
+        let ix = win.x + u * 3 / 4;
+        let icy = iy + (g.item_h - isz) / 2;
+        if i == 0 {
+            // uy belgisi
+            let c = ix + isz / 2;
+            gfx::fill_poly(
+                &[(c as f32, icy as f32), ((ix + isz) as f32, (icy + isz / 2) as f32), (ix as f32, (icy + isz / 2) as f32)],
+                0x64d2ff,
+            );
+            fill_rect(ix + isz / 6, icy + isz / 2, isz * 2 / 3, isz / 2, 0x64d2ff);
+        } else {
+            let c = SIDE_COLORS[(i - 1) % SIDE_COLORS.len()];
+            gfx::fill_round_rect(ix, icy + isz / 8, isz * 2 / 5, isz / 4, isz / 10, c);
+            gfx::fill_round_rect(ix, icy + isz / 4, isz, isz * 3 / 4, isz / 6, c);
+        }
+        let lbl = fit_text(&label, g.sbw - u * 3, small() * 9 / 10);
+        gfx::draw_text(ix + isz + u / 2, iy + (g.item_h - small()) / 2, &lbl, 0xdbe3ee, small() * 9 / 10);
+    }
+    // --- Asboblar qatori ---
+    let u2 = u * 3 / 2;
+    let (bx, by) = (g.tx + u / 2, g.top + u / 4);
+    fill_round_rect_a(bx, by, u2, u2, u / 3, 0xffffff, 18);
+    let cy0 = by + u2 / 2;
+    let cxp = bx + u2 / 2;
+    gfx::fill_poly(
+        &[
+            ((cxp + u / 5) as f32, (cy0 - u / 3) as f32),
+            ((cxp + u / 5) as f32, (cy0 + u / 3) as f32),
+            ((cxp - u / 4) as f32, cy0 as f32),
+        ],
+        if win.path == "~" || win.path == "/" { 0x4a5568 } else { 0xdbe3ee },
+    );
+    // yöl (breadcrumb)
+    let crumb = if win.path == "~" {
+        String::from("Uy")
+    } else if let Some(rest) = win.path.strip_prefix("~/") {
+        alloc::format!("Uy  /  {}", rest.replace('/', "  /  "))
+    } else {
+        win.path.clone()
+    };
+    gfx::draw_text(bx + u2 + u / 2, g.top + (g.th - small()) / 2, &crumb, 0xf0f4fa, small());
+    let cnt = alloc::format!("{} ta element", win.rows.len());
+    let cw = gfx::text_width(&cnt, small() * 4 / 5);
+    gfx::draw_text((win.x + win.w).saturating_sub(cw + u), g.top + (g.th - small()) / 2 + 2, &cnt, 0x6f7f95, small() * 4 / 5);
+    fill_rect(g.tx, g.top + g.th, win.w - g.sbw, 1, 0x2a3346);
+    // --- Grid ---
+    if win.rows.is_empty() {
+        gfx::draw_text_centered(g.tx + (win.w - g.sbw) / 2, g.gy + g.gh / 3, "Papka böş", 0x6f7f95, body());
+        return;
+    }
+    let isz = u * 3;
+    let npx = small() * 9 / 10;
+    for (i, (name, kind)) in win.rows.iter().enumerate() {
+        let row = i / g.cols;
+        let col = i % g.cols;
+        let x0 = g.gx + col * g.cw;
+        let y0 = g.gy + row * g.ch;
+        if y0 + g.ch > g.gy + g.gh {
+            break;
+        }
+        let (ix, iy) = (x0 + (g.cw - isz) / 2, y0 + u / 4);
+        if let Some(Some(t)) = win.thumbs.get(i) {
+            fill_round_rect_a(ix, iy, isz, isz, u / 3, 0xffffff, 14);
+            let (tx, ty, tw, th) = gfx::blit_fit(ix + 2, iy + 2, isz - 4, isz - 4, t.w, t.h, &t.px);
+            gfx::round_outline(tx.saturating_sub(1), ty.saturating_sub(1), tw + 2, th + 2, 2, 1, 0xd8dee9);
+        } else {
+            big_icon(*kind, name, ix, iy, isz);
+        }
+        let lbl = fit_text(name, g.cw - u / 3, npx);
+        gfx::draw_text_centered(x0 + g.cw / 2, y0 + isz + u / 2, &lbl, 0xe7edf6, npx);
+    }
+}
+
+/// Rasmdan kiçik eskiz (eng katta tomoni `max`, eng-yaqin namuna).
+fn make_thumb(img: &crate::image::Image, max: usize) -> crate::image::Image {
+    let (w, h) = (img.w.max(1), img.h.max(1));
+    let (tw, th) = if w >= h { (max, (h * max / w).max(1)) } else { ((w * max / h).max(1), max) };
+    let (tw, th) = if w <= max && h <= max { (w, h) } else { (tw, th) };
+    let mut px = Vec::with_capacity(tw * th);
+    for y in 0..th {
+        let sy = y * h / th;
+        for x in 0..tw {
+            px.push(img.px[sy * w + x * w / tw]);
+        }
+    }
+    crate::image::Image { w: tw, h: th, px }
+}
+
+/// Fayl kengaytmasi (katta harflarda, 4 belgigaça).
+fn ext_label(name: &str) -> String {
+    let e = name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    e.chars().take(4).collect::<String>().to_ascii_uppercase()
+}
+
+/// Katta fayl/papka ikonasi (grid uçun).
+fn big_icon(kind: FKind, name: &str, x: usize, y: usize, s: usize) {
+    if kind == FKind::Dir {
+        // macOS uslubidagi koʻk papka
+        gfx::fill_round_rect(x + s / 12, y + s / 6, s * 2 / 5, s / 4, s / 12, 0x3f8fe8);
+        gfx::fill_round_rect(x + s / 12, y + s / 4, s * 5 / 6, s * 3 / 5, s / 10, 0x3f8fe8);
+        gfx::fill_round_rect(x + s / 12, y + s / 3, s * 5 / 6, s * 13 / 20, s / 10, 0x62adff);
+        gfx::fill_round_rect_a(x + s / 12, y + s / 3, s * 5 / 6, s / 6, s / 10, 0xffffff, 40);
+        return;
+    }
+    // Hujjat varaqi
+    let pw = s * 3 / 5;
+    let ph = s * 5 / 6;
+    let px0 = x + (s - pw) / 2;
+    let py0 = y + s / 12;
+    gfx::fill_round_rect(px0, py0, pw, ph, s / 14, 0xeef2f7);
+    let fold = pw / 4;
+    gfx::fill_poly(
+        &[
+            ((px0 + pw - fold) as f32, py0 as f32),
+            ((px0 + pw) as f32, (py0 + fold) as f32),
+            ((px0 + pw - fold) as f32, (py0 + fold) as f32),
+        ],
+        0xc4cfdd,
+    );
+    let c = kind.color();
+    let inner_x = px0 + pw / 6;
+    let inner_w = pw * 2 / 3;
+    match kind {
+        FKind::Image => {
+            let ih = ph * 2 / 5;
+            let iy = py0 + ph / 6;
+            gfx::gradient_rect(inner_x, iy, inner_w, ih, 0x8fd0ff, 0xffd59e);
+            hill(inner_x, iy, inner_w, ih, inner_w / 2, ih * 3 / 5, 0x2e8b58);
+        }
+        FKind::Audio => {
+            let cx = px0 + pw / 2;
+            let cy = py0 + ph * 3 / 8;
+            gfx::fill_circle(cx - s / 12, cy + s / 12, s / 14, 0xff7a2f);
+            fill_rect(cx - s / 12 + s / 16, cy - s / 8, (s / 30).max(1), s / 5, 0xff7a2f);
+        }
+        FKind::Video => {
+            let cx = px0 + pw / 2;
+            let cy = py0 + ph * 3 / 8;
+            let t = s / 9;
+            gfx::fill_poly(
+                &[((cx - t / 2) as f32, (cy - t) as f32), ((cx + t) as f32, cy as f32), ((cx - t / 2) as f32, (cy + t) as f32)],
+                0x8257ff,
+            );
+        }
+        _ => {
+            for k in 0..4 {
+                fill_rect(inner_x, py0 + ph / 6 + k * ph / 10, inner_w * (4 - k % 2) / 4, (s / 30).max(1), 0x9aa8bb);
+            }
+        }
+    }
+    // Rangli belgi (kengaytma)
+    let ext = ext_label(name);
+    if !ext.is_empty() {
+        let bh = s / 5;
+        let by = py0 + ph - bh - s / 14;
+        gfx::fill_round_rect(px0 + pw / 10, by, pw * 4 / 5, bh, bh / 3, c);
+        gfx::draw_text_centered(px0 + pw / 2, by + bh / 10, &ext, OQ, bh * 4 / 5);
     }
 }
 
 /// Fayl turi ikonasi (kiçik).
 fn file_icon(kind: FKind, x: usize, y: usize, s: usize) {
-    let c = kind.color();
-    if kind == FKind::Dir {
-        // Papka
-        gfx::fill_round_rect(x, y + s / 5, s * 2 / 5, s / 5, s / 12, c);
-        gfx::fill_round_rect(x, y + s / 3, s, s * 3 / 5, s / 8, c);
-        return;
-    }
-    // Hujjat varaqi + burchak + tur belgisi
-    gfx::fill_round_rect(x + s / 6, y, s * 2 / 3, s, s / 10, 0x2c3345);
-    gfx::round_outline(x + s / 6, y, s * 2 / 3, s, s / 10, 1, c);
-    let letter = match kind {
-        FKind::Image => "▦",
-        FKind::Text => "¶",
-        FKind::Program => ">",
-        FKind::Audio => "♪",
-        FKind::Video => "▶",
-        FKind::Archive => "▣",
-        _ => "·",
-    };
-    let _ = letter; // belgilar shriftda bölmasligi mumkin — rangli chiziq bilan belgilaymiz
-    gfx::fill_round_rect(x + s / 4, y + s / 6, s / 3, s / 8, s / 16, c);
-    gfx::fill_rect(x + s / 4, y + s / 2, s * 5 / 12, (s / 10).max(1), c);
-    gfx::fill_rect(x + s / 4, y + s * 2 / 3, s / 3, (s / 10).max(1), c);
+    big_icon(kind, "", x, y, s);
 }
 
 /// Rasm oynasi: dekodlangan rasmni (yoki harakatli kadrni) nisbat saqlab körsatadi.
@@ -1514,74 +1779,326 @@ fn draw_image(win: &Window) {
     gfx::draw_text(x, win.y + win.h - pad - small(), &info, 0x8aa0bc, small());
 }
 
-/// Terminal/Fayllar/Haqida mazmunini chizadi.
+/// Oddiy matnli oyna (xabarlar).
 fn draw_text_window(win: &Window) {
-    let mono = win.kind == Kind::Terminal;
     let px = small();
-    let lh = gfx::line_height(px, if mono { Font::Mono } else { Font::Ui }).max(px + 3);
-    let fg = if mono { 0x46d98a } else { 0xe7edf6 };
+    let lh = gfx::line_height(px, Font::Ui).max(px + 3);
     let pad = body();
-    let mut ty = win.content_top();
-    let draw_line = |x: usize, y: usize, s: &str, c: Color| {
-        if mono { gfx::draw_text_mono(x, y, s, c, px) } else { gfx::draw_text(x, y, s, c, px) };
-    };
+    let mut ty = win.content_top() + pad / 3;
     for line in &win.lines {
         if ty + lh > win.y + win.h - pad / 2 {
             break;
         }
-        draw_line(win.x + pad, ty, line, fg);
+        gfx::draw_text(win.x + pad, ty, line, 0xe7edf6, px);
         ty += lh;
     }
-    if win.kind == Kind::Terminal && ty + lh <= win.y + win.h - pad / 2 {
-        let cur = String::from_utf8_lossy(&win.cur);
-        draw_line(win.x + pad, ty, &alloc::format!("{}{}", cur, win.input), fg);
-        // Kursor çizigʻi
-        let cwdt = gfx::text_width_mono(&alloc::format!("{}{}", cur, win.input), px);
-        fill_rect(win.x + pad + cwdt + 1, ty, (px / 10).max(1), px, 0x46d98a);
+}
+
+/// Terminal qatorini ranglab chizadi: user@zamin (yashil), yöl (koʻk).
+fn draw_term_line(x: usize, y: usize, s: &str, px: usize) -> usize {
+    let base_col = 0xd3dae5;
+    if let (Some(at), Some(gt)) = (s.find("@zamin:"), s.find("> ")) {
+        if at < gt {
+            let colon = at + "@zamin".len();
+            let mut cx = gfx::draw_text_mono(x, y, &s[..colon], 0x5be37d, px);
+            cx = gfx::draw_text_mono(cx, y, ":", base_col, px);
+            cx = gfx::draw_text_mono(cx, y, &s[colon + 1..gt], 0x63a8ff, px);
+            cx = gfx::draw_text_mono(cx, y, "> ", base_col, px);
+            return gfx::draw_text_mono(cx, y, &s[gt + 2..], 0xf2f5fa, px);
+        }
     }
+    gfx::draw_text_mono(x, y, s, base_col, px)
 }
 
-/// Soat oynasi: katta vaqt va sana.
+/// Terminal oynasi: toʻq fon, rangli prompt, blok kursor.
+fn draw_terminal(win: &Window) {
+    let px = small();
+    let lh = gfx::line_height(px, Font::Mono).max(px + 3);
+    let pad = body() * 3 / 4;
+    let top = win.y + title_h();
+    let r = radius();
+    let bottom = win.y + win.h;
+    fill_rect(win.x + 1, top, win.w.saturating_sub(2), bottom.saturating_sub(top + r), 0x0e121a);
+    gfx::fill_round_rect(win.x + 1, bottom.saturating_sub(2 * r + 1), win.w.saturating_sub(2), 2 * r, r, 0x0e121a);
+    let avail = (win.y + win.h).saturating_sub(top + pad * 2);
+    let max_lines = (avail / lh).max(1);
+    // faqat oxirgi satrlar (pastga yopişgan)
+    let total = win.lines.len() + 1;
+    let skip = total.saturating_sub(max_lines);
+    let mut ty = top + pad;
+    for line in win.lines.iter().skip(skip) {
+        draw_term_line(win.x + pad, ty, line, px);
+        ty += lh;
+    }
+    let cur = String::from_utf8_lossy(&win.cur);
+    let full = alloc::format!("{}{}", cur, win.input);
+    let ex = draw_term_line(win.x + pad, ty, &full, px);
+    gfx::blend_rect(ex, ty, gfx::mono_advance(px), px + 2, 0x5be37d, 190);
+}
+
+/// Soat oynasi: analog siferblat + raqamli vaqt va sana.
 fn draw_clock(win: &Window) {
+    use crate::image::vector::{cos, sin};
     let t = time::now();
-    let cx = win.x + win.w / 2;
-    let avail = (win.y + win.h).saturating_sub(win.content_top());
-    let big = (avail / 3).clamp(28, 96);
-    let vaqt = alloc::format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second);
-    let cy0 = win.content_top() + avail / 2;
-    gfx::draw_text_centered(cx, cy0 - big, &vaqt, 0xf4f8ff, big);
-    let sana = alloc::format!("{:04}-{:02}-{:02}", t.year, t.month, t.day);
-    gfx::draw_text_centered(cx, cy0 + big / 3, &sana, 0x7fb0ea, body());
+    let top = win.y + title_h();
+    let avail = (win.y + win.h).saturating_sub(top);
+    let rr = (avail * 2 / 5).min(win.w / 5);
+    let cx = win.x + body() + rr + body() / 2;
+    let cy = top + avail / 2;
+    gfx::fill_circle(cx, cy, rr + 3, 0x3a4458);
+    gfx::fill_circle(cx, cy, rr, 0xf4f6fa);
+    for k in 0..12 {
+        let a = k as f32 * core::f32::consts::PI / 6.0;
+        let d = rr as f32 * 0.82;
+        let big = k % 3 == 0;
+        gfx::fill_circle(
+            (cx as f32 + cos(a) * d) as usize,
+            (cy as f32 + sin(a) * d) as usize,
+            if big { (rr / 18).max(2) } else { (rr / 30).max(1) },
+            0x2b3240,
+        );
+    }
+    let hand = |ang: f32, len: f32, wid: f32, col: Color| {
+        let a = ang - core::f32::consts::FRAC_PI_2;
+        let (dx, dy) = (cos(a), sin(a));
+        let (nx, ny) = (-dy * wid, dx * wid);
+        let (fx, fy) = (cx as f32, cy as f32);
+        gfx::fill_poly(
+            &[
+                (fx + nx - dx * wid * 2.0, fy + ny - dy * wid * 2.0),
+                (fx + dx * len + nx * 0.4, fy + dy * len + ny * 0.4),
+                (fx + dx * len - nx * 0.4, fy + dy * len - ny * 0.4),
+                (fx - nx - dx * wid * 2.0, fy - ny - dy * wid * 2.0),
+            ],
+            col,
+        );
+    };
+    let tau = core::f32::consts::PI * 2.0;
+    let hf = (t.hour % 12) as f32 + t.minute as f32 / 60.0;
+    hand(hf / 12.0 * tau, rr as f32 * 0.5, rr as f32 * 0.05, 0x1b2130);
+    hand((t.minute as f32 + t.second as f32 / 60.0) / 60.0 * tau, rr as f32 * 0.72, rr as f32 * 0.035, 0x1b2130);
+    hand(t.second as f32 / 60.0 * tau, rr as f32 * 0.8, rr as f32 * 0.015, 0xff453a);
+    gfx::fill_circle(cx, cy, (rr / 16).max(2), 0xff453a);
+    // raqamli
+    let tx = cx + rr + body() * 3 / 2;
+    let big = (avail / 4).clamp(24, 72);
+    gfx::draw_text(tx, cy.saturating_sub(big), &alloc::format!("{:02}:{:02}", t.hour, t.minute), 0xf4f8ff, big);
+    let sana = alloc::format!("{}, {}-{} {}", weekday_short(t.year, t.month, t.day), t.day, month_name(t.month), t.year);
+    gfx::draw_text(tx, cy + big / 4, &sana, 0x8ab4ff, small());
 }
 
-/// Matn muharriri: asboblar qatori (Saqla), matn, kursor, holat.
+/// Matn muharriri: asboblar qatori (fayl nomi + Saqla), qator raqamlari, kursor.
 fn draw_editor(win: &Window) {
     let px = small();
     let lh = gfx::line_height(px, Font::Mono).max(px + 3);
+    let u = body();
     // Asboblar qatori
     let (bx, by, bw, bh) = win.save_btn();
-    gfx::fill_round_rect(bx, by, bw, bh, bh / 2, 0x30c85a);
-    let bty = by + (bh.saturating_sub(small())) / 2;
-    gfx::draw_text_centered(bx + bw / 2, bty, "Saqla", 0x06230f, small());
+    let fname = win.path.rsplit('/').next().unwrap_or("");
     let status = String::from_utf8_lossy(&win.cur);
-    if !status.is_empty() {
-        gfx::draw_text(win.x + body(), by + (bh.saturating_sub(small())) / 2, &status, 0x8aa0bc, small());
-    }
-    // Matn
-    let pad = body();
-    let mut ty = by + bh + pad / 2;
+    let left = if status.is_empty() { String::from(fname) } else { alloc::format!("{}  ·  {}", fname, status) };
+    gfx::draw_text(win.x + u, by + (bh.saturating_sub(small())) / 2, &left, 0x9fb0c3, small());
+    gfx::fill_round_rect(bx, by, bw, bh, bh / 2, 0x30c85a);
+    gfx::draw_text_centered(bx + bw / 2, by + (bh.saturating_sub(small())) / 2, "Saqla", 0x06230f, small());
+    let top = by + bh + u / 3;
+    fill_rect(win.x + 1, top - 1, win.w.saturating_sub(2), 1, 0x2a3346);
+    // Gutter
+    let adv = gfx::mono_advance(px);
+    let gut = adv * 3 + u / 2;
+    let bottom = (win.y + win.h).saturating_sub(radius());
+    fill_rect(win.x + 1, top, gut, bottom.saturating_sub(top), 0x161b26);
+    let mut ty = top + u / 3;
+    let tx = win.x + gut + u / 2;
+    let mut n = 1usize;
     for line in &win.lines {
-        if ty + lh > win.y + win.h - pad / 2 {
+        if ty + lh > win.y + win.h - u / 2 {
             break;
         }
-        gfx::draw_text_mono(win.x + pad, ty, line, 0xe7edf6, px);
+        let num = alloc::format!("{:>3}", n);
+        gfx::draw_text_mono(win.x + u / 4, ty, &num, 0x55627a, px);
+        gfx::draw_text_mono(tx, ty, line, 0xe7edf6, px);
         ty += lh;
+        n += 1;
     }
-    if ty + lh <= win.y + win.h - pad / 2 {
+    if ty + lh <= win.y + win.h - u / 2 {
+        gfx::blend_rect(win.x + gut, ty.saturating_sub(1), win.w.saturating_sub(gut + 2), lh, 0x2f88ff, 28);
+        let num = alloc::format!("{:>3}", n);
+        gfx::draw_text_mono(win.x + u / 4, ty, &num, 0x9fb0c3, px);
         let w = gfx::text_width_mono(&win.input, px);
-        gfx::draw_text_mono(win.x + pad, ty, &win.input, 0xe7edf6, px);
-        fill_rect(win.x + pad + w + 1, ty, (px / 10).max(1), px, 0x7fb0ea);
+        gfx::draw_text_mono(tx, ty, &win.input, 0xf2f5fa, px);
+        fill_rect(tx + w + 1, ty, (px / 10).max(2), px + 2, 0x7fb0ea);
     }
+}
+
+/// Zamin logosi (olmos-yulduz), markaz va ölçam böyiça.
+fn zamin_logo(cx: usize, cy: usize, s: usize) {
+    let h = s / 2;
+    let (fx, fy) = (cx as f32, cy as f32);
+    let hf = h as f32;
+    // tashqi yulduz: ikki kvadrat (biri 45° burilgan)
+    gfx::fill_poly(&[(fx, fy - hf), (fx + hf, fy), (fx, fy + hf), (fx - hf, fy)], 0x2fbf5f);
+    let q = hf * 0.72;
+    gfx::fill_poly(&[(fx - q, fy - q), (fx + q, fy - q), (fx + q, fy + q), (fx - q, fy + q)], 0x2fbf5f);
+    let i = hf * 0.55;
+    gfx::fill_poly(&[(fx, fy - i), (fx + i, fy), (fx, fy + i), (fx - i, fy)], 0x0f2a1a);
+    // tog' çöqqisi
+    let m = hf * 0.4;
+    gfx::fill_poly(&[(fx - m, fy + m * 0.6), (fx - m * 0.1, fy - m * 0.5), (fx + m * 0.3, fy + m * 0.1), (fx + m * 0.6, fy - m * 0.2), (fx + m, fy + m * 0.6)], 0x58e06a);
+}
+
+/// "Zamin OS haqida" oynasi.
+fn draw_about(win: &Window) {
+    let u = body();
+    let cx = win.x + win.w / 2;
+    let top = win.y + title_h();
+    let ls = u * 4;
+    zamin_logo(cx, top + u + ls / 2, ls);
+    let mut y = top + u * 2 + ls;
+    gfx::draw_text_centered(cx, y, "Zamin OS", 0xffffff, u * 3 / 2);
+    y += u * 2;
+    gfx::draw_text_centered(cx, y, &alloc::format!("Versiya {}", env!("CARGO_PKG_VERSION")), 0x5be37d, small());
+    y += u * 3 / 2;
+    for l in ["Rust'da noldan yozilgan ARM64 OS", "Oçiq · Xavfsiz · Tez · Barqaror", "Dasturçi: Abbosjon Dev", "zamin.app · info@zamin.app"] {
+        gfx::draw_text_centered(cx, y, l, 0xaebccf, small() * 9 / 10);
+        y += small() + u / 3;
+    }
+}
+
+/// Sozlamalar oynasi: çapda bölimlar, öngda tizim maʼlumoti.
+fn draw_settings(win: &Window) {
+    let u = body();
+    let top = win.y + title_h();
+    let sbw = u * 9;
+    let r = radius();
+    let bottom = win.y + win.h;
+    fill_rect(win.x, top, sbw, (bottom - top).saturating_sub(r), 0x151b27);
+    gfx::fill_round_rect(win.x, bottom.saturating_sub(2 * r), sbw, 2 * r, r, 0x151b27);
+    fill_rect(win.x + r, bottom.saturating_sub(2 * r), sbw - r, 2 * r, 0x151b27);
+    fill_rect(win.x + sbw, top, 1, bottom - top, 0x2a3346);
+    let cats = [
+        ("Umumiy", 0x8a93a6),
+        ("Ekran", 0x2f88ff),
+        ("Övoz", 0xff375f),
+        ("Tarmoq", 0x34c759),
+        ("Foydalanuvçilar", 0xff9f0a),
+        ("Xavfsizlik", 0xbf5af2),
+    ];
+    let ih = u * 7 / 4;
+    for (i, (name, col)) in cats.iter().enumerate() {
+        let iy = top + u / 2 + i * ih;
+        if iy + ih > bottom - u / 2 {
+            break;
+        }
+        if i == 0 {
+            fill_round_rect_a(win.x + u / 3, iy, sbw - u * 2 / 3, ih - 2, u / 3, 0x2f88ff, 70);
+        }
+        let isz = small();
+        gfx::fill_round_rect(win.x + u * 2 / 3, iy + (ih - isz) / 2, isz, isz, isz / 4, *col);
+        let lbl = fit_text(name, sbw - u * 3, small() * 9 / 10);
+        gfx::draw_text(win.x + u * 2 / 3 + isz + u / 2, iy + (ih - small()) / 2, &lbl, 0xdbe3ee, small() * 9 / 10);
+    }
+    // Öng panel
+    let x = win.x + sbw + u;
+    let mut y = top + u * 2 / 3;
+    gfx::draw_text(x, y, "Umumiy", 0xffffff, u * 6 / 5);
+    y += u * 2;
+    let (sw, sh) = gfx::size();
+    let (free_p, total_p) = crate::memory::frame::stats();
+    let user = accounts::current().map(|a| a.username).unwrap_or_default();
+    let rows = [
+        ("Tizim", String::from("Zamin OS")),
+        ("Versiya", String::from(env!("CARGO_PKG_VERSION"))),
+        ("Foydalanuvçi", user),
+        ("Protsessor", String::from("AArch64 · 4 yadro")),
+        ("Xotira", alloc::format!("{} / {} MB", (total_p - free_p) * 4 / 1024, total_p * 4 / 1024)),
+        ("Ekran", alloc::format!("{} x {}", sw, sh)),
+    ];
+    let rw = (win.x + win.w).saturating_sub(x + u);
+    let rh = u * 3 / 2;
+    fill_round_rect_a(x, y, rw, rh * rows.len(), u / 2, 0xffffff, 12);
+    for (i, (k, v)) in rows.iter().enumerate() {
+        let ry = y + i * rh;
+        if i > 0 {
+            fill_rect(x + u / 2, ry, rw - u, 1, 0x2a3346);
+        }
+        let ty = ry + (rh - small()) / 2;
+        gfx::draw_text(x + u / 2, ty, k, 0xdbe3ee, small() * 9 / 10);
+        let vw = gfx::text_width(v, small() * 9 / 10);
+        gfx::draw_text((x + rw).saturating_sub(vw + u / 2), ty, v, 0x8a9ab0, small() * 9 / 10);
+    }
+}
+
+/// Brauzer oynasi: manzil qatori + boşlang'iç sahifa.
+fn draw_browser(win: &Window) {
+    let u = body();
+    let top = win.y + title_h();
+    // asboblar
+    let by = top + u / 3;
+    let bh = u * 3 / 2;
+    for k in 0..2 {
+        let bx = win.x + u / 2 + k * (bh + u / 4);
+        let c = bx + bh / 2;
+        let m = by + bh / 2;
+        let d = if k == 0 { -1.0f32 } else { 1.0 };
+        gfx::fill_poly(
+            &[
+                ((c as f32) - d * (u as f32) / 5.0, (m - u / 3) as f32),
+                ((c as f32) - d * (u as f32) / 5.0, (m + u / 3) as f32),
+                ((c as f32) + d * (u as f32) / 4.0, m as f32),
+            ],
+            0x6f7f95,
+        );
+    }
+    let ax = win.x + u / 2 + 2 * (bh + u / 4) + u / 2;
+    let aw = (win.x + win.w).saturating_sub(ax + u);
+    gfx::fill_round_rect(ax, by, aw, bh, bh / 2, 0x10151f);
+    gfx::round_outline(ax, by, aw, bh, bh / 2, 1, 0x2a3346);
+    gfx::fill_circle(ax + u * 3 / 4, by + bh / 2, (u / 5).max(2), 0x34c759);
+    gfx::draw_text(ax + u * 3 / 2, by + (bh - small()) / 2, "zamin.app", 0xdbe3ee, small());
+    let ptop = by + bh + u / 3;
+    fill_rect(win.x + 1, ptop, win.w.saturating_sub(2), 1, 0x2a3346);
+    // sahifa
+    let cx = win.x + win.w / 2;
+    let ls = u * 3;
+    zamin_logo(cx, ptop + u * 3 / 2 + ls / 2, ls);
+    let mut y = ptop + u * 2 + ls;
+    gfx::draw_text_centered(cx, y, "Zamin Brauzer", 0xffffff, u * 6 / 5);
+    y += u * 2;
+    let sw2 = (win.w * 3 / 5).max(u * 10);
+    gfx::fill_round_rect(cx - sw2 / 2, y, sw2, bh, bh / 2, 0x10151f);
+    gfx::round_outline(cx - sw2 / 2, y, sw2, bh, bh / 2, 1, 0x34405a);
+    gfx::draw_text(cx - sw2 / 2 + u, y + (bh - small()) / 2, "Qidiriş yoki manzil…", 0x6f7f95, small());
+    y += bh + u * 3 / 2;
+    let tiles = [("zamin.app", 0x34c759), ("GitHub", 0x8a93a6), ("Hujjatlar", 0x2f88ff), ("Yangiliklar", 0xff9f0a)];
+    let ts = u * 5 / 2;
+    let tg = u * 9 / 2;
+    let total = tiles.len() * ts + (tiles.len() - 1) * (tg - ts);
+    let mut tx = cx.saturating_sub(total / 2);
+    for (name, col) in tiles {
+        gfx::fill_round_rect(tx, y, ts, ts, ts / 4, col);
+        gfx::draw_text_centered(tx + ts / 2, y + ts / 4, &name[..1], OQ, ts / 2);
+        gfx::draw_text_centered(tx + ts / 2, y + ts + u / 4, name, 0xaebccf, small() * 4 / 5);
+        tx += tg;
+    }
+}
+
+/// Savat oynasi (böş holat).
+fn draw_trash(win: &Window) {
+    let u = body();
+    let cx = win.x + win.w / 2;
+    let top = win.y + title_h();
+    let s = u * 4;
+    let tw = s * 3 / 5;
+    let th = s * 2 / 3;
+    let x = cx - tw / 2;
+    let y = top + u * 3 / 2;
+    gfx::fill_round_rect(x - tw / 8, y, tw * 5 / 4, s / 10, s / 30, 0x8a93a6);
+    gfx::fill_round_rect(x, y + s / 8, tw, th, tw / 8, 0x5a6476);
+    for k in 0..3 {
+        fill_rect(x + tw / 4 + k * tw / 4 - 1, y + s / 8 + th / 6, (s / 30).max(2), th * 2 / 3, 0x3a4252);
+    }
+    gfx::draw_text_centered(cx, y + s / 8 + th + u, "Savat böş", 0xe7edf6, body());
+    gfx::draw_text_centered(cx, y + s / 8 + th + u * 5 / 2, "Öçirilgan fayllar şu yerda turadi", 0x6f7f95, small() * 9 / 10);
 }
 
 /// Rasm köruvçi: namunaviy "Zamin" manzarasi (osmon, quyoş, togʻlar).
@@ -1611,61 +2128,98 @@ fn audio_sync(win: &Window) {
     }
 }
 
-/// Övoz oynasi: toʻlqin shakli, maʼlumot, ijro tugmasi, progress.
+/// Yumaloq burçakli vertikal gradient (qatorma-qator, burçak çeti hisoblanadi).
+fn gradient_round_rect(x: usize, y: usize, w: usize, h: usize, r: usize, top: Color, bot: Color) {
+    let lerp = |a: u32, b: u32, t: u32, n: u32| -> u32 {
+        let ch = |sh: u32| -> u32 {
+            let (ca, cb) = ((a >> sh) & 0xff, (b >> sh) & 0xff);
+            ((ca * (n - t) + cb * t) / n) << sh
+        };
+        ch(16) | ch(8) | ch(0)
+    };
+    let r = r.min(w / 2).min(h / 2);
+    for dy in 0..h {
+        let inset = if dy < r || dy >= h - r {
+            let d = if dy < r { r - dy } else { dy + 1 - (h - r) } as f32 - 0.5;
+            let rr = r as f32;
+            (rr - crate::image::vector::fsqrt((rr * rr - d * d).max(0.0))) as usize
+        } else {
+            0
+        };
+        let c = lerp(top, bot, dy as u32, h.max(1) as u32);
+        fill_rect(x + inset, y + dy, w.saturating_sub(inset * 2), 1, c);
+    }
+}
+
+/// Musiqa pleeri: muqova, nom, toʻlqin (ijro qilingan qismi rangli), tugma.
 fn draw_audio(win: &Window) {
     let Some(clip) = &win.clip else { return };
-    let pad = body();
-    let x = win.x + pad;
-    let y = win.content_top();
-    let w = win.w.saturating_sub(pad * 2);
-    // Maʼlumot
+    let u = body();
+    let (a, x0, w0, ct) = win.audio_geo();
+    // Muqova
+    let ax = win.x + u;
+    gradient_round_rect(ax, ct, a, a, u / 2, 0xff8a3d, 0x7a3cff);
+    let (nc, ny) = (ax + a / 2, ct + a / 2);
+    let s = a / 2;
+    gfx::fill_circle(nc - s / 4, ny + s / 4, s / 7, OQ);
+    gfx::fill_circle(nc + s / 4, ny + s / 6, s / 7, OQ);
+    fill_rect(nc - s / 4 + s / 7 - 2, ny - s / 3, (s / 14).max(2), s * 7 / 12, OQ);
+    fill_rect(nc + s / 4 + s / 7 - 2, ny - s * 2 / 5, (s / 14).max(2), s * 7 / 12, OQ);
+    gfx::fill_poly(
+        &[
+            ((nc - s / 4 + s / 7 - 2) as f32, (ny - s / 3) as f32),
+            ((nc + s / 4 + s / 7) as f32, (ny - s * 2 / 5) as f32),
+            ((nc + s / 4 + s / 7) as f32, (ny - s * 2 / 5 + s / 7) as f32),
+            ((nc - s / 4 + s / 7 - 2) as f32, (ny - s / 3 + s / 7) as f32),
+        ],
+        OQ,
+    );
+    // Nom va maʼlumot
+    let name = win.path.rsplit('/').next().unwrap_or("");
+    let stem = name.rsplit_once('.').map(|(n, _)| n).unwrap_or(name);
+    let fmt = name.rsplit_once('.').map(|(_, e)| e.to_ascii_uppercase()).unwrap_or_default();
+    gfx::draw_text(x0, ct, &fit_text(stem, w0, u * 6 / 5), 0xffffff, u * 6 / 5);
     let dur = clip.duration_ms();
     let info = alloc::format!(
-        "{} Hz · {} kanal · {}:{:02}",
+        "{} · {} Hz · {} kanal · {}:{:02}",
+        fmt,
         clip.rate,
         clip.channels,
         dur / 60000,
         (dur / 1000) % 60
     );
-    gfx::draw_text(x, y, &info, 0x9fb0c3, small());
+    gfx::draw_text(x0, ct + u * 3 / 2 + 2, &fit_text(&info, w0, small() * 9 / 10), 0x8ea0b6, small() * 9 / 10);
     // Toʻlqin
-    let wy = y + body() * 2;
-    let wh = win.h.saturating_sub((wy - win.y) + body() * 4);
+    let (_, _, r) = win.play_btn();
+    let wy = ct + u * 3;
+    let wh = a.saturating_sub(u * 3 + r * 2 + u);
     let mid = wy + wh / 2;
-    gfx::fill_rect(x, mid, w, 1, 0x2a3446);
     let n = win.env.len().max(1);
+    let played = if dur > 0 { win.play_pos.min(dur) as usize * w0 / dur as usize } else { 0 };
+    let bw = (w0 / n).max(1);
+    let peak = win.env.iter().map(|&(mn, mx)| (mn as i32).abs().max((mx as i32).abs())).max().unwrap_or(1).max(1) as usize;
     for (i, &(mn, mx)) in win.env.iter().enumerate() {
-        let bx = x + i * w / n;
-        let top = mid as i32 - (mx as i32 * (wh as i32 / 2) / 32768);
-        let bot = mid as i32 - (mn as i32 * (wh as i32 / 2) / 32768);
-        let (t, b) = (top.min(bot).max(wy as i32), top.max(bot).min((wy + wh) as i32));
-        if b > t {
-            gfx::fill_rect(bx, t as usize, (w / n).max(1), (b - t) as usize, 0x46d98a);
-        }
+        let bx = x0 + i * w0 / n;
+        let amp = ((mx as i32).abs().max((mn as i32).abs()) as usize * (wh / 2) * 9 / 10 / peak).max(1);
+        let col = if bx < x0 + played { 0x34c759 } else { 0x3a4458 };
+        gfx::fill_rect(bx, mid - amp, bw.saturating_sub(1).max(1), amp * 2, col);
     }
-    // Ijro bosh (playhead)
-    if dur > 0 {
-        let hx = x + (win.play_pos.min(dur) as usize * w / dur as usize);
-        gfx::fill_rect(hx, wy, 2, wh, 0xffd426);
-    }
-    // Ijro tugmasi
+    // Tugma + vaqt
     let (px, py, r) = win.play_btn();
-    gfx::fill_circle(px, py, r, if win.playing { 0xffd426 } else { ZAMIN_KOK });
+    gfx::fill_circle(px, py, r, if win.playing { 0xffd426 } else { 0x34c759 });
     if win.playing {
-        // pauza — ikki tayoqça
         fill_rect(px - r / 3, py - r / 2, r / 4, r, 0x06230f);
         fill_rect(px + r / 8, py - r / 2, r / 4, r, 0x06230f);
     } else {
-        // uçburçak (play)
-        for i in 0..r {
-            let hh = (r - i) * 2 / 3;
-            fill_rect(px - r / 3 + i / 2, py.saturating_sub(hh / 2), 1, hh.max(1), OQ);
-        }
+        let t = r * 2 / 5;
+        gfx::fill_poly(
+            &[((px - t / 2) as f32, (py - t) as f32), ((px + t) as f32, py as f32), ((px - t / 2) as f32, (py + t) as f32)],
+            0x06230f,
+        );
     }
-    // Vaqt
     let pos = win.play_pos.min(dur);
     let tt = alloc::format!("{}:{:02} / {}:{:02}", pos / 60000, (pos / 1000) % 60, dur / 60000, (dur / 1000) % 60);
-    gfx::draw_text(px + r + pad, py.saturating_sub(small() / 2), &tt, 0xe7edf6, small());
+    gfx::draw_text(px + r + u, py.saturating_sub(small() / 2), &tt, 0xe7edf6, small());
 }
 
 /// Dok: markazlashgan shaffof panel + ilova ikonalari (siçqon tagida kattaroq).
