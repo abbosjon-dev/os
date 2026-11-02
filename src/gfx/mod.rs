@@ -483,6 +483,26 @@ pub fn blit_fit(bx: usize, by: usize, bw: usize, bh: usize, iw: usize, ih: usize
     (ox, oy, tw, th)
 }
 
+/// Rasmni berilgan töğriburçakni to'liq to'ldirib chizadi (eng-yaqin namuna).
+/// Fon (wallpaper) uçun — nisbat saqlashsiz, butun maydonni qoplaydi.
+pub fn blit_scaled(bx: usize, by: usize, bw: usize, bh: usize, iw: usize, ih: usize, px: &[u32]) {
+    if iw == 0 || ih == 0 || bw == 0 || bh == 0 {
+        return;
+    }
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return };
+    for ty in 0..bh {
+        let sy = ty * ih / bh;
+        let row = sy * iw;
+        for tx in 0..bw {
+            let sx = tx * iw / bw;
+            if let Some(&c) = px.get(row + sx) {
+                put(f, bx + tx, by + ty, c);
+            }
+        }
+    }
+}
+
 // --- Matn (silliq, masshtablanadigan) ---
 
 fn glyph_index(ch: char) -> usize {

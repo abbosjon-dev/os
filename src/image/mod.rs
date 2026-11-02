@@ -27,7 +27,7 @@ mod svg;
 mod testdata;
 mod text;
 mod tga;
-mod vector;
+pub mod vector;
 mod wmf;
 
 pub use sample::SAMPLE_PNG;

@@ -8,6 +8,14 @@ Rust tilida **noldan** yozilayotgan, **ARM64 (AArch64)** protsessorlari uçun op
 **Asosiy qoida:** heç qanday taşqi crate yoki boşqa OS kodi işlatilmaydi — `Cargo.toml` dagi
 `[dependencies]` böş. Faqat Rust kompilyatori va `core` kutubxonasi.
 
+## Ekran koʻrinişi
+
+![Zamin OS ish stoli](docs/desktop.png)
+
+To'liq grafik ish stoli (virtio-gpu): yuqori menyu paneli, rangli dok, va oʻng
+tomonda vidjetlar — ob-havo, kalendar, musiqa pleeri va tizim halqalari
+(CPU/RAM/Disk). Fon rasmi OS ning **öz JPEG dekoderi** bilan chiziladi.
+
 ## Işga tuşiriş
 
 ```bash
@@ -489,7 +497,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.10**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.11**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -508,5 +516,8 @@ bosqiç (etap) yakunlanganda kötariladi.
   Barça media dekoderlari ffmpeg bilan tekşirilgan.
 - 0.0.10 — **OGG/Vorbis** to'liq dekoderi (noldan): kodkitoblar, floor1,
   residue, kanal birikuvi, teskari MDCT. ffmpeg bilan aniq mos (korr. 1.0000).
+- 0.0.11 — **Ish stoli qayta dizayni**: rasm fon (ichki JPEG dekoder bilan),
+  yuqori menyu (menyular + holat belgilari + sana), oʻng vidjetlar paneli
+  (ob-havo, kalendar, pleer, CPU/RAM/Disk halqalari), 10 ta rangli dok ikonasi.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

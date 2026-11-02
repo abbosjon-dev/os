@@ -40,6 +40,7 @@ mod time;
 mod timer;
 mod uart;
 mod video;
+mod wallpaper;
 
 use alloc::boxed::Box;
 use alloc::string::String;
