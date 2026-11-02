@@ -163,8 +163,30 @@ impl Drop for Task {
 /// Band yadro stek oynalari (bit = oyna raqami).
 static KSTACK_SLOTS: SpinLock<u64> = SpinLock::new(0);
 
+/// KASLR: yadro steklari joylaşuvi har yuklanişda tasodifiy siljiydi.
+/// KSTACK sohasi 1 GiB (16384 ta 64 KiB oyna); `MAX_TASKS` tasi işlatiladi,
+/// qolgani — tasodifiy boşlangʼiç siljiş uçun joy. Slot↔oyna moslik bijektiv
+/// bölib qoladi (faqat siljigan), şu bois böşatiş toʻgʻri işlaydi.
+const KSTACK_WINDOWS: usize = (1 << 30) / KSTACK_WINDOW; // 1 GiB / 64 KiB = 16384
+static KSTACK_ORIGIN: AtomicUsize = AtomicUsize::new(0);
+
 fn kstack_window(slot: usize) -> usize {
-    mmu::KSTACK_BASE + slot * KSTACK_WINDOW
+    let origin = KSTACK_ORIGIN.load(Ordering::Relaxed);
+    mmu::KSTACK_BASE + (origin + slot) * KSTACK_WINDOW
+}
+
+/// KASLR tekşiruvi (self-test uçun): (mumkin joylar soni, haqiqatan ham
+/// KSTACK sohasida va qoʻşni oynalar bir-biridan farqlimi).
+pub fn kaslr_check() -> (usize, bool) {
+    let positions = KSTACK_WINDOWS - MAX_TASKS;
+    let base = mmu::KSTACK_BASE;
+    let a = kstack_window(0);
+    let b = kstack_window(1);
+    let ok = a >= base
+        && b < base + (1 << 30)
+        && b - a == KSTACK_WINDOW
+        && KSTACK_ORIGIN.load(Ordering::Relaxed) < positions;
+    (positions, ok)
 }
 
 /// Stek tepasi (SP boşlangʼiç qiymati).
@@ -291,6 +313,10 @@ fn idle_task(cpu: usize) -> Box<Task> {
 
 /// Birinçi yadro: joriy kod (kernel_main) PID 0 — "yadro/0" vazifasiga aylanadi.
 pub fn init() {
+    // KASLR: yadro steklari boşlangʼiç oynasini tasodifiy tanlaymiz
+    let span = (KSTACK_WINDOWS - MAX_TASKS) as u64;
+    let origin = (crate::random::u64() % span) as usize;
+    KSTACK_ORIGIN.store(origin, Ordering::Relaxed);
     init_cpu(0);
     STARTED.store(true, Ordering::Release);
 }

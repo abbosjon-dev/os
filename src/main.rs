@@ -169,6 +169,9 @@ pub extern "C" fn kernel_main() -> ! {
 
     // 8) Jarayonlar: şu kod PID 0 ("yadro") bölib qoladi
     task::init();
+    let (kaslr_spots, kaslr_ok) = task::kaslr_check();
+    assert!(kaslr_ok, "KASLR: yadro steklari sohasi notoʻgʻri");
+    tprintln!(msg::TEST_KASLR, kaslr_spots);
     fs::init(task::programs::PROGRAMS);
     let (files, dirs, _) = fs::stats();
     tprintln!(msg::FS_READY, files, dirs);

@@ -558,6 +558,11 @@ pub mod msg {
         "[test] PAN: ядро обращается к памяти пользователя только через копирование — OK",
         "[test] PAN: kernel touches user memory only through copy routines — OK",
     ];
+    pub const TEST_KASLR: Text = [
+        "[test] KASLR: yadro steklari har yuklanişda {} xil joydan birida — OK",
+        "[test] KASLR: стеки ядра при каждой загрузке в одном из {} мест — OK",
+        "[test] KASLR: kernel stacks placed in one of {} spots each boot — OK",
+    ];
     pub const SEC_TITLE: Text = ["  Zamin OS himoyasi:", "  Защита Zamin OS:", "  Zamin OS protection:"];
     pub const SEC_ON: Text = ["yoqiq", "включено", "on"];
     pub const SEC_OFF: Text = ["yöq (protsessor qöllamaydi)", "нет (не поддерживается процессором)", "off (not supported by CPU)"];
