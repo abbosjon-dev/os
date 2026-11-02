@@ -183,7 +183,12 @@ fn parse_path(d: &str) -> Vec<Vec<Pt>> {
     let (mut pcx, mut pcy) = (0f32, 0f32); // oxirgi nazorat nuqtasi (S/T uçun)
     let mut toks = Tokenizer::new(d);
     let mut cmd = ' ';
+    let mut guard = 0;
     loop {
+        guard += 1;
+        if guard > 1_000_000 {
+            break;
+        }
         let c = match toks.peek_cmd() {
             Some(c) => {
                 cmd = c;
@@ -295,6 +300,7 @@ fn parse_path(d: &str) -> Vec<Vec<Pt>> {
                 }
                 cx = sx;
                 cy = sy;
+                cmd = ' '; // Z argument olmaydi — takrorlanmasin (aks holda cheksiz tsikl)
             }
             _ => break,
         }

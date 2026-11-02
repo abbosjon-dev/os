@@ -7,6 +7,7 @@
 use alloc::vec::Vec;
 
 mod bmp;
+mod cdr;
 mod dxf;
 mod eps;
 mod gif;
@@ -18,6 +19,7 @@ mod pdf;
 mod png;
 mod qoi;
 mod sample;
+mod sample_svg;
 mod svg;
 mod testdata;
 mod tga;
@@ -25,6 +27,7 @@ mod vector;
 mod wmf;
 
 pub use sample::SAMPLE_PNG;
+pub use sample_svg::SAMPLE_SVG;
 
 /// Dekodlangan rasm.
 pub struct Image {
@@ -131,6 +134,7 @@ pub fn decode_file(name: &str, data: &[u8]) -> Option<Image> {
         "dxf" => dxf::decode(data),
         "eps" | "ps" | "ai" => eps::decode(data),
         "wmf" | "emf" => wmf::decode(data),
+        "cdr" => cdr::decode(data),
         _ => None,
     }
 }
