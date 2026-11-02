@@ -401,6 +401,34 @@ pub fn hline(x: usize, y: usize, len: usize, c: Color) {
     fill_rect(x, y, len, 1, c);
 }
 
+/// Rasmni (iw×ih piksel) berilgan qutiga (bw×bh) nisbatni saqlab sigdiradi
+/// (markazlashgan, nearest). Natija: haqiqiy çizilgan (x, y, w, h).
+pub fn blit_fit(bx: usize, by: usize, bw: usize, bh: usize, iw: usize, ih: usize, px: &[u32]) -> (usize, usize, usize, usize) {
+    if iw == 0 || ih == 0 || bw == 0 || bh == 0 {
+        return (bx, by, 0, 0);
+    }
+    // Nisbatni saqlab sigdiramiz
+    let (tw, th) = if iw * bh > ih * bw {
+        (bw, (ih * bw / iw).max(1))
+    } else {
+        ((iw * bh / ih).max(1), bh)
+    };
+    let ox = bx + (bw - tw) / 2;
+    let oy = by + (bh - th) / 2;
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return (ox, oy, tw, th) };
+    for ty in 0..th {
+        let sy = ty * ih / th;
+        for tx in 0..tw {
+            let sx = tx * iw / tw;
+            if let Some(&c) = px.get(sy * iw + sx) {
+                put(f, ox + tx, oy + ty, c);
+            }
+        }
+    }
+    (ox, oy, tw, th)
+}
+
 // --- Matn (silliq, masshtablanadigan) ---
 
 fn glyph_index(ch: char) -> usize {

@@ -12,7 +12,10 @@ mod inflate;
 mod jpeg;
 mod png;
 mod qoi;
+mod sample;
 mod testdata;
+
+pub use sample::SAMPLE_PNG;
 
 /// Dekodlangan rasm.
 pub struct Image {

@@ -68,6 +68,51 @@ impl Kind {
 
 const NOTES_PATH: &str = "~/qaydlar.txt";
 
+/// Fayl turi (Fayllar oynasida ikona va oçişni tanlaş uçun).
+#[derive(Clone, Copy, PartialEq)]
+enum FKind {
+    Dir,
+    Image,
+    Text,
+    Program,
+    Audio,
+    Video,
+    Archive,
+    Other,
+}
+
+impl FKind {
+    /// Fayl nomidan (kengaytma) turini aniqlaydi.
+    fn of(name: &str, is_dir: bool) -> FKind {
+        if is_dir {
+            return FKind::Dir;
+        }
+        let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+        match ext.as_str() {
+            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "qoi" | "ppm" | "pgm" | "webp" | "ico" => FKind::Image,
+            "txt" | "md" | "rs" | "toml" | "c" | "h" | "cfg" | "conf" | "log" | "json" | "csv" => FKind::Text,
+            "wav" | "mp3" | "ogg" | "flac" | "m4a" | "aac" => FKind::Audio,
+            "mp4" | "avi" | "mkv" | "mov" | "webm" => FKind::Video,
+            "zip" | "tar" | "gz" | "xz" | "zst" | "7z" => FKind::Archive,
+            "" => FKind::Program, // kengaytmasiz — odatda dastur
+            _ => FKind::Other,
+        }
+    }
+    /// Ranggi (ikona uçun).
+    fn color(self) -> Color {
+        match self {
+            FKind::Dir => 0x56a8f5,
+            FKind::Image => 0xd36b9a,
+            FKind::Text => 0x9fb0c3,
+            FKind::Program => 0x30d158,
+            FKind::Audio => 0xffd426,
+            FKind::Video => 0xff7a9c,
+            FKind::Archive => 0xc0924a,
+            FKind::Other => 0x7a8aa0,
+        }
+    }
+}
+
 struct Window {
     x: usize,
     y: usize,
@@ -77,6 +122,9 @@ struct Window {
     title: String,
     lines: Vec<String>, // tugagan çiqiş satrlari
     input: String,      // terminal kiriş qatori (hali yuborilmagan)
+    path: String,       // Fayllar: joriy papka; Matn/Rasm: fayl yoʻli
+    rows: Vec<(String, FKind)>, // Fayllar oynasi qatorlari (nom, tur)
+    img: Option<crate::image::Image>, // Rasm oynasi: dekodlangan rasm
     // Haqiqiy EL0 terminal jarayoni bilan quvur orqali bogʻ
     pid: task::Pid,     // 0 — jarayon yöq
     pin: usize,         // kiriş quvuri (GUI yozadi → bola stdin); NONE_PIPE — yöq
@@ -157,6 +205,9 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
     Window {
         x, y, w, h, kind, title, lines,
         input: String::new(),
+        path: String::new(),
+        rows: Vec::new(),
+        img: None,
         pid: 0, pin: NONE_PIPE, pout: NONE_PIPE,
         cur: Vec::new(), esc: None,
     }
@@ -184,13 +235,11 @@ fn new_window(kind: Kind, n: usize) -> Window {
             win
         }
         Kind::Files => {
-            let mut lines = alloc::vec![String::from("Uy papkasi (~):")];
-            for e in fs::list("~").or_else(|_| fs::list("/uy")).unwrap_or_default() {
-                lines.push(alloc::format!("  {}{}", e.name, if e.is_dir { "/" } else { "" }));
-            }
-            let (w, h) = (u * 24, u * 18);
+            let (w, h) = (u * 26, u * 20);
             let (x, y) = place(w, h);
-            base(x, y, w, h, kind, String::from("Fayllar"), lines)
+            let mut win = base(x, y, w, h, kind, String::from("Fayllar"), Vec::new());
+            load_dir(&mut win, "~");
+            win
         }
         Kind::Editor => {
             let mut lines: Vec<String> = fs::read_all(NOTES_PATH)
@@ -202,6 +251,7 @@ fn new_window(kind: Kind, n: usize) -> Window {
             let (x, y) = place(w, h);
             let mut win = base(x, y, w, h, kind, String::from("Matn — qaydlar.txt"), lines);
             win.input = input;
+            win.path = String::from(NOTES_PATH);
             win
         }
         Kind::Clock => {
@@ -227,6 +277,93 @@ fn new_window(kind: Kind, n: usize) -> Window {
             ])
         }
     }
+}
+
+/// Fayllar oynasiga papka tarkibini yuklaydi (papkalar oldin, keyin alifbo).
+fn load_dir(win: &mut Window, path: &str) {
+    win.path = String::from(path);
+    win.rows.clear();
+    if path != "/" && path != "~" {
+        win.rows.push((String::from(".."), FKind::Dir));
+    }
+    let mut entries = fs::list(path).unwrap_or_default();
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
+    for e in entries {
+        win.rows.push((e.name.clone(), FKind::of(&e.name, e.is_dir)));
+    }
+    win.title = alloc::format!("Fayllar — {}", path);
+}
+
+/// Yöl birlaştiradi (yoki ".." — ota papka).
+fn path_join(base: &str, name: &str) -> String {
+    if name == ".." {
+        match base.rsplit_once('/') {
+            Some((p, _)) if !p.is_empty() => String::from(p),
+            _ => String::from(if base.starts_with('~') { "~" } else { "/" }),
+        }
+    } else if base.ends_with('/') {
+        alloc::format!("{}{}", base, name)
+    } else {
+        alloc::format!("{}/{}", base, name)
+    }
+}
+
+/// Fayllar oynasida qator bosilganda: papka — kiradi; fayl — mos ilovada oçadi.
+fn files_activate(windows: &mut Vec<Window>, wi: usize, row: usize, opened: &mut usize) {
+    let (path, kind) = {
+        let w = &windows[wi];
+        let Some((name, kind)) = w.rows.get(row) else { return };
+        (path_join(&w.path, name), *kind)
+    };
+    if kind == FKind::Dir {
+        load_dir(&mut windows[wi], &path);
+        return;
+    }
+    open_file(windows, &path, *opened);
+    *opened += 1;
+}
+
+/// Faylni öqib, turiga qarab mos oynada oçadi.
+fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
+    let (sw, sh) = gfx::size();
+    let u = body();
+    let data = fs::read_all(path).unwrap_or_default();
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let x = sw / 6 + (n * u * 2) % (sw / 3);
+    let y = menubar_h() + u * 2 + (n * u) % (sh / 4);
+    // Rasmmi? (sarlavha baytlaridan)
+    if crate::image::format_name(&data).is_some() {
+        let (w, h) = (u * 28, u * 22);
+        let mut win = base(x.min(sw - w), y, w, h, Kind::Image, alloc::format!("Rasm — {}", name), Vec::new());
+        win.path = String::from(path);
+        win.img = crate::image::decode(&data);
+        if win.img.is_none() {
+            win.lines.push(String::from("rasmni oçib bölmadi (buzilgan yoki qöllanmaydi)"));
+        }
+        windows.push(win);
+        return;
+    }
+    // ELF dastur?
+    if data.starts_with(b"\x7fELF") {
+        let (w, h) = (u * 24, u * 10);
+        let mut win = base(x.min(sw - w), y, w, h, Kind::About, alloc::format!("Dastur — {}", name), Vec::new());
+        win.lines = alloc::vec![
+            alloc::format!("{}", name),
+            alloc::format!("ELF dasturi · {} bayt", data.len()),
+            String::new(),
+            String::from("Terminalda işga tuşiring: işlat " ) + name,
+        ];
+        windows.push(win);
+        return;
+    }
+    // Matn sifatida oçamiz (muharrirda tahrirlanadi)
+    let mut lines: Vec<String> = String::from_utf8_lossy(&data).lines().map(String::from).collect();
+    let input = lines.pop().unwrap_or_default();
+    let (w, h) = (u * 29, u * 20);
+    let mut win = base(x.min(sw - w), y, w, h, Kind::Editor, alloc::format!("Matn — {}", name), lines);
+    win.path = String::from(path);
+    win.input = input;
+    windows.push(win);
 }
 
 /// Oynaga haqiqiy `/dasturlar/terminal` (EL0) jarayonini quvurlar bilan ulaydi.
@@ -707,9 +844,10 @@ fn save_notes(w: &Window) -> String {
     }
     text.push_str(&w.input);
     text.push('\n');
-    match fs::open(NOTES_PATH, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE) {
+    let path = if w.path.is_empty() { NOTES_PATH } else { w.path.as_str() };
+    match fs::open(path, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE) {
         Ok(id) => match fs::write(id, Some(0), text.as_bytes()) {
-            Ok(n) => alloc::format!("saqlandi: {} bayt → {}", n, NOTES_PATH),
+            Ok(n) => alloc::format!("saqlandi: {} bayt → {}", n, path),
             Err(e) => alloc::format!("xato: {:?}", e),
         },
         Err(e) => alloc::format!("oçib bölmadi: {:?}", e),
@@ -750,6 +888,17 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
             windows.push(w); // old planga
             *drag = Some((windows.len() - 1, off));
             return;
+        }
+        // Fayllar oynasida qator bosiş: papka — kiradi; fayl — oçadi
+        if windows[i].kind == Kind::Files {
+            if let Some(row) = file_row_at(&windows[i], cx, cy) {
+                // Oynani old planga olib, keyin faollaştiramiz
+                let w = windows.remove(i);
+                windows.push(w);
+                let wi = windows.len() - 1;
+                files_activate(windows, wi, row, opened);
+                return;
+            }
         }
         if windows[i].contains(cx, cy) {
             let w = windows.remove(i);
@@ -830,11 +979,96 @@ fn draw_window(win: &Window, active: bool) {
     gfx::set_clip(win.x + 1, win.y + th, win.w.saturating_sub(2), win.h.saturating_sub(th + 1));
     match win.kind {
         Kind::Clock => draw_clock(win),
+        Kind::Image if win.img.is_some() => draw_image(win),
         Kind::Image => draw_scene(win),
         Kind::Editor => draw_editor(win),
+        Kind::Files => draw_files(win),
         _ => draw_text_window(win),
     }
     gfx::reset_clip();
+}
+
+/// Fayl qatori balandligi.
+fn file_rh() -> usize {
+    body() * 9 / 5
+}
+
+/// Bosilgan nuqtadagi fayl qatori indeksi (Fayllar oynasi).
+fn file_row_at(win: &Window, cx: usize, cy: usize) -> Option<usize> {
+    let top = win.content_top();
+    if cx < win.x || cx >= win.x + win.w || cy < top || cy >= win.y + win.h - body() / 2 {
+        return None;
+    }
+    let i = (cy - top) / file_rh();
+    if i < win.rows.len() { Some(i) } else { None }
+}
+
+/// Fayllar oynasi: ikona + nom qatorlari.
+fn draw_files(win: &Window) {
+    let rh = file_rh();
+    let pad = body();
+    let isz = body() * 5 / 4;
+    let mut y = win.content_top();
+    for (name, kind) in &win.rows {
+        if y + rh > win.y + win.h - body() / 2 {
+            break;
+        }
+        // Ikona
+        file_icon(*kind, win.x + pad, y + (rh - isz) / 2, isz);
+        // Nom
+        let ty = y + (rh.saturating_sub(small())) / 2;
+        let label = if *kind == FKind::Dir && name != ".." {
+            alloc::format!("{}/", name)
+        } else {
+            name.clone()
+        };
+        gfx::draw_text(win.x + pad * 2 + isz, ty, &label, 0xe7edf6, small());
+        y += rh;
+    }
+}
+
+/// Fayl turi ikonasi (kiçik).
+fn file_icon(kind: FKind, x: usize, y: usize, s: usize) {
+    let c = kind.color();
+    if kind == FKind::Dir {
+        // Papka
+        gfx::fill_round_rect(x, y + s / 5, s * 2 / 5, s / 5, s / 12, c);
+        gfx::fill_round_rect(x, y + s / 3, s, s * 3 / 5, s / 8, c);
+        return;
+    }
+    // Hujjat varaqi + burchak + tur belgisi
+    gfx::fill_round_rect(x + s / 6, y, s * 2 / 3, s, s / 10, 0x2c3345);
+    gfx::round_outline(x + s / 6, y, s * 2 / 3, s, s / 10, 1, c);
+    let letter = match kind {
+        FKind::Image => "▦",
+        FKind::Text => "¶",
+        FKind::Program => ">",
+        FKind::Audio => "♪",
+        FKind::Video => "▶",
+        FKind::Archive => "▣",
+        _ => "·",
+    };
+    let _ = letter; // belgilar shriftda bölmasligi mumkin — rangli chiziq bilan belgilaymiz
+    gfx::fill_round_rect(x + s / 4, y + s / 6, s / 3, s / 8, s / 16, c);
+    gfx::fill_rect(x + s / 4, y + s / 2, s * 5 / 12, (s / 10).max(1), c);
+    gfx::fill_rect(x + s / 4, y + s * 2 / 3, s / 3, (s / 10).max(1), c);
+}
+
+/// Rasm oynasi: dekodlangan rasmni nisbat saqlab körsatadi.
+fn draw_image(win: &Window) {
+    let Some(img) = &win.img else { return };
+    let pad = body() / 2;
+    let x = win.x + pad;
+    let y = win.content_top();
+    let w = win.w.saturating_sub(pad * 2);
+    let h = (win.y + win.h).saturating_sub(y + pad + small() + pad);
+    // Şaxmat fon (shaffoflik hissi)
+    gfx::fill_rect(x, y, w, h, 0x11151d);
+    let (ix, iy, iw, ih) = gfx::blit_fit(x, y, w, h, img.w, img.h, &img.px);
+    gfx::round_outline(ix.saturating_sub(1), iy.saturating_sub(1), iw + 2, ih + 2, 1, 1, 0x3a4458);
+    // Maʼlumot satri (ölçam)
+    let info = alloc::format!("{}×{} · {} piksel", img.w, img.h, img.w * img.h);
+    gfx::draw_text(x, win.y + win.h - pad - small(), &info, 0x8aa0bc, small());
 }
 
 /// Terminal/Fayllar/Haqida mazmunini chizadi.

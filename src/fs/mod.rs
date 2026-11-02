@@ -388,6 +388,18 @@ pub fn setup_home(username: &str, uid: u32) -> Result<String, FsError> {
             v.node_mut(id)?.owner = uid;
         }
     }
+    // Namuna rasm — Rasmlar papkasiga (yoziş yöli orqali — diskka saqlanadi)
+    if let Ok(pics) = v.child(home, Role::Pictures.names()[lang]) {
+        if v.child(pics, "zamin.png").is_err() {
+            if let Ok(id) = v.add(pics, "zamin.png", Data::File(FileData::new()), false) {
+                if let Data::File(d) = &mut v.node_mut(id)?.data {
+                    let _ = d.write(0, crate::image::SAMPLE_PNG);
+                }
+                v.node_mut(id)?.owner = uid;
+                mark_dirty();
+            }
+        }
+    }
     // `~` faqat tizimga kirgan foydalanuvçining öz papkasi (boşqa hisob yaratilganda özgarmaydi)
     if uid == crate::accounts::current_uid() {
         v.home = Some(home);
