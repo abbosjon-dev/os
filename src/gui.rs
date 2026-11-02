@@ -46,7 +46,6 @@ fn menubar_h() -> usize {
 // Mac uslubidagi ranglar (tün mavzu)
 const WIN_BODY: Color = 0x1b2130;
 const WIN_TITLE: Color = 0x262d3e;
-const WIN_EDGE: Color = 0x3a4254;
 const DESK_TOP: Color = 0x16335e;
 const DESK_BOT: Color = 0x0a1322;
 

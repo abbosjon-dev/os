@@ -341,38 +341,57 @@ pub fn fill_circle(cx: usize, cy: usize, r: usize, c: Color) {
     }
 }
 
-/// Oynaning tagiga yumşoq soya tuşiradi.
-pub fn shadow(x: usize, y: usize, w: usize, h: usize, r: usize, blur: usize) {
-    // Tashqariga kengayib boradigan yumaloq ramkalar, alfa pasayib boradi.
-    for i in 0..blur {
-        let a = (28 * (blur - i) / blur) as u32;
-        let o = i + 1;
-        round_ring_soft(x.saturating_sub(o), y.saturating_sub(o) + 3, w + 2 * o, h + 2 * o, r + o, 0x000000, a);
+fn isqrt(n: u32) -> u32 {
+    if n == 0 {
+        return 0;
     }
+    let mut x = n;
+    let mut y = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    x
 }
 
-fn round_ring_soft(x: usize, y: usize, w: usize, h: usize, r: usize, c: Color, a: u32) {
-    if w < 2 || h < 2 || a == 0 {
+/// Yumşoq tuşuvçi soya. Muhim: soya oynaning öz sohasiga (töğriburçak içiga)
+/// çizilmaydi — şunda oyna chetining silliq (AA) pikseli qora soya ustiga emas,
+/// fon ustiga tuşadi va burçaklarda qora halqa paydo bölmaydi.
+/// Soya biroz pastga suriladi (tabiiy tuşiş).
+pub fn shadow(x: usize, y: usize, w: usize, h: usize, _r: usize, blur: usize) {
+    if blur == 0 || w == 0 || h == 0 {
         return;
     }
-    let r = r.min(w / 2).min(h / 2);
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };
-    let edge = |dx: usize, dy: usize| dx == 0 || dy == 0 || dx == w - 1 || dy == h - 1;
-    for dy in 0..h {
-        for dx in 0..w {
-            let in_corner_x = dx < r || dx >= w - r;
-            let in_corner_y = dy < r || dy >= h - r;
-            let draw = if in_corner_x && in_corner_y {
-                let ox = if dx < r { (r - 1 - dx) as i32 } else { (dx - (w - r)) as i32 };
-                let oy = if dy < r { (r - 1 - dy) as i32 } else { (dy - (h - r)) as i32 };
-                corner_cov(ox, oy, r as i32) > 128
-            } else {
-                edge(dx, dy)
-            };
-            if draw {
-                blend(f, x + dx, y + dy, c, a);
+    let off = (blur / 3).max(2) as i32; // pastga suriş
+    let (bx, by) = (x as i32, y as i32 + off);
+    let (bw, bh) = (w as i32, h as i32);
+    let bl = blur as i32;
+    let x0 = (bx - bl).max(0);
+    let y0 = (by - bl).max(0);
+    let x1 = bx + bw + bl;
+    let y1 = by + bh + bl;
+    for py in y0..y1 {
+        for px in x0..x1 {
+            // Soya töğriburçagidan tashqaridagi masofa
+            let dx = if px < bx { bx - px } else if px >= bx + bw { px - (bx + bw) + 1 } else { 0 };
+            let dy = if py < by { by - py } else if py >= by + bh { py - (by + bh) + 1 } else { 0 };
+            if dx == 0 && dy == 0 {
+                continue; // oyna içi — soyasiz
             }
+            // Oynaning asl (surilmagan) sohasini ham chetlab ötamiz
+            if (x as i32..x as i32 + bw).contains(&px) && (y as i32..y as i32 + bh).contains(&py) {
+                continue;
+            }
+            let d = isqrt((dx * dx + dy * dy) as u32) as i32;
+            if d >= bl {
+                continue;
+            }
+            // Alfa chetga borgan sari pasayadi (kvadratik yumşoqlik)
+            let t = (bl - d) as u32;
+            let a = 42 * t * t / (bl as u32 * bl as u32);
+            blend(f, px as usize, py as usize, 0x000000, a.min(90));
         }
     }
 }
