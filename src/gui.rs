@@ -89,8 +89,15 @@ impl FKind {
         }
         let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
         match ext.as_str() {
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "qoi" | "ppm" | "pgm" | "webp" | "ico" => FKind::Image,
-            "txt" | "md" | "rs" | "toml" | "c" | "h" | "cfg" | "conf" | "log" | "json" | "csv" => FKind::Text,
+            // Rasm formatlari (koʻpi tanilади; dekodlanadiganlari image modulida)
+            "jpg" | "jpeg" | "jpe" | "jfif" | "jif" | "png" | "apng" | "webp" | "gif" | "svg" | "avif" | "heif"
+            | "heic" | "bmp" | "dib" | "tif" | "tiff" | "ico" | "cur" | "jxl" | "ai" | "eps" | "cdr" | "wmf" | "emf"
+            | "dxf" | "cgm" | "psd" | "psb" | "xcf" | "kra" | "ora" | "afphoto" | "procreate" | "exr" | "hdr" | "tga"
+            | "dng" | "cr2" | "cr3" | "nef" | "nrw" | "arw" | "srf" | "sr2" | "raf" | "orf" | "rw2" | "pef" | "crw"
+            | "3fr" | "iiq" | "dds" | "ktx" | "ktx2" | "pvr" | "astc" | "basis" | "qoi" | "pcx" | "ppm" | "pgm"
+            | "pbm" | "pnm" | "xbm" | "xpm" | "icns" | "jp2" | "j2k" | "jpf" | "jpx" | "jng" | "mng" | "bpg" | "flif"
+            | "fits" | "fit" | "dicom" | "dcm" | "ani" => FKind::Image,
+            "txt" | "md" | "rs" | "toml" | "c" | "h" | "cfg" | "conf" | "log" | "json" | "csv" | "xml" | "html" | "sh" => FKind::Text,
             "wav" | "mp3" | "ogg" | "flac" | "m4a" | "aac" => FKind::Audio,
             "mp4" | "avi" | "mkv" | "mov" | "webm" => FKind::Video,
             "zip" | "tar" | "gz" | "xz" | "zst" | "7z" => FKind::Archive,
@@ -331,14 +338,21 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
     let name = path.rsplit('/').next().unwrap_or(path);
     let x = sw / 6 + (n * u * 2) % (sw / 3);
     let y = menubar_h() + u * 2 + (n * u) % (sh / 4);
-    // Rasmmi? (sarlavha baytlaridan)
-    if crate::image::format_name(&data).is_some() {
+    // Rasmmi? (tur yoki sarlavha baytidan)
+    let is_img = FKind::of(name, false) == FKind::Image || crate::image::format_name(&data).is_some();
+    if is_img {
         let (w, h) = (u * 28, u * 22);
         let mut win = base(x.min(sw - w), y, w, h, Kind::Image, alloc::format!("Rasm — {}", name), Vec::new());
         win.path = String::from(path);
-        win.img = crate::image::decode(&data);
+        win.img = crate::image::decode_file(name, &data);
         if win.img.is_none() {
-            win.lines.push(String::from("rasmni oçib bölmadi (buzilgan yoki qöllanmaydi)"));
+            let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_uppercase()).unwrap_or_default();
+            win.lines = alloc::vec![
+                alloc::format!("{} formati hali qöllanmaydi", ext),
+                String::new(),
+                String::from("Qöllanadi: PNG, JPEG, GIF, BMP, TGA,"),
+                String::from("PCX, ICO, QOI, PNM (PBM/PGM/PPM)"),
+            ];
         }
         windows.push(win);
         return;
@@ -992,7 +1006,8 @@ fn draw_window(win: &Window, active: bool) {
     match win.kind {
         Kind::Clock => draw_clock(win),
         Kind::Image if win.img.is_some() => draw_image(win),
-        Kind::Image => draw_scene(win),
+        Kind::Image if win.path.is_empty() => draw_scene(win), // dok "Rasm" — namuna manzara
+        Kind::Image => draw_text_window(win),                  // oçib bölmagan rasm — xabar
         Kind::Editor => draw_editor(win),
         Kind::Files => draw_files(win),
         _ => draw_text_window(win),

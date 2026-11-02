@@ -368,8 +368,13 @@ extern "C" fn boot_tests(_: usize) {
     tprintln!(msg::TEST_STACK_GUARD);
 
     // Foydalanuvçi rejimi: `sinov` dasturi 42 bilan çiqişi va xotira töliq qaytişi kerak
-    let frames_before = frame::stats().0;
     let image = task::programs::find("sinov").expect("sinov dasturi yöq");
+    // Isitiş: birinçi işga tuşiriş yadro heapini kerakli hajmgaça östiradi
+    // (heap bir marta ösadi, qaytib qisqarmaydi) — şunda öljov aniq böladi.
+    if let Ok(p) = task::spawn_user("sinov", image, "", task::SpawnOptions::kernel(false)) {
+        task::wait(p);
+    }
+    let frames_before = frame::stats().0;
     let pid = task::spawn_user("sinov", image, "", task::SpawnOptions::kernel(false)).expect("sinov");
     let code = task::wait(pid);
     assert_eq!(code, Some(42), "sinov dasturi xato kod qaytardi");

@@ -46,14 +46,16 @@ pub fn decode(d: &[u8]) -> Option<Image> {
     Some(img)
 }
 
-/// PNM: P6 (RGB) yoki P5 (kulrang), ASCII sarlavha.
+/// PNM: P1 (ASCII bitmap), P2 (ASCII gray), P3 (ASCII RGB),
+/// P4 (binary bitmap), P5 (binary gray), P6 (binary RGB).
 pub fn decode_pnm(d: &[u8]) -> Option<Image> {
-    let rgb6 = d[1] == b'6';
+    let fmt = d[1];
+    let bitmap = fmt == b'1' || fmt == b'4';
+    let nvals = if bitmap { 2 } else { 3 }; // bitmapda maxval yöq
     let mut pos = 2;
-    let mut vals = [0usize; 3]; // width, height, maxval
+    let mut vals = [0usize; 3];
     let mut vi = 0;
-    while vi < 3 && pos < d.len() {
-        // boşliqlarni va izohlarni ötkazamiz
+    while vi < nvals && pos < d.len() {
         while pos < d.len() && (d[pos] as char).is_ascii_whitespace() {
             pos += 1;
         }
@@ -77,30 +79,84 @@ pub fn decode_pnm(d: &[u8]) -> Option<Image> {
             break;
         }
     }
-    if vi < 3 {
+    if vi < nvals {
         return None;
     }
-    pos += 1; // sarlavhadan keyingi bitta boşliq
     let (w, h) = (vals[0], vals[1]);
+    let maxval = if bitmap { 1 } else { vals[2].max(1) };
     if w == 0 || h == 0 || w > 8192 || h > 8192 {
         return None;
     }
+    pos += 1; // sarlavhadan keyingi bitta boşliq (binary uçun)
     let mut img = Image::new(w, h);
-    let mut p = pos;
-    for i in 0..w * h {
-        if rgb6 {
-            if p + 3 > d.len() {
-                break;
+    let scale = |v: usize| -> u8 { (v * 255 / maxval).min(255) as u8 };
+    match fmt {
+        b'6' | b'5' => {
+            let mut p = pos;
+            let rgb6 = fmt == b'6';
+            for i in 0..w * h {
+                if rgb6 {
+                    if p + 3 > d.len() {
+                        break;
+                    }
+                    img.px[i] = rgb(scale(d[p] as usize), scale(d[p + 1] as usize), scale(d[p + 2] as usize));
+                    p += 3;
+                } else {
+                    if p >= d.len() {
+                        break;
+                    }
+                    let g = scale(d[p] as usize);
+                    img.px[i] = rgb(g, g, g);
+                    p += 1;
+                }
             }
-            img.px[i] = rgb(d[p], d[p + 1], d[p + 2]);
-            p += 3;
-        } else {
-            if p >= d.len() {
-                break;
-            }
-            img.px[i] = rgb(d[p], d[p], d[p]);
-            p += 1;
         }
+        b'4' => {
+            // binary bitmap: 1 bit/piksel, qator baytga tekislangan, 1 = qora
+            let stride = w.div_ceil(8);
+            for y in 0..h {
+                for x in 0..w {
+                    let byte = d.get(pos + y * stride + x / 8).copied().unwrap_or(0);
+                    let bit = byte >> (7 - x % 8) & 1;
+                    let g = if bit == 1 { 0 } else { 255 };
+                    img.px[y * w + x] = rgb(g, g, g);
+                }
+            }
+        }
+        b'1' | b'2' | b'3' => {
+            // ASCII: boşliq bilan ajratilgan sonlar
+            let mut p = pos;
+            let mut next = || -> Option<usize> {
+                while p < d.len() && !d[p].is_ascii_digit() {
+                    p += 1;
+                }
+                if p >= d.len() {
+                    return None;
+                }
+                let mut n = 0;
+                while p < d.len() && d[p].is_ascii_digit() {
+                    n = n * 10 + (d[p] - b'0') as usize;
+                    p += 1;
+                }
+                Some(n)
+            };
+            for i in 0..w * h {
+                let c = match fmt {
+                    b'1' => {
+                        let v = next().unwrap_or(0);
+                        let g = if v == 1 { 0 } else { 255 };
+                        rgb(g, g, g)
+                    }
+                    b'2' => {
+                        let g = scale(next().unwrap_or(0));
+                        rgb(g, g, g)
+                    }
+                    _ => rgb(scale(next().unwrap_or(0)), scale(next().unwrap_or(0)), scale(next().unwrap_or(0))),
+                };
+                img.px[i] = c;
+            }
+        }
+        _ => return None,
     }
     Some(img)
 }

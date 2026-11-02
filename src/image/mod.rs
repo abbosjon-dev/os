@@ -8,12 +8,15 @@ use alloc::vec::Vec;
 
 mod bmp;
 mod gif;
+mod ico;
 mod inflate;
 mod jpeg;
+mod pcx;
 mod png;
 mod qoi;
 mod sample;
 mod testdata;
+mod tga;
 
 pub use sample::SAMPLE_PNG;
 
@@ -38,13 +41,13 @@ impl Image {
     }
 }
 
-/// Rasm formatini sarlavha baytlaridan aniqlaydi.
+/// Rasm formatini sarlavha baytlaridan aniqlaydi (ishonçli "magic" bölganlar).
 pub fn format_name(data: &[u8]) -> Option<&'static str> {
-    if data.len() < 12 {
+    if data.len() < 8 {
         return None;
     }
     if &data[..8] == b"\x89PNG\r\n\x1a\n" {
-        Some("PNG")
+        Some("PNG") // APNG ham şu yerda (birinçi kadr)
     } else if data[0] == 0xff && data[1] == 0xd8 {
         Some("JPEG")
     } else if &data[..6] == b"GIF87a" || &data[..6] == b"GIF89a" {
@@ -53,14 +56,22 @@ pub fn format_name(data: &[u8]) -> Option<&'static str> {
         Some("BMP")
     } else if &data[..4] == b"qoif" {
         Some("QOI")
-    } else if data[0] == b'P' && matches!(data[1], b'5' | b'6') {
+    } else if data[0] == b'P' && (b'1'..=b'6').contains(&data[1]) {
         Some("PNM")
+    } else if data[0] == 0x0a && data[2] <= 1 {
+        Some("PCX")
+    } else if data[0] == 0 && data[1] == 0 && (data[2] == 1 || data[2] == 2) && data[3] == 0 && {
+        // ICO/CUR: tasvirlar soni 1..=255 (TGA type-2 dan ajratish uçun — unda bu 0)
+        let count = data[4] as usize | (data[5] as usize) << 8;
+        (1..=255).contains(&count)
+    } {
+        Some("ICO")
     } else {
         None
     }
 }
 
-/// Baytlardan rasmni dekodlaydi (format avtomatik aniqlanadi).
+/// Baytlardan rasmni dekodlaydi (format "magic" orqali aniqlanadi).
 pub fn decode(data: &[u8]) -> Option<Image> {
     match format_name(data)? {
         "PNG" => png::decode(data),
@@ -69,6 +80,23 @@ pub fn decode(data: &[u8]) -> Option<Image> {
         "BMP" => bmp::decode(data),
         "QOI" => qoi::decode(data),
         "PNM" => bmp::decode_pnm(data),
+        "PCX" => pcx::decode(data),
+        "ICO" => ico::decode(data),
+        _ => None,
+    }
+}
+
+/// Fayl nomini (kengaytma) hisobga olib dekodlaydi — TGA kabi "magic"siz
+/// formatlar uçun. Avval magic, keyin kengaytma böyiça urinadi.
+pub fn decode_file(name: &str, data: &[u8]) -> Option<Image> {
+    if let Some(img) = decode(data) {
+        return Some(img);
+    }
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "tga" | "icb" | "vda" | "vst" => tga::decode(data),
+        "pcx" => pcx::decode(data),
+        "ico" | "cur" => ico::decode(data),
         _ => None,
     }
 }
@@ -112,6 +140,13 @@ pub fn self_test() -> Result<usize, &'static str> {
     let mut n = 0;
     for (name, bytes) in cases {
         match decode(bytes) {
+            Some(img) if check(&img) => n += 1,
+            _ => return Err(name),
+        }
+    }
+    // TGA, PCX, ICO — yöqotişsiz, aniq rang (kengaytmali nom bilan)
+    for (name, bytes) in [("a.tga", testdata::TGA), ("a.pcx", testdata::PCX), ("a.ico", testdata::ICO)] {
+        match decode_file(name, bytes) {
             Some(img) if check(&img) => n += 1,
             _ => return Err(name),
         }
