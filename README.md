@@ -470,5 +470,6 @@ bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.6 — vektor hujjatlarda matn (SVG/PDF/EPS), harakatli rasm (GIF animatsiya
   oʻynatiş), audio (WAV/AIFF dekoder + toʻlqin köruvchi va ijro boshi).
 - 0.0.7 — haqiqiy övoz çiqariş: virtio-sound drayveri (PCM, koʻp navbat).
+- 0.0.8 — FLAC (yöqotişsiz audio) va APNG (harakatli PNG) dekoderlari.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
