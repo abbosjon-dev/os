@@ -11,10 +11,16 @@ zamin::entry!(main);
 
 fn main() -> i64 {
     let mut it = zamin::args().trim().split_whitespace();
-    let Some(host) = it.next() else {
-        println!("{}", tr(["Foydalaniş: yukla <host> [/yöl]", "Использование: yukla <хост> [/путь]", "Usage: yukla <host> [/path]"]));
+    let mut first = it.next().unwrap_or("");
+    let https = first == "-s";
+    if https {
+        first = it.next().unwrap_or("");
+    }
+    if first.is_empty() {
+        println!("{}", tr(["Foydalaniş: yukla [-s] <host> [/yöl]  (-s: HTTPS)", "Использование: yukla [-s] <хост> [/путь]", "Usage: yukla [-s] <host> [/path]"]));
         return 2;
-    };
+    }
+    let host = first;
     let path = it.next().unwrap_or("/");
     if !net::info().configured {
         println!("{}", tr(["Tarmoq sozlanmagan.", "Сеть не настроена.", "Network is not configured."]));
@@ -27,22 +33,38 @@ fn main() -> i64 {
             return 1;
         }
     };
-    let Ok(conn) = Tcp::connect(ip, 80) else {
-        zamin::eprintln!("{}", tr(["ulanib bölmadi", "не удалось подключиться", "could not connect"]));
-        return 1;
-    };
-    let req = format!("GET {} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", path, host);
-    if conn.send(req.as_bytes()).is_err() {
-        return 1;
-    }
-    // Javobni oxirigaça öqiymiz
+    let req = format!("GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nUser-Agent: ZaminOS\r\n\r\n", path, host);
     let mut body = zamin::Vec::new();
-    loop {
-        let chunk = conn.recv(4096, 5000);
-        if chunk.is_empty() {
-            break;
+    if https {
+        let Ok(conn) = zamin::net::Tls::connect(ip, 443, host) else {
+            zamin::eprintln!("{}", tr(["TLS ulanib bölmadi", "не удалось установить TLS", "TLS connect failed"]));
+            return 1;
+        };
+        if conn.send(req.as_bytes()).is_err() {
+            return 1;
         }
-        body.extend_from_slice(&chunk);
+        loop {
+            let chunk = conn.recv(8192);
+            if chunk.is_empty() {
+                break;
+            }
+            body.extend_from_slice(&chunk);
+        }
+    } else {
+        let Ok(conn) = Tcp::connect(ip, 80) else {
+            zamin::eprintln!("{}", tr(["ulanib bölmadi", "не удалось подключиться", "could not connect"]));
+            return 1;
+        };
+        if conn.send(req.as_bytes()).is_err() {
+            return 1;
+        }
+        loop {
+            let chunk = conn.recv(4096, 5000);
+            if chunk.is_empty() {
+                break;
+            }
+            body.extend_from_slice(&chunk);
+        }
     }
     // Sarlavhalardan keyin (bos qator) — faqat tanani çiqaramiz
     let text = String::from_utf8_lossy(&body);

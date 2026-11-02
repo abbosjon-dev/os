@@ -117,8 +117,13 @@ abbosjon@zamin:~> ping 10.0.2.2
 abbosjon@zamin:~> yukla example.com /          # DNS → TCP → HTTP
 ```
 
+**TLS 1.3 (HTTPS)** — noldan: X25519 kalit almaşinuvi, ChaCha20-Poly1305, HKDF-SHA256.
+`yukla -s host /` şifrlangan HTTPS söröv yuboradi (Cloudflare TLS 1.3 serverida sinaldi).
+OGOHLANTIRIŞ: sertifikat hali tekşirilmaydi (MITM dan himoya yöq) va faqat bitta şifr
+to'plami (TLS_CHACHA20_POLY1305_SHA256) qöllanadi.
+
 Çeklovlar: tashqi manzilga ICMP ni QEMU SLIRP ötkazmaydi (TCP/UDP ötadi); TCP oddiy
-(bitta oyna, qayta jönatişsiz); HTTPS/TLS hali yöq.
+(bitta oyna, qayta jönatişli).
 
 ## Boşqa fayl tizimlari (FAT)
 
@@ -321,6 +326,9 @@ src/klog.rs          Yadro jurnali (halqa bufer)
 src/drivers/virtio_net.rs  virtio-net drayveri
 src/net/              Tarmoq stegi: Ethernet, ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS
 src/fs/fat.rs         FAT16/FAT32 öquvçi (faqat öqiş)
+src/net/tls.rs        TLS 1.3 mijozi (X25519, ChaCha20-Poly1305, HKDF)
+src/crypto/x25519.rs  X25519 kalit almaşinuvi
+src/crypto/hkdf.rs    HKDF-SHA256 va TLS 1.3 kalit jadvali
 user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 ```
 

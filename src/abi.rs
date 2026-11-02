@@ -110,6 +110,16 @@ pub const SYS_SIGNAL: u64 = 43;
 /// Kelgan signallar bitmaskasini qaytaradi (va tozalaydi).
 pub const SYS_SIGPENDING: u64 = 44;
 
+// --- TLS (HTTPS) ---
+/// TLS ulaniş. x0 = IP(4), x1 = port, x2,x3 = hostname (SNI). Natija: handle.
+pub const SYS_TLS_CONNECT: u64 = 45;
+/// TLS jönatiş. x0 = handle, x1 = manzil, x2 = uzunlik.
+pub const SYS_TLS_SEND: u64 = 46;
+/// TLS oliş. x0 = handle, x1 = bufer, x2 = siğim. Natija: öqilgan (0 = yopildi).
+pub const SYS_TLS_RECV: u64 = 47;
+/// TLS yopiş. x0 = handle.
+pub const SYS_TLS_CLOSE: u64 = 48;
+
 /// Signallar
 pub const SIG_TERM: u64 = 15;
 pub const SIG_KILL: u64 = 9;

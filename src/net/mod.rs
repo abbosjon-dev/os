@@ -7,6 +7,7 @@
 pub mod dhcp;
 pub mod dns;
 pub mod tcp;
+pub mod tls;
 pub mod udp;
 
 use crate::drivers::virtio_net as nic;

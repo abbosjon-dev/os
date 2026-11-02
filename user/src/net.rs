@@ -67,3 +67,30 @@ impl Drop for Tcp {
         unsafe { syscall(SYS_TCP_CLOSE, self.0, 0, 0, 0) };
     }
 }
+
+/// TLS (HTTPS) ulanişi — şifrlangan. OGOHLANTIRIŞ: sertifikat tekşirilmaydi.
+pub struct Tls(u64);
+
+impl Tls {
+    pub fn connect(ip: Ip, port: u16, hostname: &str) -> Result<Tls> {
+        check(unsafe {
+            syscall(SYS_TLS_CONNECT, ip.as_ptr() as u64, port as u64, hostname.as_ptr() as u64, hostname.len() as u64)
+        })
+        .map(Tls)
+    }
+    pub fn send(&self, data: &[u8]) -> Result<usize> {
+        check(unsafe { syscall(SYS_TLS_SEND, self.0, data.as_ptr() as u64, data.len() as u64, 0) }).map(|n| n as usize)
+    }
+    pub fn recv(&self, max: usize) -> Vec<u8> {
+        let mut buf = crate::vec![0u8; max];
+        let n = unsafe { syscall(SYS_TLS_RECV, self.0, buf.as_mut_ptr() as u64, max as u64, 0) };
+        buf.truncate(n.max(0) as usize);
+        buf
+    }
+}
+
+impl Drop for Tls {
+    fn drop(&mut self) {
+        unsafe { syscall(SYS_TLS_CLOSE, self.0, 0, 0, 0) };
+    }
+}

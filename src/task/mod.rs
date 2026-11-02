@@ -517,8 +517,8 @@ fn schedule() {
             }
         }
         // Tayyor va boşqa yadroda işlamayotgan vazifani tanlaymiz. Ikki bosqiç:
-        //   1) kesh uçun — şu yadroda oxirgi işlagan vazifa (affinity),
-        //   2) topilmasa — istalgani (boşqa yadrodan "ish öğirlaş", work stealing).
+        //   1) keş uçun — şu yadroda oxirgi işlagan vazifa (affinity),
+        //   2) topilmasa — istalgani (boşqa yadrodan "iş öğirlaş", work stealing).
         // Heç kim bölmasa — şu yadroning böş vazifasi (PID 0).
         let ready = |t: &Option<Box<Task>>, i: usize| {
             t.as_ref().is_some_and(|t| t.state == State::Ready && (!t.on_cpu || i == cur))
@@ -700,7 +700,8 @@ fn exit_inner(code: i64, thread_only: bool) -> ! {
     }
     release_handles(handles); // quvurlarning narigi tomoni EOF ni körsin
     if close_net {
-        crate::net::tcp::close_owned(process_pid); // jarayon tugadi — TCP ulanişlari yopiladi
+        crate::net::tls::close_owned(process_pid);
+        crate::net::tcp::close_owned(process_pid); // jarayon tugadi — ulanişlar yopiladi
     }
     kick_others();
     schedule();

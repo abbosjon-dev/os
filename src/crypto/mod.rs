@@ -8,9 +8,11 @@
 
 pub mod aead;
 pub mod chacha20;
+pub mod hkdf;
 pub mod hmac;
 pub mod poly1305;
 pub mod sha256;
+pub mod x25519;
 
 /// Ikki baytlar ketma-ketligini doimiy vaqtda soliştiradi.
 pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
@@ -40,6 +42,15 @@ fn hex(s: &str) -> alloc::vec::Vec<u8> {
 pub fn self_test() -> Result<(), &'static str> {
     if !sha256::self_test() {
         return Err("SHA-256");
+    }
+    if !x25519::self_test() {
+        return Err("X25519");
+    }
+    // HKDF (RFC 5869 Test Case 1)
+    let prk = hkdf::extract(&hex("000102030405060708090a0b0c"), &hex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"));
+    let okm = hkdf::expand(&prk, &hex("f0f1f2f3f4f5f6f7f8f9"), 42);
+    if okm[..4] != hex("3cb25f25")[..] {
+        return Err("HKDF");
     }
     // HMAC-SHA256 (Vikipediyadagi klassik misol)
     let mac = hmac::hmac_sha256(b"key", b"The quick brown fox jumps over the lazy dog");

@@ -379,6 +379,26 @@ fn handle(num: u64, a: [u64; 6]) -> SysResult {
             crate::net::tcp::close(a[0] as usize);
             Ok(0)
         }
+        SYS_TLS_CONNECT if task::jail().is_some() => Err(ERR_DENIED),
+        SYS_TLS_CONNECT => {
+            let ip = copy_from_user(a[0], 4)?;
+            let host = user_str(a[2], a[3])?;
+            crate::net::tls::connect([ip[0], ip[1], ip[2], ip[3]], a[1] as u16, &host).map(|h| h as i64).ok_or(ERR_NOT_FOUND)
+        }
+        SYS_TLS_SEND => {
+            let data = copy_from_user(a[1], a[2])?;
+            if crate::net::tls::send(a[0] as usize, &data) { Ok(data.len() as i64) } else { Err(ERR_BAD_HANDLE) }
+        }
+        SYS_TLS_RECV => {
+            check_writable(a[1], a[2])?;
+            let data = crate::net::tls::recv(a[0] as usize, (a[2] as usize).min(task::uaccess::MAX_COPY));
+            copy_to_user(a[1], &data)?;
+            Ok(data.len() as i64)
+        }
+        SYS_TLS_CLOSE => {
+            crate::net::tls::close(a[0] as usize);
+            Ok(0)
+        }
         SYS_TIME => Ok(crate::timer::unix_time() as i64),
         SYS_TZ => Ok(crate::time::tz_minutes() as i64),
         SYS_CHMOD => {
