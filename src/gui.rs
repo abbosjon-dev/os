@@ -224,6 +224,183 @@ fn pump(windows: &mut [Window]) -> bool {
 }
 
 pub extern "C" fn run(_: usize) {
+    // Birinçi sozlaş serial konsulda ketayotgan bölsa — tugaşini kutamiz
+    while accounts::all().is_empty() {
+        wait_screen();
+        task::sleep_ms(200);
+    }
+    // Hali kirilmagan bölsa — grafik parol ekrani
+    if accounts::current().is_none() {
+        login_screen();
+    }
+    desktop();
+}
+
+/// Birinçi sozlaş kutilayotganda körinadigan ekran.
+fn wait_screen() {
+    let (w, h) = gfx::size();
+    gradient(0x101c30, ZAMIN_TUN);
+    draw_text_centered(w / 2, h / 2 - 40, "Zamin OS", OQ, 4);
+    draw_text_centered(w / 2, h / 2 + 20, "Birinçi sozlaş serial konsulda ketyapti…", KULRANG, 2);
+    gfx::flush();
+}
+
+/// Grafik kiriş ekrani: foydalanuvçini tanlab, parol kiritadi. Parol toʻgʻri
+/// bölgaç qaytadi (iş stoliga ötiladi).
+fn login_screen() {
+    let (sw, sh) = gfx::size();
+    let accts = accounts::all();
+    let mut sel = 0usize;
+    let mut pass = String::new();
+    let mut err = false;
+    let mut shift = false;
+    let mut cx = sw / 2;
+    let mut cy = sh / 2;
+
+    // Karta ölçamlari
+    let cw = 460usize;
+    let ch = 300usize;
+    let card_x = (sw - cw) / 2;
+    let card_y = (sh - ch) / 2;
+    let btn_w = 160usize;
+    let btn_h = 40usize;
+    let btn_x = card_x + (cw - btn_w) / 2;
+    let btn_y = card_y + ch - 60;
+    // Hisob tanlaş qatorlari (bir neçta bölsa)
+    let row_h = 28usize;
+    let rows_y = card_y + 150;
+
+    loop {
+        let mut submit = false;
+        for e in input::poll() {
+            match (e.typ, e.code) {
+                (input::EV_ABS, input::ABS_X) => cx = (e.value as usize * sw) / 32768,
+                (input::EV_ABS, input::ABS_Y) => cy = (e.value as usize * sh) / 32768,
+                (input::EV_KEY, input::BTN_LEFT) if e.value == 1 => {
+                    // "Kiriş" tugmasi?
+                    if cx >= btn_x && cx < btn_x + btn_w && cy >= btn_y && cy < btn_y + btn_h {
+                        submit = true;
+                    }
+                    // Hisob tanlaş (bir neçta bölsa)
+                    if accts.len() > 1 {
+                        for i in 0..accts.len() {
+                            let ry = rows_y + i * row_h;
+                            if cy >= ry && cy < ry + row_h && cx >= card_x + 40 && cx < card_x + cw - 40 {
+                                sel = i;
+                                err = false;
+                            }
+                        }
+                    }
+                }
+                (input::EV_KEY, 42) | (input::EV_KEY, 54) => shift = e.value != 0,
+                (input::EV_KEY, 28) if e.value == 1 => submit = true,
+                (input::EV_KEY, 14) if e.value == 1 => {
+                    pass.pop();
+                    err = false;
+                }
+                (input::EV_KEY, code) if e.value == 1 => {
+                    if let Some(c) = keycode_char(code, shift) {
+                        if pass.len() < 64 {
+                            pass.push(c);
+                            err = false;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if submit && !pass.is_empty() {
+            let acct = &accts[sel];
+            if let Some(key) = accounts::unlock(acct, &pass) {
+                accounts::forget(core::mem::take(&mut pass));
+                crate::setup::apply_login(acct, key);
+                return; // muvaffaqiyat — iş stoliga
+            } else {
+                err = true;
+                accounts::forget(core::mem::take(&mut pass));
+                draw_login(&accts, sel, 0, err, cx, cy, card_x, card_y, cw, ch, btn_x, btn_y, btn_w, btn_h, rows_y, row_h);
+                gfx::flush();
+                task::sleep_ms(500); // xato: biroz kutiş
+            }
+        }
+
+        draw_login(&accts, sel, pass.len(), err, cx, cy, card_x, card_y, cw, ch, btn_x, btn_y, btn_w, btn_h, rows_y, row_h);
+        gfx::flush();
+        task::sleep_ms(16);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_login(
+    accts: &[accounts::Account], sel: usize, dots: usize, err: bool, cx: usize, cy: usize,
+    card_x: usize, card_y: usize, cw: usize, ch: usize,
+    btn_x: usize, btn_y: usize, btn_w: usize, btn_h: usize, rows_y: usize, row_h: usize,
+) {
+    let (sw, _sh) = gfx::size();
+    gradient(0x0e1a2e, ZAMIN_TUN);
+    draw_text_centered(sw / 2, card_y - 70, "Zamin OS", OQ, 4);
+
+    // Karta
+    fill_rect(card_x + 5, card_y + 6, cw, ch, 0x060d16);
+    fill_rect(card_x, card_y, cw, ch, 0x18283e);
+    rect_outline(card_x, card_y, cw, ch, ZAMIN_KOK);
+
+    // Qulf belgisi (oddiy)
+    let lx = card_x + cw / 2 - 12;
+    let ly = card_y + 26;
+    rect_outline(lx + 4, ly, 16, 10, SARIQ); // tutqiç
+    fill_rect(lx, ly + 10, 24, 18, SARIQ); // tana
+    fill_rect(lx + 10, ly + 16, 4, 7, 0x18283e); // teşik
+
+    let acct = &accts[sel];
+    draw_text_centered(sw / 2, card_y + 62, &acct.full_name, OQ, 2);
+    draw_text_centered(sw / 2, card_y + 86, &alloc::format!("@{}", acct.username), KULRANG, 2);
+
+    if accts.len() > 1 {
+        for (i, a) in accts.iter().enumerate() {
+            let ry = rows_y + i * row_h;
+            let active = i == sel;
+            fill_rect(card_x + 40, ry, cw - 80, row_h - 4, if active { ZAMIN_KOK } else { 0x22344e });
+            draw_text(card_x + 52, ry + 4, &a.username, OQ, 2);
+        }
+    } else {
+        // Parol maydoni
+        let fx = card_x + 60;
+        let fy = card_y + 120;
+        let fw = cw - 120;
+        fill_rect(fx, fy, fw, 34, 0x0c1726);
+        rect_outline(fx, fy, fw, 34, if err { QIZIL } else { ZAMIN_KOK });
+        for i in 0..dots.min((fw - 20) / 16) {
+            fill_rect(fx + 12 + i * 16, fy + 13, 8, 8, OQ);
+        }
+        if dots == 0 {
+            draw_text(fx + 12, fy + 9, "parol…", KULRANG, 2);
+        }
+    }
+
+    if err {
+        draw_text_centered(sw / 2, btn_y - 26, "Parol xato — qayta urining", QIZIL, 2);
+    }
+
+    // "Kiriş" tugmasi
+    fill_rect(btn_x, btn_y, btn_w, btn_h, ZAMIN_KOK);
+    draw_text_centered(btn_x + btn_w / 2, btn_y + 10, "Kiriş →", OQ, 2);
+
+    cursor(cx, cy);
+}
+
+fn cursor(cx: usize, cy: usize) {
+    for i in 0..18usize {
+        let width = (18 - i) / 2 + 1;
+        fill_rect(cx, cy + i, width + 2, 1, QORA);
+        if i >= 1 {
+            fill_rect(cx + 1, cy + i, width.saturating_sub(1), 1, OQ);
+        }
+    }
+}
+
+fn desktop() {
     let (sw, sh) = gfx::size();
     let mut windows: Vec<Window> = Vec::new();
     let mut cx = sw / 2;

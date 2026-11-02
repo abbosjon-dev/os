@@ -153,6 +153,13 @@ fn login() {
         // Har bir xatodan keyin kutiş ikki baravar östiriladi (eng köpi 30 s)
         task::sleep_ms((1000u64 << failures.min(5)).min(30_000));
     };
+    apply_login(account, key);
+    println!();
+}
+
+/// Parol toʻgʻri tekşirilgaç (serial yoki grafik kirişdan): joriy foydalanuvçini
+/// örnatadi, uy papkasini tayyorlaydi va şifrlangan diskni ulaydi.
+pub fn apply_login(account: &accounts::Account, key: [u8; 32]) {
     accounts::set_master_key(Some(key));
     accounts::set_current(Some(account.clone()));
     let _ = fs::setup_home(&account.username, account.uid);
@@ -167,5 +174,4 @@ fn login() {
         Ok(None) => zaminfs::format(&key),
         Err(e) => tprintln!(msg::ZFS_ERROR, format_args!("{:?}", e)),
     }
-    println!();
 }

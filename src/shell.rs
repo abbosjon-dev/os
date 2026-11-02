@@ -191,8 +191,19 @@ fn abs_path(p: &str) -> String {
 /// (`/dasturlar/terminal`) işonçli jarayon sifatida işga tuşiriladi. U tugasa (`çiqiş`) —
 /// qayta kiriş söraladi. Terminal dasturi bölmasa — yadro içidagi zaxira terminal.
 pub extern "C" fn run(disk: usize) {
+    let disk = disk != 0;
+    // Grafik muhit bölsa — kiriş (login) grafik interfeys zimmasida.
+    // Serial faqat maʼmur zaxira konsuli bölib qoladi; birinçi sozlaşni
+    // (hisob yaratiş) bir marta şu yerda bajaramiz.
+    if crate::gfx::present() {
+        if accounts::all().is_empty() {
+            crate::setup::run(disk);
+        }
+        kernel_shell();
+        return;
+    }
     loop {
-        crate::setup::run(disk != 0);
+        crate::setup::run(disk);
         let Ok(image) = fs::read_all("/dasturlar/terminal") else { break };
         let opts = task::SpawnOptions {
             detached: false,
