@@ -13,6 +13,7 @@
 //! istalgan nomi bilan topiladi. Şuning uçun `/dasturlar/salom` dasturlarda hamişa işlaydi.
 //! `~` — joriy foydalanuvçining uy papkasi.
 
+pub mod fat;
 pub mod file;
 pub mod zaminfs;
 
@@ -674,6 +675,30 @@ impl Vfs {
 }
 
 /// Çiqişda: foydalanuvçi fayllari xotiradan olib taşlanadi (keyingi kirişda diskdan qayta öqiladi).
+/// Ikkinçi diskdagi FAT fayl tizimini `/fat` ga ulaydi (faqat öqiş). Natija: fayllar soni.
+pub fn mount_fat() -> usize {
+    let Some(files) = fat::read_root() else { return 0 };
+    let mut v = vfs_as_kernel();
+    let fat_dir = match v.lookup("/fat") {
+        Ok(id) => id,
+        Err(_) => match v.add(ROOT, "fat", Data::Dir(Vec::new()), true) {
+            Ok(id) => id,
+            Err(_) => return 0,
+        },
+    };
+    let mut n = 0;
+    for (name, data) in files {
+        let lower = name.to_ascii_lowercase();
+        if v.child(fat_dir, &lower).is_err() {
+            if let Ok(id) = v.add(fat_dir, &lower, Data::File(FileData::from_bytes(&data)), true) {
+                v.node_mut(id).unwrap().mode = 0o444;
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
 pub fn forget_user_files() {
     let mut v = vfs_as_kernel();
     let ids: Vec<NodeId> = (0..v.nodes.len()).filter(|&id| v.persistent(id)).collect();

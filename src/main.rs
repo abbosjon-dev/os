@@ -196,6 +196,12 @@ pub extern "C" fn kernel_main() -> ! {
         None => tprintln!(msg::NET_NONE),
     }
 
+    // 11) Ikkinçi disk — FAT fayl tizimi (bölsa) /fat ga ulanadi
+    if drivers::virtio_blk::init_fat().is_some() {
+        let n = fs::mount_fat();
+        tprintln!(msg::FAT_MOUNTED, n);
+    }
+
     // PID 0: boşqa iş bölmaganda — tugagan vazifalarni tozalaş va uxlaş
     loop {
         task::reap_detached();

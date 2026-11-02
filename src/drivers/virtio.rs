@@ -86,9 +86,17 @@ impl Transport {
 
     /// Berilgan turdagi birinçi qurilmani topib, işga tuşiradi.
     pub fn probe(device_id: u32) -> Option<Transport> {
-        let base = (0..MMIO_SLOTS).map(|i| MMIO_BASE + i * MMIO_STRIDE).find(|&b| unsafe {
-            read_volatile(b as *const u32) == 0x7472_6976 && read_volatile((b + DEVICE_ID) as *const u32) == device_id
-        })?;
+        Self::probe_nth(device_id, 0)
+    }
+
+    /// Berilgan turdagi `n`-çi (0 dan) qurilmani topib işga tuşiradi.
+    pub fn probe_nth(device_id: u32, n: usize) -> Option<Transport> {
+        let base = (0..MMIO_SLOTS)
+            .map(|i| MMIO_BASE + i * MMIO_STRIDE)
+            .filter(|&b| unsafe {
+                read_volatile(b as *const u32) == 0x7472_6976 && read_volatile((b + DEVICE_ID) as *const u32) == device_id
+            })
+            .nth(n)?;
         let mut t = Transport { base, queue: 0, last_used: 0 };
         let version = t.rd(VERSION);
         let _ = t.rd(MAGIC);

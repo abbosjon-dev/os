@@ -38,15 +38,59 @@ static DISK: Mutex<Option<VirtioBlk>> = Mutex::new(None);
 static DISK_BASE: AtomicUsize = AtomicUsize::new(0);
 static DISK_IRQ: AtomicU32 = AtomicU32::new(0);
 static CAPACITY: AtomicU64 = AtomicU64::new(0);
+/// Tizim diski qaysi indeksda (FAT diski boşqasini oladi)
+static SYS_INDEX: AtomicU32 = AtomicU32::new(0);
 /// Disk uzilişlari soni (tekşiruv uçun)
 static IRQ_COUNT: AtomicU64 = AtomicU64::new(0);
 /// `task::wait_event` kaliti
 const DISK_EVENT: usize = 0xd15c;
 
 /// Diskni qidiradi va işga tuşiradi. Natija: siğim (baytlarda).
+/// Blok qurilmasining birinçi sektorini öqiydi (sinflaş uçun, vaqtinça transport bilan).
+fn peek_sector0(t: &mut Transport, scratch: usize) -> [u8; SECTOR] {
+    unsafe {
+        write_volatile(scratch as *mut u32, 0); // REQ_IN
+        write_volatile((scratch + 4) as *mut u32, 0);
+        write_volatile((scratch + 8) as *mut u64, 0u64);
+        write_volatile((scratch + 16) as *mut u8, 0xff);
+    }
+    let dbuf = scratch + 512;
+    t.submit(&[(scratch, 16, false), (dbuf, SECTOR, true), (scratch + 16, 1, true)]);
+    let mut b = [0u8; SECTOR];
+    unsafe { core::ptr::copy_nonoverlapping(dbuf as *const u8, b.as_mut_ptr(), SECTOR) };
+    b
+}
+
+/// Tizim diskini tanlaydi: "ZAMINDSK" belgili disk, bölmasa — eng katta disk.
+/// Tartibga tayanmaymiz (QEMU qurilmalarni teskari joylaştirişi mumkin), mazmunga qaraymiz.
 pub fn init() -> Option<u64> {
-    let t = Transport::probe(DEVICE_BLOCK)?;
-    let capacity = t.config_u32(0) as u64 | (t.config_u32(4) as u64) << 32;
+    let scratch = frame::alloc_zeroed()?;
+    let mut best: Option<(usize, u64)> = None; // (indeks, siğim)
+    let mut n = 0;
+    while let Some(mut t) = Transport::probe_nth(DEVICE_BLOCK, n) {
+        let cap = t.config_u32(0) as u64 | (t.config_u32(4) as u64) << 32;
+        let s0 = peek_sector0(&mut t, scratch);
+        let is_zamin = &s0[..8] == b"ZAMINDSK";
+        let better = match best {
+            None => true,
+            Some((_, c)) => is_zamin || cap > c,
+        };
+        if is_zamin {
+            best = Some((n, cap));
+            break; // aniq tizim diski
+        }
+        if better {
+            best = Some((n, cap));
+        }
+        n += 1;
+        if n >= 8 {
+            break;
+        }
+    }
+    frame::free(scratch);
+    let (idx, capacity) = best?;
+    let t = Transport::probe_nth(DEVICE_BLOCK, idx)?;
+    SYS_INDEX.store(idx as u32, Ordering::Release);
     let req = frame::alloc_zeroed()?;
     let data = frame::alloc_zeroed()?;
     DISK_BASE.store(t.base(), Ordering::Release);
@@ -59,6 +103,54 @@ pub fn init() -> Option<u64> {
 
 pub fn present() -> bool {
     CAPACITY.load(Ordering::Acquire) != 0
+}
+
+// --- Ikkinçi disk (masalan, FAT): faqat öqiş, sörov qilib (polled) ---
+struct FatDisk {
+    t: super::virtio::Transport,
+    capacity: u64,
+    req: usize,
+    data: usize,
+}
+unsafe impl Send for FatDisk {}
+static FAT_DISK: Mutex<Option<FatDisk>> = Mutex::new(None);
+
+/// Ikkinçi blok qurilmasini işga tuşiradi. Natija: siğim (sektorlar).
+pub fn init_fat() -> Option<u64> {
+    let sys = SYS_INDEX.load(Ordering::Acquire) as usize;
+    let fat_idx = if sys == 0 { 1 } else { 0 }; // tizim diskidan boşqasi
+    let t = super::virtio::Transport::probe_nth(super::virtio::DEVICE_BLOCK, fat_idx)?;
+    let capacity = t.config_u32(0) as u64 | (t.config_u32(4) as u64) << 32;
+    let req = frame::alloc_zeroed()?;
+    let data = frame::alloc_zeroed()?;
+    *FAT_DISK.lock() = Some(FatDisk { t, capacity, req, data });
+    Some(capacity)
+}
+
+#[allow(dead_code)]
+pub fn fat_present() -> bool {
+    FAT_DISK.lock().is_some()
+}
+
+/// Ikkinçi diskdan bitta sektor öqiydi (512 bayt).
+pub fn fat_read(sector: u64, buf: &mut [u8; SECTOR]) -> Result<(), DiskError> {
+    let mut g = FAT_DISK.lock();
+    let d = g.as_mut().ok_or(DiskError::NoDisk)?;
+    if sector >= d.capacity {
+        return Err(DiskError::OutOfRange);
+    }
+    unsafe {
+        write_volatile(d.req as *mut u32, 0); // REQ_IN
+        write_volatile((d.req + 4) as *mut u32, 0);
+        write_volatile((d.req + 8) as *mut u64, sector);
+        write_volatile((d.req + 16) as *mut u8, 0xff);
+    }
+    d.t.submit(&[(d.req, 16, false), (d.data, SECTOR, true), (d.req + 16, 1, true)]);
+    if unsafe { read_volatile((d.req + 16) as *const u8) } != 0 {
+        return Err(DiskError::Io);
+    }
+    unsafe { core::ptr::copy_nonoverlapping(d.data as *const u8, buf.as_mut_ptr(), SECTOR) };
+    Ok(())
 }
 
 /// Sektorlar soni.

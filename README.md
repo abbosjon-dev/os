@@ -120,6 +120,19 @@ abbosjon@zamin:~> yukla example.com /          # DNS → TCP → HTTP
 Çeklovlar: tashqi manzilga ICMP ni QEMU SLIRP ötkazmaydi (TCP/UDP ötadi); TCP oddiy
 (bitta oyna, qayta jönatişsiz); HTTPS/TLS hali yöq.
 
+## Boşqa fayl tizimlari (FAT)
+
+Ikkinçi disk FAT16/FAT32 formatida bölsa, u yuklanişda `/fat` papkasiga (faqat öqiş) ulanadi:
+
+```
+abbosjon@zamin:~> fayllar /fat
+  -r--r--r-- tizim   45 B  readme.txt   ...
+abbosjon@zamin:~> öqi /fat/readme.txt
+```
+
+Qisqa (8.3) nomlar öqiladi; yoziş yöq. Katta fayllar hozirça xotiraga yuklanadi (keyingi
+versiyada bloklab öqiladi).
+
 ## Foydalanuvçilar va ruxsatlar
 
 - `hisoblar` — röyxat; administrator `hisoblar qöş dilnoza` / `hisoblar öçir dilnoza`.
@@ -307,6 +320,7 @@ src/time.rs          Sana/vaqt, vaqt mintaqasi
 src/klog.rs          Yadro jurnali (halqa bufer)
 src/drivers/virtio_net.rs  virtio-net drayveri
 src/net/              Tarmoq stegi: Ethernet, ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS
+src/fs/fat.rs         FAT16/FAT32 öquvçi (faqat öqiş)
 user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 ```
 

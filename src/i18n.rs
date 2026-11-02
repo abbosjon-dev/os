@@ -500,6 +500,11 @@ pub mod msg {
     ];
     pub const FS_IO: Text = ["disk xatosi", "ошибка диска", "disk error"];
     pub const SH_SAVE_FAIL: Text = ["  Saqlab bölmadi: {}", "  Не удалось сохранить: {}", "  Save failed: {}"];
+    pub const FAT_MOUNTED: Text = [
+        "[fat ] ikkinçi disk (FAT) /fat ga ulandi: {} ta fayl",
+        "[fat ] второй диск (FAT) подключён к /fat: файлов — {}",
+        "[fat ] second disk (FAT) mounted at /fat: {} files",
+    ];
     pub const NET_NIC: Text = ["[net ] virtio-net: MAC {}", "[net ] virtio-net: MAC {}", "[net ] virtio-net: MAC {}"];
     pub const NET_NONE: Text = [
         "[net ] tarmoq qurilmasi topilmadi",
