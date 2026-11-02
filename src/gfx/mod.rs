@@ -401,6 +401,60 @@ pub fn hline(x: usize, y: usize, len: usize, c: Color) {
     fill_rect(x, y, len, 1, c);
 }
 
+/// Silliq (anti-aliased) töldirilgan köpburçak. Nuqtalar — f32 ekran koordinatalari.
+/// Her piksel 3x3 supersample bilan baholanadi.
+pub fn fill_poly(pts: &[(f32, f32)], c: Color) {
+    if pts.len() < 3 {
+        return;
+    }
+    let (mut minx, mut miny, mut maxx, mut maxy) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for &(x, y) in pts {
+        minx = minx.min(x);
+        miny = miny.min(y);
+        maxx = maxx.max(x);
+        maxy = maxy.max(y);
+    }
+    // no_std: musbat f32 uçun `as usize` — floor; ceil uçun +1
+    let x0 = minx.max(0.0) as usize;
+    let y0 = miny.max(0.0) as usize;
+    let x1 = maxx.max(0.0) as usize + 1;
+    let y1 = maxy.max(0.0) as usize + 1;
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return };
+    let inside = |px: f32, py: f32| -> bool {
+        // juft-toq (even-odd) qoida
+        let mut c = false;
+        let n = pts.len();
+        let mut j = n - 1;
+        for i in 0..n {
+            let (xi, yi) = pts[i];
+            let (xj, yj) = pts[j];
+            if (yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi {
+                c = !c;
+            }
+            j = i;
+        }
+        c
+    };
+    for py in y0..=y1 {
+        for px in x0..=x1 {
+            let mut hit = 0u32;
+            for sy in 0..3 {
+                for sx in 0..3 {
+                    let fx = px as f32 + (sx as f32 + 0.5) / 3.0;
+                    let fy = py as f32 + (sy as f32 + 0.5) / 3.0;
+                    if inside(fx, fy) {
+                        hit += 1;
+                    }
+                }
+            }
+            if hit > 0 {
+                blend(f, px, py, c, hit * 255 / 9);
+            }
+        }
+    }
+}
+
 /// Rasmni (iw×ih piksel) berilgan qutiga (bw×bh) nisbatni saqlab sigdiradi
 /// (markazlashgan, nearest). Natija: haqiqiy çizilgan (x, y, w, h).
 pub fn blit_fit(bx: usize, by: usize, bw: usize, bh: usize, iw: usize, ih: usize, px: &[u32]) -> (usize, usize, usize, usize) {

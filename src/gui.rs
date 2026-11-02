@@ -691,16 +691,28 @@ fn draw_login(accts: &[accounts::Account], sel: usize, dots: usize, err: bool, c
     cursor(cx, cy);
 }
 
-/// Silliq siçqon kursori (oq uçburçak, qora chegara).
+/// Silliq siçqon kursori — mac uslubidagi koʻrsatkich (oq, qora chegara).
 fn cursor(cx: usize, cy: usize) {
-    let s = (body() * 4 / 3).max(16);
-    for i in 0..s {
-        let width = (s - i) / 2 + 1;
-        fill_rect(cx, cy + i, (width + 2).min(s), 1, QORA);
-        if i >= 1 {
-            fill_rect(cx + 1, cy + i, width.saturating_sub(1), 1, OQ);
-        }
-    }
+    let f = (body() as f32 * 1.3 / 16.0).max(1.0); // masştab (16-birlik shakl)
+    // Standart ko'rsatkich köpburçagi (uç nuqtasi — (0,0))
+    const ARROW: [(f32, f32); 7] = [
+        (0.0, 0.0),
+        (0.0, 12.8),
+        (3.3, 9.8),
+        (5.3, 14.6),
+        (7.1, 13.8),
+        (5.1, 9.2),
+        (8.6, 9.2),
+    ];
+    let (ox, oy) = (cx as f32, cy as f32);
+    let outer: Vec<(f32, f32)> = ARROW.iter().map(|&(x, y)| (ox + x * f, oy + y * f)).collect();
+    // Markaz (ichki oq uçun kiçraytiramiz)
+    let cxm = outer.iter().map(|p| p.0).sum::<f32>() / 7.0;
+    let cym = outer.iter().map(|p| p.1).sum::<f32>() / 7.0;
+    let inner: Vec<(f32, f32)> =
+        outer.iter().map(|&(x, y)| (cxm + (x - cxm) * 0.78, cym + (y - cym) * 0.78)).collect();
+    gfx::fill_poly(&outer, QORA); // chegara
+    gfx::fill_poly(&inner, OQ); // ichi
 }
 
 fn desktop() {
