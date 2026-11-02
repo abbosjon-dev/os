@@ -1,0 +1,20 @@
+#!/bin/sh
+# Zamin OS ni QEMU da işga tuşiradi (`cargo run` şu skriptni çaqiradi).
+# Disk obrazi (sozlamalar uçun) birinçi marta avtomatik yaratiladi.
+#
+#   cargo run                        — odatiy işga tuşiriş
+#   cargo run -- -append til=en      — yuklaniş xabarlari tili (tizim hali sozlanmagan bölsa)
+#   ZAMIN_DISK=boşqa.img cargo run   — boşqa disk obrazi
+set -e
+KERNEL="$1"
+shift
+DISK="${ZAMIN_DISK:-target/zamin-disk.img}"
+if [ ! -f "$DISK" ]; then
+    mkdir -p "$(dirname "$DISK")"
+    truncate -s 256M "$DISK" # siyrak fayl: haqiqatan yozilgan joyni egallaydi
+fi
+# -cpu max: PAN, RNDR va boşqa zamonaviy himoya imkoniyatlari bilan
+exec qemu-system-aarch64 -machine virt -cpu max -m 512M -smp 4 -nographic \
+    -drive "file=$DISK,if=none,format=raw,id=zdisk" -device virtio-blk-device,drive=zdisk \
+    -device virtio-rng-device \
+    -kernel "$KERNEL" "$@"

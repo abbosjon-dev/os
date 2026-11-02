@@ -1,0 +1,9 @@
+[build]
+target = "aarch64-unknown-none-softfloat"
+# softfloat: yadro FP/SIMD registrlariga tegmaydi, şuning uçun uzilişlarda
+# ularni saqlaş şart emas (foydalanuvçi dasturlari uçun keyinroq saqlaymiz).
+
+[target.aarch64-unknown-none-softfloat]
+rustflags = ["-C", "link-arg=-Tlinker.ld"]
+# `cargo run` yadroni QEMU "virt" maşinasida disk bilan işga tuşiradi (scripts/qemu.sh).
+runner = ["sh", "scripts/qemu.sh"]

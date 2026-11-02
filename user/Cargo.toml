@@ -1,0 +1,26 @@
+[package]
+name = "zamin-dasturlar"
+version = "0.0.1"
+edition = "2024"
+authors = ["Abbosjon Dev <info@zamin.app>"]
+description = "Zamin OS foydalanuvçi dasturlari va `zamin` kutubxonasi"
+
+[lib]
+name = "zamin"
+path = "src/lib.rs"
+test = false
+
+[dependencies]
+# Ataylab böş: hamma narsani özimiz yozamiz.
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+strip = true
+lto = true
+
+[profile.dev]
+panic = "abort"
+
+# Alohida işçi maydon: yadro loyihasiga qöşilmaydi.
+[workspace]
