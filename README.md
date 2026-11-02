@@ -469,5 +469,6 @@ bosqiç (etap) yakunlanganda kötariladi.
   CDR; umumiy vektor rasterizator. Qoşimça raster: TGA, PCX, ICO/CUR, APNG.
 - 0.0.6 — vektor hujjatlarda matn (SVG/PDF/EPS), harakatli rasm (GIF animatsiya
   oʻynatiş), audio (WAV/AIFF dekoder + toʻlqin köruvchi va ijro boshi).
+- 0.0.7 — haqiqiy övoz çiqariş: virtio-sound drayveri (PCM, koʻp navbat).
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
