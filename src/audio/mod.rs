@@ -6,6 +6,8 @@
 use alloc::vec::Vec;
 
 mod aiff;
+mod flac;
+mod flac_test;
 mod sample_wav;
 pub mod sound;
 mod wav;
@@ -71,6 +73,8 @@ pub fn format_name(d: &[u8]) -> Option<&'static str> {
         Some("WAV")
     } else if &d[..4] == b"FORM" && (&d[8..12] == b"AIFF" || &d[8..12] == b"AIFC") {
         Some("AIFF")
+    } else if &d[..4] == b"fLaC" {
+        Some("FLAC")
     } else {
         None
     }
@@ -81,6 +85,7 @@ pub fn decode(_name: &str, d: &[u8]) -> Option<Clip> {
     match format_name(d)? {
         "WAV" => wav::decode(d),
         "AIFF" => aiff::decode(d),
+        "FLAC" => flac::decode(d),
         _ => None,
     }
 }
@@ -110,6 +115,14 @@ pub fn self_test() -> Result<(), &'static str> {
     let clip = decode("a.wav", &w).ok_or("WAV")?;
     if clip.rate != 8000 || clip.channels != 1 || clip.samples != samples {
         return Err("WAV");
+    }
+    // FLAC — yöqotişsiz: dekodlangan namunalar aniq mos kelişi kerak
+    let fc = decode("a.flac", flac_test::FLAC).ok_or("FLAC")?;
+    if fc.rate != 8000 || fc.channels != 1 || fc.samples.len() != flac_test::PCM.len() {
+        return Err("FLAC");
+    }
+    if fc.samples != flac_test::PCM {
+        return Err("FLAC");
     }
     Ok(())
 }
