@@ -573,6 +573,16 @@ pub mod msg {
         "[test] декодеры изображений: {} форматов (raster + vektor: SVG, PDF, EPS, DXF…) — OK",
         "[test] image decoders: {} formats (raster + vektor: SVG, PDF, EPS, DXF…) — OK",
     ];
+    pub const SND_READY: Text = [
+        "[snd ] övoz qurilmasi: virtio-sound tayyor",
+        "[snd ] звук: virtio-sound готов",
+        "[snd ] sound device: virtio-sound ready",
+    ];
+    pub const SND_NONE: Text = [
+        "[snd ] övoz qurilmasi topilmadi",
+        "[snd ] звуковое устройство не найдено",
+        "[snd ] no sound device",
+    ];
     pub const TEST_AUDIO: Text = [
         "[test] audio: WAV dekoderi (PCM namunalar) — OK",
         "[test] аудио: декодер WAV (PCM) — OK",

@@ -204,6 +204,14 @@ pub extern "C" fn kernel_main() -> ! {
         None => tprintln!(msg::NET_NONE),
     }
 
+    // Övoz: virtio-sound (bölsa) — ijro fon oqimi
+    if drivers::virtio_snd::init() {
+        tprintln!(msg::SND_READY);
+        task::spawn_kernel("övoz", drivers::virtio_snd::player, 0).expect("övoz oqimi");
+    } else {
+        tprintln!(msg::SND_NONE);
+    }
+
     // 11) Ikkinçi disk — FAT fayl tizimi (bölsa) /fat ga ulanadi
     if drivers::virtio_blk::init_fat().is_some() {
         let n = fs::mount_fat();

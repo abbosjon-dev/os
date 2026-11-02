@@ -1,22 +1,19 @@
-//! Övoz çiqariş drayveri interfeysi. Haqiqiy qurilma (virtio-sound) ulanmagan
-//! bölsa — jim (vizual ijro öz-özicha işlayveradi).
+//! Övoz çiqariş — virtio-sound drayveriga yönaltiradi.
+//! Qurilma bölmasa jim (vizual ijro baribir işlaydi).
 
-use crate::sync::SpinLock;
-
-static STATE: SpinLock<bool> = SpinLock::new(false); // ijro ketyaptimi
+use crate::drivers::virtio_snd;
 
 /// Namunalarni `from_ms` dan boşlab çaladi (qurilma bölsa).
-pub fn play(_samples: &[i16], _rate: u32, _channels: u16, _from_ms: u32) {
-    *STATE.lock() = true;
-    // TODO: virtio-sound qurilmasiga namunalarni uzatiş.
+pub fn play(samples: &[i16], rate: u32, channels: u16, from_ms: u32) {
+    virtio_snd::play(samples, rate, channels, from_ms);
 }
 
 /// Ijroni töxtatadi.
 pub fn stop() {
-    *STATE.lock() = false;
+    virtio_snd::stop();
 }
 
-/// Qurilma mavjudmi?
+/// Övoz qurilmasi mavjudmi?
 pub fn present() -> bool {
-    false
+    virtio_snd::present()
 }
