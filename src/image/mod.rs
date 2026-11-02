@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 
 mod bmp;
 mod dxf;
+mod eps;
 mod gif;
 mod ico;
 mod inflate;
@@ -59,6 +60,10 @@ pub fn format_name(data: &[u8]) -> Option<&'static str> {
         Some("BMP")
     } else if &data[..4] == b"qoif" {
         Some("QOI")
+    } else if data.len() >= 4 && &data[..4] == b"%!PS" {
+        Some("EPS")
+    } else if data.len() >= 11 && &data[..4] == b"\xc5\xd0\xd3\xc6" {
+        Some("EPS") // EPSF binar sarlavha (DOS EPS)
     } else if is_svg(data) {
         Some("SVG")
     } else if data[0] == b'P' && (b'1'..=b'6').contains(&data[1]) {
@@ -88,6 +93,7 @@ pub fn decode(data: &[u8]) -> Option<Image> {
         "PCX" => pcx::decode(data),
         "ICO" => ico::decode(data),
         "SVG" => svg::decode(data),
+        "EPS" => eps::decode(data),
         _ => None,
     }
 }
@@ -113,6 +119,7 @@ pub fn decode_file(name: &str, data: &[u8]) -> Option<Image> {
         "ico" | "cur" => ico::decode(data),
         "svg" => svg::decode(data),
         "dxf" => dxf::decode(data),
+        "eps" | "ps" | "ai" => eps::decode(data),
         _ => None,
     }
 }
@@ -198,6 +205,24 @@ pub fn self_test() -> Result<usize, &'static str> {
             n += 1
         }
         _ => return Err("SVG"),
+    }
+    // EPS/PostScript — 4 kvadrant toʻldiriş (y-up), chidamlilik bilan
+    let eps = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 16 16\n0.863 0.118 0.118 setrgbcolor\n0 8 moveto 8 8 lineto 8 16 lineto 0 16 lineto closepath fill\n0.118 0.784 0.235 setrgbcolor\n8 8 moveto 16 8 lineto 16 16 lineto 8 16 lineto closepath fill\n0.157 0.314 0.902 setrgbcolor\n0 0 moveto 8 0 lineto 8 8 lineto 0 8 lineto closepath fill\n0.941 0.784 0.078 setrgbcolor\n8 0 moveto 16 0 lineto 16 8 lineto 8 8 lineto closepath fill\nshowpage\n";
+    let close = |img: &Image, fx: f32, fy: f32, want: u32| -> bool {
+        let g = rp(img, fx, fy);
+        let diff = |sh: u32| ((g >> sh & 0xff) as i32 - (want >> sh & 0xff) as i32).abs();
+        diff(16) < 12 && diff(8) < 12 && diff(0) < 12
+    };
+    match decode(eps) {
+        Some(img)
+            if close(&img, 0.25, 0.25, rgb(220, 30, 30))
+                && close(&img, 0.75, 0.25, rgb(30, 200, 60))
+                && close(&img, 0.25, 0.75, rgb(40, 80, 230))
+                && close(&img, 0.75, 0.75, rgb(240, 200, 20)) =>
+        {
+            n += 1
+        }
+        _ => return Err("EPS"),
     }
     // DXF — chiziqli (CAD): dekod bölib, qora piksellar (chiziqlar) borligini tekşiramiz
     let dxf = b"0\nSECTION\n2\nENTITIES\n0\nLINE\n10\n0\n20\n0\n11\n100\n21\n0\n0\nLINE\n10\n0\n20\n0\n11\n0\n21\n100\n0\nCIRCLE\n10\n50\n20\n50\n40\n40\n0\nENDSEC\n0\nEOF\n";
