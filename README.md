@@ -352,6 +352,26 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
 
+## Backend mustahkamlaş (xavfsizlik va işonçlilik)
+
+Grafikadan oldin backend 11 ta yönalişda mustahkamlandi:
+
+1. TCP ulanişlari jarayonga bogʻlandi (boşqa jarayon öqiy olmaydi), jarayon tugaganda yopiladi
+2. Qafas (sandbox) endi tarmoqni ham tösadi
+3. ARP keşi eskiradi (60 s)
+4. TCP qayta jönatiş (RTO, yöqolgan segmentlar tiklanadi)
+5. ZaminFS saqlaş xatosida bloklar qaytariladi (oqmaydi)
+6. Talab böyiça sahifalash (demand paging): xotira faqat tegilganda ajratiladi
+7. Signallar (SYS_SIGNAL, SIG_TERM/KILL/USER), kutişlar signal bilan uziladi
+8. Rejalaştiruvçi: yadro mosligi (affinity) + ish öğirlaş
+9. Köp foydalanuvçi, fayl ruxsatlari, jarayon egasi (avval qöşilgan)
+10. FAT16/FAT32 öqiş (/fat)
+11. TLS 1.3 (HTTPS) — şifrlangan kanal (sertifikat tekşiruvi hali yöq)
+
+Yadro öz-özini tekşirişi (yuklanişda `[test]`) endi 13 ta: heap, MMU, W^X, PAN, kripto,
+taymer, rejalaştiruvçi, SMP, mutex, disk, fuzz, stek qörğoni, foydalanuvçi rejimi.
+Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi.
+
 ## Versiyalaş
 
 Joriy versiya: **0.0.1**. Versiya har bir özgarişda emas, faqat işlaydigan
