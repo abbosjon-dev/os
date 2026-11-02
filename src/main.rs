@@ -20,6 +20,7 @@ mod gfx_font;
 mod gic;
 mod gui;
 mod i18n;
+mod image;
 mod ipc;
 mod line;
 mod irq;
@@ -470,6 +471,12 @@ fn self_tests() {
     // X.509: sertifikat tahlilçisi (muddat va host nomi tekşiruvi)
     net::x509::self_test().expect("X.509 tahlilçi tekşiruvi yiqildi");
     tprintln!(msg::TEST_X509);
+
+    // Rasm dekoderlari: PNG, GIF, BMP, PNM, QOI
+    match image::self_test() {
+        Ok(n) => tprintln!(msg::TEST_IMAGE, n),
+        Err(fmt) => panic!("rasm dekoderi yiqildi: {}", fmt),
+    }
 
     // Taymer uzilişlari: 50 ms içida kamida 3 ta tick kelişi kerak
     let start_ticks = timer::ticks();

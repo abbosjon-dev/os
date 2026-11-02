@@ -568,6 +568,11 @@ pub mod msg {
         "[test] KASLR: стеки ядра при каждой загрузке в одном из {} мест — OK",
         "[test] KASLR: kernel stacks placed in one of {} spots each boot — OK",
     ];
+    pub const TEST_IMAGE: Text = [
+        "[test] rasm dekoderlari: {} ta format (PNG, JPEG, GIF, BMP, PNM, QOI) — OK",
+        "[test] декодеры изображений: {} форматов (PNG, JPEG, GIF, BMP, PNM, QOI) — OK",
+        "[test] image decoders: {} formats (PNG, JPEG, GIF, BMP, PNM, QOI) — OK",
+    ];
     pub const TEST_X509: Text = [
         "[test] X.509: sertifikat tahlili, amal muddati va host nomi tekşiruvi — OK",
         "[test] X.509: разбор сертификата, проверка срока и имени хоста — OK",
