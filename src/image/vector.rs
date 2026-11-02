@@ -18,17 +18,28 @@ pub struct Shape {
     pub nonzero: bool, // toʻldiriş qoidasi
 }
 
+/// Matn yozuvi (tayanç chizigʻi — baseline, sahna koordinatasida).
+pub struct Text {
+    pub x: f32,
+    pub baseline: f32,
+    pub size: f32,
+    pub color: u32,
+    pub s: alloc::string::String,
+    pub mono: bool,
+}
+
 /// Çizma sahnasi — [0,w]×[0,h] koordinata maydoni (yuqoridan pastga, y-down).
 pub struct Scene {
     pub w: f32,
     pub h: f32,
     pub bg: u32,
     pub shapes: Vec<Shape>,
+    pub texts: Vec<Text>,
 }
 
 impl Scene {
     pub fn new(w: f32, h: f32) -> Scene {
-        Scene { w: w.max(1.0), h: h.max(1.0), bg: 0xffffff, shapes: Vec::new() }
+        Scene { w: w.max(1.0), h: h.max(1.0), bg: 0xffffff, shapes: Vec::new(), texts: Vec::new() }
     }
 }
 
@@ -331,6 +342,10 @@ pub fn render(scene: &Scene, max_dim: usize) -> Image {
         if let Some(c) = shape.stroke {
             stroke_path(&mut img, &scaled, fmax(shape.stroke_w * scale, 1.0), c);
         }
+    }
+    // Matnlar — shakllar ustidan
+    for t in &scene.texts {
+        super::text::draw(&mut img, t.x * scale, t.baseline * scale, &t.s, t.size * scale, t.color, t.mono);
     }
     img
 }

@@ -22,6 +22,7 @@ mod sample;
 mod sample_svg;
 mod svg;
 mod testdata;
+mod text;
 mod tga;
 mod vector;
 mod wmf;

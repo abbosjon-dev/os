@@ -38,7 +38,7 @@ pub fn decode(d: &[u8]) -> Option<Image> {
     let mut scene = Scene::new(w, h);
     scene.bg = 0xffffff;
     interpret(&stream, &mut scene, mbox, h);
-    if scene.shapes.is_empty() {
+    if scene.shapes.is_empty() && scene.texts.is_empty() {
         return None;
     }
     Some(vector::render(&scene, 1200))
@@ -238,12 +238,18 @@ fn interpret(data: &[u8], scene: &mut Scene, mbox: Box4, h: f32) {
     let mut subs: Vec<Vec<Pt>> = Vec::new();
     let mut pt = (0f32, 0f32);
     let mut start = (0f32, 0f32);
+    // Matn holati
+    let mut tmat = Mat(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    let mut tlm = tmat;
+    let mut fsize = 12.0f32;
+    let mut tj_buf = String::new();
 
     let toks = tokenize(data);
     let mut i = 0;
     while i < toks.len() {
         match &toks[i] {
             CTok::Num(n) => ops.push(*n),
+            CTok::Str(s) => tj_buf.push_str(s),
             CTok::Op(op) => {
                 let dev = |ctm: &Mat, x: f32, y: f32| ctm.apply(x, y);
                 match op.as_str() {
@@ -384,7 +390,38 @@ fn interpret(data: &[u8], scene: &mut Scene, mbox: Box4, h: f32) {
                         let m = Mat(nth(&ops, 0), nth(&ops, 1), nth(&ops, 2), nth(&ops, 3), nth(&ops, 4), nth(&ops, 5));
                         ctm = ctm.mul(&m);
                     }
-                    _ => {} // matn (Tj, Td...), rasm va boşqalar — eʼtiborsiz
+                    "BT" => {
+                        tmat = Mat(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+                        tlm = tmat;
+                        tj_buf.clear();
+                    }
+                    "Tf" => fsize = nth(&ops, 0).max(1.0), // /F size Tf (nom skip qilingan)
+                    "Td" | "TD" => {
+                        let t = Mat(1.0, 0.0, 0.0, 1.0, nth(&ops, 0), nth(&ops, 1));
+                        tlm = tlm.mul(&t);
+                        tmat = tlm;
+                    }
+                    "Tm" => {
+                        tmat = Mat(nth(&ops, 0), nth(&ops, 1), nth(&ops, 2), nth(&ops, 3), nth(&ops, 4), nth(&ops, 5));
+                        tlm = tmat;
+                    }
+                    "Tj" | "TJ" | "'" | "\"" => {
+                        if !tj_buf.is_empty() {
+                            let m = ctm.mul(&tmat); // avval tmat, keyin ctm
+                            let (bx, by) = m.apply(0.0, 0.0);
+                            let sz = fsize * scale_of(&m);
+                            scene.texts.push(super::vector::Text {
+                                x: bx,
+                                baseline: by,
+                                size: sz.max(1.0),
+                                color: fill,
+                                s: core::mem::take(&mut tj_buf),
+                                mono: false,
+                            });
+                        }
+                    }
+                    "ET" => tj_buf.clear(),
+                    _ => {} // boşqa matn/rasm operatorlari — eʼtiborsiz
                 }
                 ops.clear();
             }
@@ -417,6 +454,7 @@ fn rgbf(r: f32, g: f32, b: f32) -> u32 {
 enum CTok {
     Num(f32),
     Op(String),
+    Str(String),
 }
 
 fn tokenize(d: &[u8]) -> Vec<CTok> {
@@ -434,16 +472,34 @@ fn tokenize(d: &[u8]) -> Vec<CTok> {
             b'(' => {
                 let mut depth = 1;
                 i += 1;
+                let mut s = alloc::string::String::new();
                 while i < d.len() && depth > 0 {
                     match d[i] {
-                        b'\\' => i += 1,
-                        b'(' => depth += 1,
-                        b')' => depth -= 1,
-                        _ => {}
+                        b'\\' => {
+                            i += 1;
+                            if let Some(&c) = d.get(i) {
+                                s.push(match c {
+                                    b'n' => '\n',
+                                    b't' => '\t',
+                                    _ => c as char,
+                                });
+                            }
+                        }
+                        b'(' => {
+                            depth += 1;
+                            s.push('(');
+                        }
+                        b')' => {
+                            depth -= 1;
+                            if depth > 0 {
+                                s.push(')');
+                            }
+                        }
+                        c => s.push(c as char),
                     }
                     i += 1;
                 }
-                out.push(CTok::Op(String::from("Tj")));
+                out.push(CTok::Str(s));
             }
             b'<' | b'[' | b']' | b'>' | b'{' | b'}' => {
                 // massiv/lugʻat/hex — ichidagi sonlarni hisobga olmaymiz (soddalaştiriş)

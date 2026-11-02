@@ -37,6 +37,27 @@ fn parse(text: &str) -> Option<Scene> {
     let mut pos = 0;
     while let Some((name, attrs, next)) = next_tag(text, pos) {
         pos = next;
+        // <text> — mazmunni </text> gaça öqiymiz
+        if name == "text" || name == "tspan" {
+            let content_end = text[pos..].find("</").map(|i| pos + i).unwrap_or(pos);
+            let content = decode_entities(text[pos..content_end].trim());
+            if !content.is_empty() {
+                let x = fnum(&attrs, "x") - vx;
+                let y = fnum(&attrs, "y") - vy;
+                let size = attr(&attrs, "font-size").and_then(|s| num(strip_unit(&s))).unwrap_or(16.0).max(1.0);
+                let (fill, _, _) = style(&attrs);
+                let col = fill.unwrap_or(0x000000);
+                let anchor = attr(&attrs, "text-anchor").unwrap_or_default();
+                let w = super::text::width(&content, size, false);
+                let ax = match anchor.as_str() {
+                    "middle" => x - w / 2.0,
+                    "end" => x - w,
+                    _ => x,
+                };
+                scene.texts.push(super::vector::Text { x: ax, baseline: y, size, color: col, s: content, mono: false });
+            }
+            continue;
+        }
         let shape = match name {
             "rect" => rect(&attrs),
             "circle" => circle(&attrs),
@@ -356,6 +377,14 @@ fn arc_to(out: &mut Vec<Pt>, x0: f32, y0: f32, mut rx: f32, mut ry: f32, _rot: f
 
 fn fnum(a: &str, key: &str) -> f32 {
     attr(a, key).and_then(|s| num(strip_unit(&s))).unwrap_or(0.0)
+}
+
+/// XML belgili obyektlarini (&amp; &lt; …) matnga aylantiradi.
+fn decode_entities(s: &str) -> String {
+    if !s.contains('&') {
+        return String::from(s);
+    }
+    s.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&#39;", "'")
 }
 
 fn strip_unit(s: &str) -> &str {

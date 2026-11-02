@@ -15,7 +15,7 @@ enum Tok {
     Lit(String),  // /name
     Exec(String), // name
     Proc(Vec<Tok>),
-    Str,
+    Str(String),
 }
 
 #[derive(Clone)]
@@ -24,6 +24,7 @@ enum Val {
     Name(String),
     Proc(Vec<Tok>),
     Bool(bool),
+    Str(String),
 }
 
 #[derive(Clone, Copy)]
@@ -73,6 +74,7 @@ struct Interp {
     pt: Pt, // joriy nuqta (foydalanuvçi koordinatasida)
     scene: Scene,
     steps: usize,
+    font_size: f32,
 }
 
 pub fn decode(d: &[u8]) -> Option<Image> {
@@ -105,12 +107,13 @@ pub fn decode(d: &[u8]) -> Option<Image> {
         pt: (0.0, 0.0),
         scene: Scene::new(w, h),
         steps: 0,
+        font_size: 12.0,
     };
     // Koordinatalarni BoundingBox ga ko'çiramiz va y ni ag'daramiz (PS y-up)
     it.gs.ctm = Mat { a: 1.0, b: 0.0, c: 0.0, d: -1.0, e: -bx, f: h + by };
     it.scene.bg = 0xffffff;
     it.run(&toks);
-    if it.scene.shapes.is_empty() {
+    if it.scene.shapes.is_empty() && it.scene.texts.is_empty() {
         return None;
     }
     Some(vector::render(&it.scene, 1000))
@@ -152,16 +155,34 @@ fn tokenize_until(b: &[u8], i: &mut usize, in_proc: bool) -> Vec<Tok> {
                 // satr — muvozanatli qavslar
                 let mut depth = 1;
                 *i += 1;
+                let mut s = String::new();
                 while *i < b.len() && depth > 0 {
                     match b[*i] {
-                        b'\\' => *i += 1,
-                        b'(' => depth += 1,
-                        b')' => depth -= 1,
-                        _ => {}
+                        b'\\' => {
+                            *i += 1;
+                            if let Some(&ch) = b.get(*i) {
+                                s.push(match ch {
+                                    b'n' => '\n',
+                                    b't' => '\t',
+                                    _ => ch as char,
+                                });
+                            }
+                        }
+                        b'(' => {
+                            depth += 1;
+                            s.push('(');
+                        }
+                        b')' => {
+                            depth -= 1;
+                            if depth > 0 {
+                                s.push(')');
+                            }
+                        }
+                        ch => s.push(ch as char),
                     }
                     *i += 1;
                 }
-                out.push(Tok::Str);
+                out.push(Tok::Str(s));
             }
             b'[' | b']' => {
                 out.push(Tok::Exec(String::from(if c == b'[' { "[" } else { "]" })));
@@ -211,7 +232,7 @@ impl Interp {
                 Tok::Num(n) => self.stack.push(Val::Num(*n)),
                 Tok::Lit(s) => self.stack.push(Val::Name(s.clone())),
                 Tok::Proc(p) => self.stack.push(Val::Proc(p.clone())),
-                Tok::Str => self.stack.push(Val::Bool(false)), // satr — eʼtiborsiz joʻy toʻldiruvçi
+                Tok::Str(s) => self.stack.push(Val::Str(s.clone())),
                 Tok::Exec(name) => self.exec(name),
             }
         }
@@ -371,6 +392,37 @@ impl Interp {
                 let a = self.num() * 3.14159265 / 180.0;
                 let (s, co) = (vector::sin(a), vector::cos(a));
                 self.gs.ctm = self.gs.ctm.mul(&Mat { a: co, b: s, c: -s, d: co, e: 0.0, f: 0.0 });
+            }
+            "findfont" => {} // nom stekda qoladi
+            "scalefont" => {
+                self.font_size = self.num();
+                self.stack.pop(); // font nomi
+                self.stack.push(Val::Bool(true));
+            }
+            "setfont" => {
+                self.stack.pop();
+            }
+            "show" | "ashow" | "widthshow" | "awidthshow" => {
+                // (string) show — joriy nuqtada chizadi
+                let s = loop {
+                    match self.stack.pop() {
+                        Some(Val::Str(s)) => break s,
+                        Some(_) => continue,
+                        None => break String::new(),
+                    }
+                };
+                if !s.is_empty() {
+                    let (bx, by) = self.dev(self.pt.0, self.pt.1);
+                    let sz = self.font_size * self.scale_factor();
+                    self.scene.texts.push(super::vector::Text {
+                        x: bx,
+                        baseline: by,
+                        size: sz.max(1.0),
+                        color: self.gs.color,
+                        s,
+                        mono: false,
+                    });
+                }
             }
             "gsave" => self.gstack.push(self.gs.clone()),
             "grestore" => {
