@@ -15,8 +15,10 @@ mod pcx;
 mod png;
 mod qoi;
 mod sample;
+mod svg;
 mod testdata;
 mod tga;
+mod vector;
 
 pub use sample::SAMPLE_PNG;
 
@@ -56,6 +58,8 @@ pub fn format_name(data: &[u8]) -> Option<&'static str> {
         Some("BMP")
     } else if &data[..4] == b"qoif" {
         Some("QOI")
+    } else if is_svg(data) {
+        Some("SVG")
     } else if data[0] == b'P' && (b'1'..=b'6').contains(&data[1]) {
         Some("PNM")
     } else if data[0] == 0x0a && data[2] <= 1 {
@@ -82,8 +86,17 @@ pub fn decode(data: &[u8]) -> Option<Image> {
         "PNM" => bmp::decode_pnm(data),
         "PCX" => pcx::decode(data),
         "ICO" => ico::decode(data),
+        "SVG" => svg::decode(data),
         _ => None,
     }
+}
+
+/// SVG mi? (XML sarlavhasi yoki <svg yorlig'i boshida).
+fn is_svg(data: &[u8]) -> bool {
+    let head = &data[..data.len().min(512)];
+    let s = core::str::from_utf8(head).unwrap_or("");
+    let t = s.trim_start();
+    t.starts_with("<?xml") && s.contains("<svg") || t.starts_with("<svg")
 }
 
 /// Fayl nomini (kengaytma) hisobga olib dekodlaydi — TGA kabi "magic"siz
@@ -168,6 +181,20 @@ pub fn self_test() -> Result<usize, &'static str> {
     match decode(testdata::JPEG) {
         Some(img) if near(&img) => n += 1,
         _ => return Err("JPEG"),
+    }
+    // SVG — vektor; nisbatan joylaşgan rang nuqtalarini tekşiramiz
+    let svg = br##"<svg viewBox="0 0 16 16"><rect x="0" y="0" width="8" height="8" fill="#dc1e1e"/><rect x="8" y="0" width="8" height="8" fill="#1ec83c"/><rect x="0" y="8" width="8" height="8" fill="#2850e6"/><rect x="8" y="8" width="8" height="8" fill="#f0c814"/></svg>"##;
+    let rp = |img: &Image, fx: f32, fy: f32| img.get((img.w as f32 * fx) as usize, (img.h as f32 * fy) as usize);
+    match decode(svg) {
+        Some(img)
+            if rp(&img, 0.25, 0.25) == rgb(220, 30, 30)
+                && rp(&img, 0.75, 0.25) == rgb(30, 200, 60)
+                && rp(&img, 0.25, 0.75) == rgb(40, 80, 230)
+                && rp(&img, 0.75, 0.75) == rgb(240, 200, 20) =>
+        {
+            n += 1
+        }
+        _ => return Err("SVG"),
     }
     Ok(n)
 }
