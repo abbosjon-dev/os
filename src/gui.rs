@@ -56,6 +56,7 @@ enum Kind {
     Editor,
     Clock,
     Image,
+    Audio,
     About,
 }
 
@@ -135,6 +136,11 @@ struct Window {
     frames: Vec<(crate::image::Image, u32)>, // harakatli rasm kadrlari (rasm, ms)
     frame: usize,       // joriy kadr indeksi
     frame_ms: u64,      // oxirgi kadr almaşgan vaqt (ms)
+    clip: Option<crate::audio::Clip>, // Audio oynasi: övoz
+    env: Vec<(i16, i16)>, // toʻlqin öramasi (min,max)
+    playing: bool,      // ijro ketyaptimi
+    play_pos: u32,      // ijro örni (ms)
+    play_t: u64,        // oxirgi yangilaş vaqti (ms)
     // Haqiqiy EL0 terminal jarayoni bilan quvur orqali bogʻ
     pid: task::Pid,     // 0 — jarayon yöq
     pin: usize,         // kiriş quvuri (GUI yozadi → bola stdin); NONE_PIPE — yöq
@@ -173,6 +179,16 @@ impl Window {
     /// Mazmun boşlanadigan y (sarlavhadan keyin).
     fn content_top(&self) -> usize {
         self.y + title_h() + body() / 3
+    }
+    /// Övoz oynasidagi ijro tugmasi (doira), markaz va radius.
+    fn play_btn(&self) -> (usize, usize, usize) {
+        let r = body();
+        (self.x + body() + r, self.y + self.h - body() - r, r)
+    }
+    fn in_play_btn(&self, cx: usize, cy: usize) -> bool {
+        let (px, py, r) = self.play_btn();
+        let (dx, dy) = (cx as isize - px as isize, cy as isize - py as isize);
+        (dx * dx + dy * dy) as usize <= (r + 4) * (r + 4)
     }
 }
 
@@ -221,6 +237,11 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         frames: Vec::new(),
         frame: 0,
         frame_ms: 0,
+        clip: None,
+        env: Vec::new(),
+        playing: false,
+        play_pos: 0,
+        play_t: 0,
         pid: 0, pin: NONE_PIPE, pout: NONE_PIPE,
         cur: Vec::new(), esc: None,
     }
@@ -289,6 +310,12 @@ fn new_window(kind: Kind, n: usize) -> Window {
                 String::from("zamin.app · info@zamin.app"),
             ])
         }
+        Kind::Audio => {
+            // Audio faqat fayldan oçiladi (dokdan emas)
+            let (w, h) = (u * 30, u * 16);
+            let (x, y) = place(w, h);
+            base(x, y, w, h, kind, String::from("Övoz"), Vec::new())
+        }
     }
 }
 
@@ -344,6 +371,21 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
     let name = path.rsplit('/').next().unwrap_or(path);
     let x = sw / 6 + (n * u * 2) % (sw / 3);
     let y = menubar_h() + u * 2 + (n * u) % (sh / 4);
+    // Övozmi?
+    if crate::audio::is_audio_ext(name) || crate::audio::format_name(&data).is_some() {
+        let (w, h) = (u * 30, u * 16);
+        let mut win = base(x.min(sw - w), y, w, h, Kind::Audio, alloc::format!("Övoz — {}", name), Vec::new());
+        win.path = String::from(path);
+        if let Some(clip) = crate::audio::decode(name, &data) {
+            win.env = clip.envelope(u * 24);
+            win.clip = Some(clip);
+        } else {
+            let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_uppercase()).unwrap_or_default();
+            win.lines = alloc::vec![alloc::format!("{} formati hali qöllanmaydi", ext), String::from("Qöllanadi: WAV, AIFF")];
+        }
+        windows.push(win);
+        return;
+    }
     // Rasmmi? (tur yoki sarlavha baytidan)
     let is_img = FKind::of(name, false) == FKind::Image || crate::image::format_name(&data).is_some();
     if is_img {
@@ -777,6 +819,20 @@ fn desktop() {
                     changed = true;
                 }
             }
+            // Övoz ijrosi bosh (playhead) vaqtga qarab oldinga suriladi
+            if win.playing {
+                if let Some(dur) = win.clip.as_ref().map(|c| c.duration_ms()) {
+                    let dt = now_ms.wrapping_sub(win.play_t) as u32;
+                    win.play_t = now_ms;
+                    win.play_pos = win.play_pos.saturating_add(dt);
+                    if win.play_pos >= dur {
+                        win.play_pos = dur;
+                        win.playing = false;
+                        audio_sync(win);
+                    }
+                    changed = true;
+                }
+            }
         }
         for e in input::poll() {
             match (e.typ, e.code) {
@@ -933,6 +989,16 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
             windows[i].cur = msg.into_bytes(); // holat xabari
             return;
         }
+        if windows[i].kind == Kind::Audio && windows[i].clip.is_some() && windows[i].in_play_btn(cx, cy) {
+            let w = &mut windows[i];
+            w.playing = !w.playing;
+            w.play_t = crate::timer::uptime_ms();
+            if w.play_pos >= w.clip.as_ref().map(|c| c.duration_ms()).unwrap_or(0) {
+                w.play_pos = 0; // oxirida — boşidan
+            }
+            audio_sync(w);
+            return;
+        }
         if windows[i].title_bar(cx, cy) {
             let off = (cx - windows[i].x) | ((cy - windows[i].y) << 16);
             let w = windows.remove(i);
@@ -1033,6 +1099,8 @@ fn draw_window(win: &Window, active: bool) {
         Kind::Image if win.img.is_some() || !win.frames.is_empty() => draw_image(win),
         Kind::Image if win.path.is_empty() => draw_scene(win), // dok "Rasm" — namuna manzara
         Kind::Image => draw_text_window(win),                  // oçib bölmagan rasm — xabar
+        Kind::Audio if win.clip.is_some() => draw_audio(win),
+        Kind::Audio => draw_text_window(win),
         Kind::Editor => draw_editor(win),
         Kind::Files => draw_files(win),
         _ => draw_text_window(win),
@@ -1215,6 +1283,74 @@ fn draw_scene(win: &Window) {
     fill_rect(x, y + h * 5 / 6, w, h - h * 5 / 6, 0x143026);
 }
 
+/// Ijro holatini övoz qurilmasi bilan moslaştiradi (qurilma bölsa chaladi).
+fn audio_sync(win: &Window) {
+    if let Some(clip) = &win.clip {
+        if win.playing {
+            crate::audio::sound::play(&clip.samples, clip.rate, clip.channels, win.play_pos);
+        } else {
+            crate::audio::sound::stop();
+        }
+    }
+}
+
+/// Övoz oynasi: toʻlqin shakli, maʼlumot, ijro tugmasi, progress.
+fn draw_audio(win: &Window) {
+    let Some(clip) = &win.clip else { return };
+    let pad = body();
+    let x = win.x + pad;
+    let y = win.content_top();
+    let w = win.w.saturating_sub(pad * 2);
+    // Maʼlumot
+    let dur = clip.duration_ms();
+    let info = alloc::format!(
+        "{} Hz · {} kanal · {}:{:02}",
+        clip.rate,
+        clip.channels,
+        dur / 60000,
+        (dur / 1000) % 60
+    );
+    gfx::draw_text(x, y, &info, 0x9fb0c3, small());
+    // Toʻlqin
+    let wy = y + body() * 2;
+    let wh = win.h.saturating_sub((wy - win.y) + body() * 4);
+    let mid = wy + wh / 2;
+    gfx::fill_rect(x, mid, w, 1, 0x2a3446);
+    let n = win.env.len().max(1);
+    for (i, &(mn, mx)) in win.env.iter().enumerate() {
+        let bx = x + i * w / n;
+        let top = mid as i32 - (mx as i32 * (wh as i32 / 2) / 32768);
+        let bot = mid as i32 - (mn as i32 * (wh as i32 / 2) / 32768);
+        let (t, b) = (top.min(bot).max(wy as i32), top.max(bot).min((wy + wh) as i32));
+        if b > t {
+            gfx::fill_rect(bx, t as usize, (w / n).max(1), (b - t) as usize, 0x46d98a);
+        }
+    }
+    // Ijro bosh (playhead)
+    if dur > 0 {
+        let hx = x + (win.play_pos.min(dur) as usize * w / dur as usize);
+        gfx::fill_rect(hx, wy, 2, wh, 0xffd426);
+    }
+    // Ijro tugmasi
+    let (px, py, r) = win.play_btn();
+    gfx::fill_circle(px, py, r, if win.playing { 0xffd426 } else { ZAMIN_KOK });
+    if win.playing {
+        // pauza — ikki tayoqça
+        fill_rect(px - r / 3, py - r / 2, r / 4, r, 0x06230f);
+        fill_rect(px + r / 8, py - r / 2, r / 4, r, 0x06230f);
+    } else {
+        // uçburçak (play)
+        for i in 0..r {
+            let hh = (r - i) * 2 / 3;
+            fill_rect(px - r / 3 + i / 2, py.saturating_sub(hh / 2), 1, hh.max(1), OQ);
+        }
+    }
+    // Vaqt
+    let pos = win.play_pos.min(dur);
+    let tt = alloc::format!("{}:{:02} / {}:{:02}", pos / 60000, (pos / 1000) % 60, dur / 60000, (dur / 1000) % 60);
+    gfx::draw_text(px + r + pad, py.saturating_sub(small() / 2), &tt, 0xe7edf6, small());
+}
+
 /// Dok: markazlashgan shaffof panel + ilova ikonalari (siçqon tagida kattaroq).
 fn draw_dock(sw: usize, sh: usize, cx: usize, cy: usize, windows: &[Window]) {
     let (dx, dy, dw, dh, _icon, _gap) = dock_geom(sw, sh);
@@ -1296,6 +1432,11 @@ fn draw_icon(kind: Kind, color: Color, x: usize, y: usize, s: usize) {
         }
         Kind::About => {
             gfx::draw_text_centered(c, y + s / 6, "i", OQ, s * 2 / 3);
+        }
+        Kind::Audio => {
+            // nota belgisi
+            gfx::fill_circle(c - s / 6, y + s * 2 / 3, s / 10, OQ);
+            fill_rect(c - s / 6 + s / 10, y + s / 4, (s / 20).max(1), s * 5 / 12, OQ);
         }
     }
 }

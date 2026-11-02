@@ -9,6 +9,7 @@ extern crate alloc;
 #[allow(dead_code)] // ayrim doimiylar faqat foydalanuvçi kutubxonasida kerak
 mod abi;
 mod accounts;
+mod audio;
 mod config;
 mod crypto;
 mod drivers;
@@ -482,6 +483,10 @@ fn self_tests() {
         Ok(n) => tprintln!(msg::TEST_IMAGE, n),
         Err(fmt) => panic!("rasm dekoderi yiqildi: {}", fmt),
     }
+
+    // Audio dekoderi: WAV
+    audio::self_test().expect("audio (WAV) dekoderi yiqildi");
+    tprintln!(msg::TEST_AUDIO);
 
     // Taymer uzilişlari: 50 ms içida kamida 3 ta tick kelişi kerak
     let start_ticks = timer::ticks();

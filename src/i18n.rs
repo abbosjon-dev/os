@@ -573,6 +573,11 @@ pub mod msg {
         "[test] декодеры изображений: {} форматов (raster + vektor: SVG, PDF, EPS, DXF…) — OK",
         "[test] image decoders: {} formats (raster + vektor: SVG, PDF, EPS, DXF…) — OK",
     ];
+    pub const TEST_AUDIO: Text = [
+        "[test] audio: WAV dekoderi (PCM namunalar) — OK",
+        "[test] аудио: декодер WAV (PCM) — OK",
+        "[test] audio: WAV decoder (PCM samples) — OK",
+    ];
     pub const TEST_X509: Text = [
         "[test] X.509: sertifikat tahlili, amal muddati va host nomi tekşiruvi — OK",
         "[test] X.509: разбор сертификата, проверка срока и имени хоста — OK",
