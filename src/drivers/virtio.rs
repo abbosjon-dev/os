@@ -47,6 +47,7 @@ const DESC_WRITE: u16 = 2;
 
 pub const DEVICE_BLOCK: u32 = 2;
 pub const DEVICE_RNG: u32 = 4;
+pub const DEVICE_GPU: u32 = 16;
 
 #[repr(C)]
 struct Desc {

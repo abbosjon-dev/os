@@ -500,6 +500,8 @@ pub mod msg {
     ];
     pub const FS_IO: Text = ["disk xatosi", "ошибка диска", "disk error"];
     pub const SH_SAVE_FAIL: Text = ["  Saqlab bölmadi: {}", "  Не удалось сохранить: {}", "  Save failed: {}"];
+    pub const GPU_READY: Text = ["[gpu ] virtio-gpu: {}x{} ish stoli çizildi", "[gpu ] virtio-gpu: рабочий стол {}x{}", "[gpu ] virtio-gpu: desktop {}x{}"];
+    pub const GPU_NONE: Text = ["[gpu ] grafik qurilma yöq (matn rejimi)", "[gpu ] нет видеоустройства (текстовый режим)", "[gpu ] no GPU (text mode)"];
     pub const FAT_MOUNTED: Text = [
         "[fat ] ikkinçi disk (FAT) /fat ga ulandi: {} ta fayl",
         "[fat ] второй диск (FAT) подключён к /fat: файлов — {}",
@@ -555,6 +557,56 @@ pub mod msg {
         "[test] PAN: yadro foydalanuvçi xotirasiga faqat nusxalaş orqali tegadi — OK",
         "[test] PAN: ядро обращается к памяти пользователя только через копирование — OK",
         "[test] PAN: kernel touches user memory only through copy routines — OK",
+    ];
+    pub const TEST_FAT_WRITE: Text = [
+        "[test] FAT yoziş: fayl yaratildi va qayta öqildi (round-trip) — OK",
+        "[test] запись FAT: файл создан и прочитан обратно (round-trip) — OK",
+        "[test] FAT write: file created and read back (round-trip) — OK",
+    ];
+    pub const TEST_KASLR: Text = [
+        "[test] KASLR: yadro steklari har yuklanişda {} xil joydan birida — OK",
+        "[test] KASLR: стеки ядра при каждой загрузке в одном из {} мест — OK",
+        "[test] KASLR: kernel stacks placed in one of {} spots each boot — OK",
+    ];
+    pub const TEST_IMAGE: Text = [
+        "[test] rasm dekoderlari: {} ta format (raster + vektor: SVG, PDF, EPS, DXF…) — OK",
+        "[test] декодеры изображений: {} форматов (raster + vektor: SVG, PDF, EPS, DXF…) — OK",
+        "[test] image decoders: {} formats (raster + vektor: SVG, PDF, EPS, DXF…) — OK",
+    ];
+    pub const SND_READY: Text = [
+        "[snd ] övoz qurilmasi: virtio-sound tayyor",
+        "[snd ] звук: virtio-sound готов",
+        "[snd ] sound device: virtio-sound ready",
+    ];
+    pub const SND_NONE: Text = [
+        "[snd ] övoz qurilmasi topilmadi",
+        "[snd ] звуковое устройство не найдено",
+        "[snd ] no sound device",
+    ];
+    pub const TEST_AUDIO: Text = [
+        "[test] audio: WAV, FLAC va MP3 dekoderlari — OK",
+        "[test] аудио: декодеры WAV, FLAC и MP3 — OK",
+        "[test] audio: WAV, FLAC and MP3 decoders — OK",
+    ];
+    pub const TEST_VIDEO: Text = [
+        "[test] video: MJPEG/AVI dekoderi, MP4/MOV/MKV/WebM taniş — OK",
+        "[test] видео: декодер MJPEG/AVI, распознавание MP4/MOV/MKV/WebM — OK",
+        "[test] video: MJPEG/AVI decoder, MP4/MOV/MKV/WebM recognition — OK",
+    ];
+    pub const TEST_X509: Text = [
+        "[test] X.509: sertifikat tahlili, amal muddati va host nomi tekşiruvi — OK",
+        "[test] X.509: разбор сертификата, проверка срока и имени хоста — OK",
+        "[test] X.509: certificate parsing, validity and hostname checks — OK",
+    ];
+    pub const TLS_CERT_OK: Text = [
+        "[tls ] sertifikat qabul qilindi: {} (muddat va host nomi tekşirildi)",
+        "[tls ] сертификат принят: {} (срок и имя хоста проверены)",
+        "[tls ] certificate accepted: {} (validity and hostname checked)",
+    ];
+    pub const TLS_CERT_BAD: Text = [
+        "[tls ] sertifikat rad etildi: {} — ulaniş böldi",
+        "[tls ] сертификат отклонён: {} — соединение прервано",
+        "[tls ] certificate rejected: {} — connection aborted",
     ];
     pub const SEC_TITLE: Text = ["  Zamin OS himoyasi:", "  Защита Zamin OS:", "  Zamin OS protection:"];
     pub const SEC_ON: Text = ["yoqiq", "включено", "on"];

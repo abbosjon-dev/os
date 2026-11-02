@@ -85,6 +85,7 @@ pub enum Role {
     Downloads,
     Pictures,
     Music,
+    Videos,
     Temp,
 }
 
@@ -102,6 +103,7 @@ impl Role {
             Role::Downloads => ["Yuklamalar", "Загрузки", "Downloads"],
             Role::Pictures => ["Rasmlar", "Изображения", "Pictures"],
             Role::Music => ["Musiqa", "Музыка", "Music"],
+            Role::Videos => ["Videolar", "Видео", "Videos"],
             Role::Temp => ["vaqtinçalik", "временные", "tmp"],
         }
     }
@@ -111,7 +113,7 @@ impl Role {
     }
 }
 
-const HOME_FOLDERS: [Role; 4] = [Role::Documents, Role::Downloads, Role::Pictures, Role::Music];
+const HOME_FOLDERS: [Role; 5] = [Role::Documents, Role::Downloads, Role::Pictures, Role::Music, Role::Videos];
 
 struct Node {
     name: String,
@@ -386,6 +388,31 @@ pub fn setup_home(username: &str, uid: u32) -> Result<String, FsError> {
         if v.child(home, r.names()[0]).is_err() {
             let id = v.add_with_role(home, r.names()[lang], Data::Dir(Vec::new()), false, Some(r))?;
             v.node_mut(id)?.owner = uid;
+        }
+    }
+    // Namuna fayllar — mos papkalarga (yoziş yöli orqali — diskka saqlanadi)
+    let pics = v.child(home, Role::Pictures.names()[lang]).ok();
+    let music = v.child(home, Role::Music.names()[lang]).ok();
+    let videos = v.child(home, Role::Videos.names()[lang]).ok();
+    let seeds: [(Option<NodeId>, &str, &[u8]); 6] = [
+        (pics, "zamin.png", crate::image::SAMPLE_PNG),
+        (pics, "zamin.svg", crate::image::SAMPLE_SVG),
+        (pics, "zamin.gif", crate::image::SAMPLE_GIF),
+        (music, "zamin.wav", crate::audio::SAMPLE_WAV),
+        (music, "zamin.mp3", &crate::audio::SAMPLE_MP3),
+        (videos, "zamin.avi", &crate::video::SAMPLE_AVI),
+    ];
+    for (dir, name, bytes) in seeds {
+        if let Some(dir) = dir {
+            if v.child(dir, name).is_err() {
+                if let Ok(id) = v.add(dir, name, Data::File(FileData::new()), false) {
+                    if let Data::File(d) = &mut v.node_mut(id)?.data {
+                        let _ = d.write(0, bytes);
+                    }
+                    v.node_mut(id)?.owner = uid;
+                    mark_dirty();
+                }
+            }
         }
     }
     // `~` faqat tizimga kirgan foydalanuvçining öz papkasi (boşqa hisob yaratilganda özgarmaydi)

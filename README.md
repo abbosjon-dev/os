@@ -135,8 +135,58 @@ abbosjon@zamin:~> fayllar /fat
 abbosjon@zamin:~> öqi /fat/readme.txt
 ```
 
-Qisqa (8.3) nomlar öqiladi; yoziş yöq. Katta fayllar hozirça xotiraga yuklanadi (keyingi
-versiyada bloklab öqiladi).
+Qisqa (8.3) nomlar; yoziş ham qöllanadi (yaratiş/qayta yoziş).
+
+## Fayllar va rasmlar
+
+Grafik **Fayllar menejeri** papkalar içida yuradi va fayllarni turiga qarab
+tanib, mos ilovada oçadi:
+
+- fayl turi kengaytmadan aniqlanadi (papka, rasm, matn, dastur, audio, video,
+  arxiv) va tur ikonasi bilan körsatiladi;
+- rasm faylini bossangiz — **rasm köruvçi** uni dekodlab körsatadi;
+- matn faylini bossangiz — muharrirda oçiladi (tahrirlab saqlash mumkin);
+- dastur (ELF) bossangiz — maʼlumot körsatiladi.
+
+**Rasm dekoderlari — hammasi noldan yozilgan** (ochiq kutubxonasiz):
+
+- Raster: PNG/APNG (zlib/inflate + 5 filtr), JPEG (baseline — Huffman, IDCT,
+  YCbCr), GIF (LZW), BMP/DIB, TGA, PCX, ICO/CUR, QOI, PNM (P1-P6).
+- Vektor/hujjat: **SVG** (XML + path tili + Bezier/yoy), **PDF** (tuzilma +
+  mazmun oqimi + FlateDecode), **EPS/AI/PS** (kiçik PostScript interpretatori),
+  **DXF** (CAD), **WMF/EMF** (Windows metafayl), **CDR** (joylangan önköriniş).
+  Umumiy vektor poydevori: tez skanlin rasterizator (AA toʻldiriş + chiziq).
+
+`image::decode_file(nom, baytlar)` formatni aniqlaydi. Juda murakkab formatlar
+— HEIC/AVIF, JXL, RAW (CR2/NEF…), PSD, JPEG2000 — tur böyiça tanilади (ikona),
+ammo hali oçilmaydi. Vektor/hujjat formatlarida matn/font va gradient
+soddalaştirilgan.
+
+## Audio va video
+
+**Audio dekoderlar — hammasi noldan yozilgan:**
+
+- **WAV** (RIFF): PCM 8/16/24/32-bit, float, hamda o'yin/media kodeklari —
+  G.711 **μ-law**/**A-law**, **IMA/DVI ADPCM**, **Microsoft ADPCM**.
+- **AIFF/AIFC** (big-endian, 80-bit kengaytirilgan chastota).
+- **FLAC** — yoʻqotishsiz (Rice, fixed/LPC, kanal dekorrelyatsiyasi).
+- **MP3** (MPEG-1 Audio Layer III) — to'liq zanjir: sarlavha, yon maʼlumot,
+  bit rezervuar, Huffman (ISO jadvallari), qayta kvantlaş, qayta tartiblaş,
+  stereo (MS/intensity), antialias, IMDCT (uzun/qisqa bloklar), polifaz sintez
+  filtri. Taniş barcha versiyalar uçun (MPEG-1/2/2.5, Layer I/II/III, VBR, ID3).
+  ffmpeg bilan tekşirilgan (korrelyatsiya 1.0000).
+
+Grafik **Övoz köruvçi** toʻlqin shaklini chizadi va virtio-sound orqali chaladi.
+
+**Video:**
+
+- **MJPEG/AVI** — to'liq dekod qilinadi (kadrlar JPEG dekoderi orqali), GUI da
+  ketma-ket oʻynatiladi. ffmpeg bilan kadr-ba-kadr tekşirilgan.
+- **MP4/MOV** (ISO BMFF), **MKV/WebM** (EBML) — konteyner, kodek, oʻlçam va
+  davomiylik taniladi (H.264/HEVC/VP9/AV1 kodeklari hozircha dekod qilinmaydi).
+
+`audio::decode(nom, baytlar)` va `video::decode_frames(baytlar)` dekodlaydi.
+Namuna fayllar: `Musiqa/zamin.wav`, `Musiqa/zamin.mp3`, `Videolar/zamin.avi`.
 
 ## Foydalanuvçilar va ruxsatlar
 
@@ -329,6 +379,11 @@ src/fs/fat.rs         FAT16/FAT32 öquvçi (faqat öqiş)
 src/net/tls.rs        TLS 1.3 mijozi (X25519, ChaCha20-Poly1305, HKDF)
 src/crypto/x25519.rs  X25519 kalit almaşinuvi
 src/crypto/hkdf.rs    HKDF-SHA256 va TLS 1.3 kalit jadvali
+src/drivers/virtio_gpu.rs  virtio-gpu 2D drayveri
+src/gfx/mod.rs        Çiziş: piksel, töğriburçak, matn, gradient
+src/gfx_font.rs       8×16 bitmap şrift
+src/drivers/virtio_input.rs  Klaviatura/planşet drayveri
+src/gui.rs            Oynalar menejeri (oynalar, terminal, vazifalar paneli)
 user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 ```
 
@@ -348,12 +403,104 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [x] **8. Fayl tizimi** — VFS + ZaminFS 2 (bloklar, copy-on-write, şifrlangan daraxt)
 - [x] **9. Işonçlilik** — yadro jurnali, panic diskka yoziladi, fuzz sinovi
 - [x] **8½. Yadro himoyasi** — qörğonli yadro steklari, PAN, WXN, böşatilgan xotirani nollaş, ASLR
-- [ ] **9. Grafika** — framebuffer, kompozitor, oyna menejeri, şriftlar
-- [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar
+- [x] **9. Grafika** — virtio-gpu framebuffer, şrift, oynalar menejeri, grafik terminal, sichqoncha/klaviatura
+- [x] **9½. Media** — rasm (16+ format), audio (WAV/AIFF/FLAC/MP3 + ADPCM/μ-law/A-law), video (MJPEG/AVI dekod; MP4/MOV/MKV/WebM taniş) — hammasi noldan
+- [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar (davom etmoqda)
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
+
+## Grafika
+
+Zamin OS'da to'liq grafik muhit bor (virtio-gpu, 32-bit rang) — tiniq
+(anti-aliased) va har qanday ekran ölçamiga moslaşadi:
+
+- özimiz yozgan virtio-gpu 2D drayveri (resurs, scanout, transfer, flush);
+  ekranning afzal körilgan ölçamini soraydi (GET_DISPLAY_INFO) va shunga moslaşadi;
+- silliq (anti-aliased) masshtablanadigan şrift: har belgi 0..255 qamrov
+  xaritasi + metrikalar, chizishda 2x2 supersampling bilan istalgan ölçamga
+  moslaşadi — DejaVu Sans (UI) va Sans Mono (terminal), özbek/rus/belgilar;
+- gfx: alfa aralaştiriş, gradient, yumaloq burçakli shakllar, doira, soya;
+- UI mac'dan ilhomlanib (ammo ko'çirmay) — yumaloq oynalar, svetofor nuqtalari,
+  yuqori menyu paneli, markazlashgan dok va yumaloq ilova ikonalari;
+- barça ölçamlar ekrandan kelib çiqadi: 800×600, 1024×768, 1440×900 da tiniq.
+
+```sh
+# Oynada (grafik muhit kerak):
+cargo build && sh scripts/qemu-gfx.sh target/aarch64-unknown-none-softfloat/debug/kernel
+# Serversiz skrinshot (PNG):
+python3 scripts/screenshot.py target/aarch64-unknown-none-softfloat/debug/kernel ekran.png
+```
+
+GPU va kiriş (virtio-input) bölsa, to'liq grafik muhit işga tuşadi:
+
+- **Grafik kiriş (login):** yuklanişda chiroyli parol ekrani — foydalanuvçi
+  parolni kiritadi, toʻgʻri bölsa şifrlangan disk ulanadi va ish stoliga ötiladi.
+  Bir neçta hisob bölsa — sichqoncha bilan tanlaş. (Grafika bölganda serial faqat
+  maʼmur zaxira konsuli bölib qoladi.)
+- **Oynalar menejeri:** sichqoncha kursori, siljitiladigan oynalar (sarlavha,
+  yopiş tugmasi), old plan/fokus, pastda vazifalar paneli.
+- **Grafik terminal:** oyna ichida haqiqiy EL0 foydalanuvçi terminali
+  (`/dasturlar/terminal`) quvurlar orqali işlaydi — oddiy terminal emulyatori
+  (bola stdin/stdout quvurlarga ulanadi, GUI I/O ni haydaydi, ANSI tozalaşni tuşunadi).
+- **Ilovalar:** Matn muharriri (`~/qaydlar.txt` ni saqlaydi), Soat (jonli vaqt),
+  Rasm köruvçi (namunaviy "Zamin" manzarasi), Fayllar, Haqida.
+
+Klaviatura va sichqoncha — özimiz yozgan virtio-keyboard / virtio-tablet drayveri.
+GPU bölmasa, tizim matn rejimida (UART terminali) işlayveradi.
+
+## Backend mustahkamlaş (xavfsizlik va işonçlilik)
+
+Grafikadan oldin backend 11 ta yönalişda mustahkamlandi:
+
+1. TCP ulanişlari jarayonga bogʻlandi (boşqa jarayon öqiy olmaydi), jarayon tugaganda yopiladi
+2. Qafas (sandbox) endi tarmoqni ham tösadi
+3. ARP keşi eskiradi (60 s)
+4. TCP qayta jönatiş (RTO, yöqolgan segmentlar tiklanadi)
+5. ZaminFS saqlaş xatosida bloklar qaytariladi (oqmaydi)
+6. Talab böyiça sahifalash (demand paging): xotira faqat tegilganda ajratiladi
+7. Signallar (SYS_SIGNAL, SIG_TERM/KILL/USER), kutişlar signal bilan uziladi
+8. Rejalaştiruvçi: yadro mosligi (affinity) + ish öğirlaş
+9. Köp foydalanuvçi, fayl ruxsatlari, jarayon egasi (avval qöşilgan)
+10. FAT16/FAT32 öqiş (/fat)
+11. TLS 1.3 (HTTPS) — şifrlangan kanal
+
+Keyin yana uchta yönaliş qoşildi:
+
+12. **KASLR:** yadro steklari joylaşuvi har yuklanişda tasodifiy (1 GiB sohada
+    16320 xil joy, ~14 bit entropiya). Qaytiş manzillari saqlanadigan eng muhim
+    yadro sohasi hujumçi uchun oldindan bilib bölmaydigan boʻladi.
+13. **FAT yoziş:** ikkinchi diskka fayl yaratiş/qayta yoziş (FAT16/FAT32) —
+    boʻsh klasterlarni topadi, zanjirni bogʻlaydi, FAT nusxalarini va 8.3 papka
+    yozuvini yangilaydi. Natija standart FAT drayverlari öqiy oladigan haqiqiy FAT.
+14. **X.509 sertifikat tahlili:** TLS qöl alişuvida server sertifikati tekşiriladi —
+    DER/ASN.1 tahlil, amal muddati (notBefore/notAfter) va host nomi (CN + SAN,
+    `*.` joker). Mos kelmasa ulaniş rad etiladi. *Eslatma:* imzo zanjiri (CA ildiz
+    işonçi) hali tekşirilmaydi — bu hujjatlaştirilgan keyingi qadam. Tahlilçi
+    haqiqiy sertifikatlar (ISRG Root X1 — RSA, USERTrust ECC — ECDSA) bilan sinaldi.
+
+Yadro öz-özini tekşirişi (yuklanişda `[test]`): heap, MMU, W^X, PAN, kripto,
+X.509, rasm (15 format), audio (WAV/FLAC/MP3), video (MJPEG/AVI), taymer, KASLR,
+rejalaştiruvçi, SMP, mutex, disk, fuzz, stek qörğoni, foydalanuvçi rejimi, va
+(ikkinchi disk bölsa) FAT yoziş.
+Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi.
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.1**. Versiya har bir özgarişda emas, faqat işlaydigan
-bosqiç (etap) yakunlanganda kötariladi. Versiya `Cargo.toml` da saqlanadi
-va yadro işga tuşganda ekranga çiqadi.
+Joriy versiya: **0.0.9**. Versiya har bir özgarişda emas, faqat işlaydigan
+bosqiç (etap) yakunlanganda kötariladi.
+- 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
+  va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
+- 0.0.3 — tiniq (anti-aliased) masshtablanadigan grafika, mac uslubidagi UI
+  (yumaloq oynalar, dok, ikonalar), har qanday ekran ölçamiga moslaşuv.
+- 0.0.4 — fayllar bilan işlaş: Fayllar menejeri (tur tanib oçadi) va rasm
+  köruvçi; PNG/JPEG/GIF/BMP/QOI/PNM dekoderlari (noldan).
+- 0.0.5 — vektor va hujjat formatlari (noldan): SVG, PDF, EPS/AI, DXF, WMF/EMF,
+  CDR; umumiy vektor rasterizator. Qoşimça raster: TGA, PCX, ICO/CUR, APNG.
+- 0.0.6 — vektor hujjatlarda matn (SVG/PDF/EPS), harakatli rasm (GIF animatsiya
+  oʻynatiş), audio (WAV/AIFF dekoder + toʻlqin köruvchi va ijro boshi).
+- 0.0.7 — haqiqiy övoz çiqariş: virtio-sound drayveri (PCM, koʻp navbat).
+- 0.0.8 — FLAC (yöqotişsiz audio) va APNG (harakatli PNG) dekoderlari.
+- 0.0.9 — **MP3** (MPEG-1 Layer III) dekoderi va kengaytirilgan WAV kodeklari
+  (μ-law/A-law/ADPCM); **video**: MJPEG/AVI dekod, MP4/MOV/MKV/WebM taniş.
+  Barça media dekoderlari ffmpeg bilan tekşirilgan.
+
+Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

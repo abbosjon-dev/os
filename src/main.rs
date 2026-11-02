@@ -9,14 +9,19 @@ extern crate alloc;
 #[allow(dead_code)] // ayrim doimiylar faqat foydalanuvçi kutubxonasida kerak
 mod abi;
 mod accounts;
+mod audio;
 mod config;
 mod crypto;
 mod drivers;
 mod dtb;
 mod exceptions;
 mod fs;
+mod gfx;
+mod gfx_font;
 mod gic;
+mod gui;
 mod i18n;
+mod image;
 mod ipc;
 mod line;
 mod irq;
@@ -34,6 +39,7 @@ mod task;
 mod time;
 mod timer;
 mod uart;
+mod video;
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -166,6 +172,9 @@ pub extern "C" fn kernel_main() -> ! {
 
     // 8) Jarayonlar: şu kod PID 0 ("yadro") bölib qoladi
     task::init();
+    let (kaslr_spots, kaslr_ok) = task::kaslr_check();
+    assert!(kaslr_ok, "KASLR: yadro steklari sohasi notoʻgʻri");
+    tprintln!(msg::TEST_KASLR, kaslr_spots);
     fs::init(task::programs::PROGRAMS);
     let (files, dirs, _) = fs::stats();
     tprintln!(msg::FS_READY, files, dirs);
@@ -196,10 +205,32 @@ pub extern "C" fn kernel_main() -> ! {
         None => tprintln!(msg::NET_NONE),
     }
 
+    // Övoz: virtio-sound (bölsa) — ijro fon oqimi
+    if drivers::virtio_snd::init() {
+        tprintln!(msg::SND_READY);
+        task::spawn_kernel("övoz", drivers::virtio_snd::player, 0).expect("övoz oqimi");
+    } else {
+        tprintln!(msg::SND_NONE);
+    }
+
     // 11) Ikkinçi disk — FAT fayl tizimi (bölsa) /fat ga ulanadi
     if drivers::virtio_blk::init_fat().is_some() {
         let n = fs::mount_fat();
         tprintln!(msg::FAT_MOUNTED, n);
+    }
+
+    // 12) Grafika: virtio-gpu (bölsa) — ekranga iş stolini çizamiz
+    if gfx::init(1024, 768) {
+        let (w, h) = gfx::size();
+        tprintln!(msg::GPU_READY, w, h);
+        let inputs = drivers::virtio_input::init();
+        draw_desktop();
+        if inputs > 0 {
+            // Grafik muhit — kiriş bilan (alohida oqim)
+            task::spawn_kernel("grafik", gui::run, 0).expect("grafik oqim");
+        }
+    } else {
+        tprintln!(msg::GPU_NONE);
     }
 
     // PID 0: boşqa iş bölmaganda — tugagan vazifalarni tozalaş va uxlaş
@@ -225,6 +256,19 @@ pub extern "C" fn secondary_main(cpu: usize) -> ! {
 }
 
 /// Fon oqimi: har 2 soniyada özgarişlarni şifrlab diskka yozadi.
+/// Oddiy grafik iş stoli (namuna): fon, yuqori panel, logotip, panellar.
+fn draw_desktop() {
+    use gfx::*;
+    let (w, h) = size();
+    gradient(0x16335e, 0x0a1322); // boşlangʼiç ekran (gui keyin egallaydi)
+    let hero = (h / 7).clamp(40, 140);
+    draw_text_centered(w / 2, h / 2 - hero, "Zamin OS", OQ, hero);
+    let sub = (h / 36).clamp(14, 28);
+    draw_text_centered(w / 2, h / 2 + hero / 3, "Rust'da noldan yozilgan ARM64 OS", 0x9fb0c3, sub);
+    draw_text_centered(w / 2, h / 2 + hero / 3 + sub * 2, "yuklanmoqda…", 0x6c7f97, sub);
+    flush();
+}
+
 extern "C" fn saver(_: usize) {
     loop {
         task::sleep_ms(2000);
@@ -334,13 +378,29 @@ extern "C" fn boot_tests(_: usize) {
     tprintln!(msg::TEST_STACK_GUARD);
 
     // Foydalanuvçi rejimi: `sinov` dasturi 42 bilan çiqişi va xotira töliq qaytişi kerak
-    let frames_before = frame::stats().0;
     let image = task::programs::find("sinov").expect("sinov dasturi yöq");
+    // Isitiş: birinçi işga tuşiriş yadro heapini kerakli hajmgaça östiradi
+    // (heap bir marta ösadi, qaytib qisqarmaydi) — şunda öljov aniq böladi.
+    if let Ok(p) = task::spawn_user("sinov", image, "", task::SpawnOptions::kernel(false)) {
+        task::wait(p);
+    }
+    let frames_before = frame::stats().0;
     let pid = task::spawn_user("sinov", image, "", task::SpawnOptions::kernel(false)).expect("sinov");
     let code = task::wait(pid);
     assert_eq!(code, Some(42), "sinov dasturi xato kod qaytardi");
     assert_eq!(frame::stats().0, frames_before, "jarayon xotirasi töliq qaytmadi");
     tprintln!(msg::TEST_USER, 42);
+
+    // FAT yoziş: ikkinçi disk bölsa — fayl yozib, qayta öqib tekşiramiz
+    if drivers::virtio_blk::fat_present() {
+        use crate::fs::fat;
+        let content = "Zamin OS — FAT yoziş sinovi (round-trip)\n".as_bytes();
+        fat::write_root_file("ZTEST.TXT", content).expect("FAT yoziş");
+        let files = fat::read_root().expect("FAT öqiş");
+        let ok = files.iter().any(|(n, d)| n == "ZTEST.TXT" && d.as_slice() == content);
+        assert!(ok, "FAT round-trip muvaffaqiyatsiz");
+        tprintln!(msg::TEST_FAT_WRITE);
+    }
 
     println!();
     task::spawn_kernel("terminal", shell::run, drivers::virtio_blk::present() as usize).expect("terminal");
@@ -422,6 +482,24 @@ fn self_tests() {
         panic!("kriptografiya tekşiruvi yiqildi: {}", alg);
     }
     tprintln!(msg::TEST_SHA);
+
+    // X.509: sertifikat tahlilçisi (muddat va host nomi tekşiruvi)
+    net::x509::self_test().expect("X.509 tahlilçi tekşiruvi yiqildi");
+    tprintln!(msg::TEST_X509);
+
+    // Rasm dekoderlari: PNG, GIF, BMP, PNM, QOI
+    match image::self_test() {
+        Ok(n) => tprintln!(msg::TEST_IMAGE, n),
+        Err(fmt) => panic!("rasm dekoderi yiqildi: {}", fmt),
+    }
+
+    // Audio dekoderi: WAV
+    audio::self_test().expect("audio (WAV) dekoderi yiqildi");
+    tprintln!(msg::TEST_AUDIO);
+
+    // Video dekoderi: MJPEG/AVI + konteyner taniş (MP4/MOV/MKV/WebM)
+    video::self_test().expect("video (MJPEG) dekoderi yiqildi");
+    tprintln!(msg::TEST_VIDEO);
 
     // Taymer uzilişlari: 50 ms içida kamida 3 ta tick kelişi kerak
     let start_ticks = timer::ticks();

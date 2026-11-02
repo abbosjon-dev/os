@@ -132,6 +132,11 @@ pub fn fat_present() -> bool {
     FAT_DISK.lock().is_some()
 }
 
+/// Ikkinçi (FAT) disk siğimi — sektorlarda (disk bölmasa 0).
+pub fn fat_capacity_sectors() -> u64 {
+    FAT_DISK.lock().as_ref().map_or(0, |d| d.capacity)
+}
+
 /// Ikkinçi diskdan bitta sektor öqiydi (512 bayt).
 pub fn fat_read(sector: u64, buf: &mut [u8; SECTOR]) -> Result<(), DiskError> {
     let mut g = FAT_DISK.lock();
@@ -150,6 +155,28 @@ pub fn fat_read(sector: u64, buf: &mut [u8; SECTOR]) -> Result<(), DiskError> {
         return Err(DiskError::Io);
     }
     unsafe { core::ptr::copy_nonoverlapping(d.data as *const u8, buf.as_mut_ptr(), SECTOR) };
+    Ok(())
+}
+
+/// Ikkinçi diskka bitta sektor yozadi (512 bayt).
+pub fn fat_write(sector: u64, buf: &[u8; SECTOR]) -> Result<(), DiskError> {
+    let mut g = FAT_DISK.lock();
+    let d = g.as_mut().ok_or(DiskError::NoDisk)?;
+    if sector >= d.capacity {
+        return Err(DiskError::OutOfRange);
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(buf.as_ptr(), d.data as *mut u8, SECTOR);
+        write_volatile(d.req as *mut u32, 1); // REQ_OUT (yoziş)
+        write_volatile((d.req + 4) as *mut u32, 0);
+        write_volatile((d.req + 8) as *mut u64, sector);
+        write_volatile((d.req + 16) as *mut u8, 0xff);
+    }
+    // maʼlumot bufer qurilma uçun öqiladigan (false), holat — yoziladigan (true)
+    d.t.submit(&[(d.req, 16, false), (d.data, SECTOR, false), (d.req + 16, 1, true)]);
+    if unsafe { read_volatile((d.req + 16) as *const u8) } != 0 {
+        return Err(DiskError::Io);
+    }
     Ok(())
 }
 
