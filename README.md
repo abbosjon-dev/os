@@ -359,12 +359,18 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 
 ## Grafika
 
-Zamin OS'da grafik rejim bor (virtio-gpu, 1024×768, 32-bit rang):
+Zamin OS'da to'liq grafik muhit bor (virtio-gpu, 32-bit rang) — tiniq
+(anti-aliased) va har qanday ekran ölçamiga moslaşadi:
 
 - özimiz yozgan virtio-gpu 2D drayveri (resurs, scanout, transfer, flush);
-- framebufferga çiziş: piksel, töğriburçak, gradient, ramka;
-- 8×16 bitmap şrift (DejaVu Sans Mono dan), ASCII + özbek (ö ş ç ğ) + rus harflari;
-- yuklanişda grafik ish stoli çiziladi (logotip, panel, soat).
+  ekranning afzal körilgan ölçamini soraydi (GET_DISPLAY_INFO) va shunga moslaşadi;
+- silliq (anti-aliased) masshtablanadigan şrift: har belgi 0..255 qamrov
+  xaritasi + metrikalar, chizishda 2x2 supersampling bilan istalgan ölçamga
+  moslaşadi — DejaVu Sans (UI) va Sans Mono (terminal), özbek/rus/belgilar;
+- gfx: alfa aralaştiriş, gradient, yumaloq burçakli shakllar, doira, soya;
+- UI mac'dan ilhomlanib (ammo ko'çirmay) — yumaloq oynalar, svetofor nuqtalari,
+  yuqori menyu paneli, markazlashgan dok va yumaloq ilova ikonalari;
+- barça ölçamlar ekrandan kelib çiqadi: 800×600, 1024×768, 1440×900 da tiniq.
 
 ```sh
 # Oynada (grafik muhit kerak):
@@ -427,8 +433,11 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.2**. Versiya har bir özgarişda emas, faqat işlaydigan
-bosqiç (etap) yakunlanganda kötariladi. 0.0.2 — toʻliq grafik muhit (kiriş,
-oynada haqiqiy EL0 terminal, ilovalar) va backend mustahkamlaş (KASLR, FAT
-yoziş, X.509 tahlili) yakunlangan bosqich. Versiya `Cargo.toml` da saqlanadi
-va yadro işga tuşganda ekranga çiqadi.
+Joriy versiya: **0.0.3**. Versiya har bir özgarişda emas, faqat işlaydigan
+bosqiç (etap) yakunlanganda kötariladi.
+- 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
+  va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
+- 0.0.3 — tiniq (anti-aliased) masshtablanadigan grafika, mac uslubidagi UI
+  (yumaloq oynalar, dok, ikonalar), har qanday ekran ölçamiga moslaşuv.
+
+Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
