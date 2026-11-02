@@ -7,6 +7,7 @@
 use alloc::vec::Vec;
 
 mod bmp;
+mod dxf;
 mod gif;
 mod ico;
 mod inflate;
@@ -110,6 +111,8 @@ pub fn decode_file(name: &str, data: &[u8]) -> Option<Image> {
         "tga" | "icb" | "vda" | "vst" => tga::decode(data),
         "pcx" => pcx::decode(data),
         "ico" | "cur" => ico::decode(data),
+        "svg" => svg::decode(data),
+        "dxf" => dxf::decode(data),
         _ => None,
     }
 }
@@ -195,6 +198,12 @@ pub fn self_test() -> Result<usize, &'static str> {
             n += 1
         }
         _ => return Err("SVG"),
+    }
+    // DXF — chiziqli (CAD): dekod bölib, qora piksellar (chiziqlar) borligini tekşiramiz
+    let dxf = b"0\nSECTION\n2\nENTITIES\n0\nLINE\n10\n0\n20\n0\n11\n100\n21\n0\n0\nLINE\n10\n0\n20\n0\n11\n0\n21\n100\n0\nCIRCLE\n10\n50\n20\n50\n40\n40\n0\nENDSEC\n0\nEOF\n";
+    match decode_file("a.dxf", dxf) {
+        Some(img) if img.px.iter().any(|&p| (p >> 16 & 0xff) < 0x60) => n += 1,
+        _ => return Err("DXF"),
     }
     Ok(n)
 }
