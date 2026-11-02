@@ -516,15 +516,19 @@ fn schedule() {
                 t.state = State::Ready;
             }
         }
-        // Round-robin: joriydan keyingi tayyor (va boşqa yadroda işlamayotgan) vazifa;
-        // heç kim bölmasa — şu yadroning böş vazifasi.
-        let next = (1..=MAX_TASKS)
-            .map(|k| (cur + k) % MAX_TASKS)
-            .find(|&i| {
-                i >= MAX_CPUS
-                    && s.tasks[i].as_ref().is_some_and(|t| t.state == State::Ready && (!t.on_cpu || i == cur))
+        // Tayyor va boşqa yadroda işlamayotgan vazifani tanlaymiz. Ikki bosqiç:
+        //   1) kesh uçun — şu yadroda oxirgi işlagan vazifa (affinity),
+        //   2) topilmasa — istalgani (boşqa yadrodan "ish öğirlaş", work stealing).
+        // Heç kim bölmasa — şu yadroning böş vazifasi (PID 0).
+        let ready = |t: &Option<Box<Task>>, i: usize| {
+            t.as_ref().is_some_and(|t| t.state == State::Ready && (!t.on_cpu || i == cur))
+        };
+        let pick = |affine: bool| {
+            (1..=MAX_TASKS).map(|k| (cur + k) % MAX_TASKS).find(|&i| {
+                i >= MAX_CPUS && ready(&s.tasks[i], i) && (!affine || s.tasks[i].as_ref().unwrap().last_cpu == cpu)
             })
-            .unwrap_or(cpu);
+        };
+        let next = pick(true).or_else(|| pick(false)).unwrap_or(cpu);
 
         let next_task = s.tasks[next].as_mut().expect("vazifa yöq");
         next_task.state = State::Running;
