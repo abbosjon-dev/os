@@ -16,8 +16,20 @@ const NONE_PIPE: usize = usize::MAX;
 enum Kind {
     Terminal,
     Files,
+    Editor,
+    Clock,
+    Image,
     About,
 }
+
+impl Kind {
+    /// Oyna klaviaturadan matn qabul qiladimi?
+    fn takes_keys(self) -> bool {
+        matches!(self, Kind::Terminal | Kind::Editor)
+    }
+}
+
+const NOTES_PATH: &str = "~/qaydlar.txt";
 
 struct Window {
     x: usize,
@@ -46,6 +58,14 @@ impl Window {
     fn contains(&self, cx: usize, cy: usize) -> bool {
         cx >= self.x && cx < self.x + self.w && cy >= self.y && cy < self.y + self.h
     }
+    /// Matn muharriridagi "Saqla" tugmasi (sarlavha ostidagi asboblar qatorida).
+    fn save_btn(&self) -> (usize, usize, usize, usize) {
+        (self.x + self.w - 100, self.y + TITLE_H + 6, 88, 24)
+    }
+    fn in_save_btn(&self, cx: usize, cy: usize) -> bool {
+        let (bx, by, bw, bh) = self.save_btn();
+        cx >= bx && cx < bx + bw && cy >= by && cy < by + bh
+    }
 }
 
 struct Launcher {
@@ -54,11 +74,24 @@ struct Launcher {
     color: Color,
 }
 
-const LAUNCHERS: [Launcher; 3] = [
+const LAUNCHERS: [Launcher; 6] = [
     Launcher { label: "Terminal", kind: Kind::Terminal, color: ZAMIN_KOK },
     Launcher { label: "Fayllar", kind: Kind::Files, color: YASHIL },
-    Launcher { label: "Haqida", kind: Kind::About, color: SARIQ },
+    Launcher { label: "Matn", kind: Kind::Editor, color: 0x4aa3df },
+    Launcher { label: "Soat", kind: Kind::Clock, color: SARIQ },
+    Launcher { label: "Rasm", kind: Kind::Image, color: 0xd36b9a },
+    Launcher { label: "Haqida", kind: Kind::About, color: KULRANG },
 ];
+
+/// Vazifalar panelidagi tugma kengligi va joylaşuvi (tugmalar soniga qarab).
+fn launcher_layout(sw: usize) -> (usize, usize, usize) {
+    let n = LAUNCHERS.len();
+    let gap = 8usize;
+    let margin = 10usize;
+    let avail = sw.saturating_sub(margin * 2 + gap * (n - 1) + 120); // soat uçun oʻng tarafda joy
+    let bw = (avail / n).clamp(90, 150);
+    (bw, gap, margin)
+}
 
 fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines: Vec<String>) -> Window {
     Window {
@@ -79,11 +112,24 @@ fn new_window(kind: Kind, n: usize) -> Window {
         }
         Kind::Files => {
             let mut lines = alloc::vec![String::from("~ (uy papkasi):")];
-            for e in fs::list("/uy").unwrap_or_default() {
-                lines.push(alloc::format!("  {}/", e.name));
+            for e in fs::list("~").or_else(|_| fs::list("/uy")).unwrap_or_default() {
+                lines.push(alloc::format!("  {}{}", e.name, if e.is_dir { "/" } else { "" }));
             }
             base(x, y, 420, 320, kind, String::from("Fayllar"), lines)
         }
+        Kind::Editor => {
+            // Mavjud qaydlarni yuklaymiz
+            let mut lines: Vec<String> = fs::read_all(NOTES_PATH)
+                .ok()
+                .map(|b| String::from_utf8_lossy(&b).lines().map(String::from).collect())
+                .unwrap_or_default();
+            let input = lines.pop().unwrap_or_default(); // oxirgi qator — tahrir qatori
+            let mut w = base(x, y, 520, 360, kind, String::from("Matn muharriri — qaydlar.txt"), lines);
+            w.input = input;
+            w
+        }
+        Kind::Clock => base(x, y, 360, 200, kind, String::from("Soat"), Vec::new()),
+        Kind::Image => base(x, y, 480, 360, kind, String::from("Rasm köruvçi — Zamin"), Vec::new()),
         Kind::About => base(x, y, 460, 260, kind, String::from("Zamin OS haqida"), alloc::vec![
             String::from("Zamin OS"),
             alloc::format!("Versiya {}", env!("CARGO_PKG_VERSION")),
@@ -409,12 +455,21 @@ fn desktop() {
     let mut drag: Option<(usize, usize)> = None; // (oyna indeksi, offset)
     let mut shift = false;
     let mut opened = 0;
+    let mut last_sec = time::now().second;
 
     draw(&windows, cx, cy);
     gfx::flush();
 
     loop {
         let mut changed = false;
+        // Soat oynasi oçiq bölsa — har soniyada yangilaymiz
+        let sec = time::now().second;
+        if sec != last_sec {
+            last_sec = sec;
+            if windows.iter().any(|w| w.kind == Kind::Clock) {
+                changed = true;
+            }
+        }
         for e in input::poll() {
             match (e.typ, e.code) {
                 (input::EV_ABS, input::ABS_X) => {
@@ -437,7 +492,7 @@ fn desktop() {
                 }
                 (input::EV_KEY, 42) | (input::EV_KEY, 54) => shift = e.value != 0,
                 (input::EV_KEY, code) if e.value == 1 => {
-                    if let Some(w) = windows.last_mut().filter(|w| w.kind == Kind::Terminal) {
+                    if let Some(w) = windows.last_mut().filter(|w| w.kind.takes_keys()) {
                         type_key(w, code, shift);
                         changed = true;
                     }
@@ -470,6 +525,30 @@ fn desktop() {
 }
 
 fn type_key(w: &mut Window, code: u16, shift: bool) {
+    if w.kind == Kind::Editor {
+        match code {
+            28 => w.lines.push(core::mem::take(&mut w.input)), // Enter: yangi qator
+            14 => {
+                // Orqaga oçiriş: qator boşida bölsa avvalgi qatorga qoşilamiz
+                if w.input.is_empty() {
+                    if let Some(prev) = w.lines.pop() {
+                        w.input = prev;
+                    }
+                } else {
+                    w.input.pop();
+                }
+            }
+            _ => {
+                if let Some(ch) = keycode_char(code, shift) {
+                    if w.input.len() < 200 {
+                        w.input.push(ch);
+                    }
+                }
+            }
+        }
+        return;
+    }
+    // Terminal
     match code {
         28 => {
             // Enter: qatorni bola stdin iga yuboramiz; ekranda özimiz aks ettiramiz (bola qaytarmaydi)
@@ -499,12 +578,30 @@ fn type_key(w: &mut Window, code: u16, shift: bool) {
     }
 }
 
+/// Matn muharriri mazmunini `~/qaydlar.txt` ga saqlaydi. Natija — xabar.
+fn save_notes(w: &Window) -> String {
+    use crate::abi::{OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
+    let mut text = w.lines.join("\n");
+    if !w.lines.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(&w.input);
+    text.push('\n');
+    match fs::open(NOTES_PATH, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE) {
+        Ok(id) => match fs::write(id, Some(0), text.as_bytes()) {
+            Ok(n) => alloc::format!("saqlandi: {} bayt → {}", n, NOTES_PATH),
+            Err(e) => alloc::format!("xato: {:?}", e),
+        },
+        Err(e) => alloc::format!("oçib bölmadi: {:?}", e),
+    }
+}
+
 fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag: &mut Option<(usize, usize)>, opened: &mut usize) {
     // Vazifalar paneli (pastda)?
     if cy >= sh - TASKBAR_H {
-        let bw = 150;
+        let (bw, gap, margin) = launcher_layout(gfx::size().0);
         for (i, l) in LAUNCHERS.iter().enumerate() {
-            let bx = 10 + i * (bw + 10);
+            let bx = margin + i * (bw + gap);
             if cx >= bx && cx < bx + bw {
                 windows.push(new_window(l.kind, *opened));
                 *opened += 1;
@@ -518,6 +615,11 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
         if windows[i].close_btn(cx, cy) {
             let mut w = windows.remove(i);
             close_terminal(&mut w);
+            return;
+        }
+        if windows[i].kind == Kind::Editor && windows[i].in_save_btn(cx, cy) {
+            let msg = save_notes(&windows[i]);
+            windows[i].cur = msg.into_bytes(); // holat xabari
             return;
         }
         if windows[i].title_bar(cx, cy) {
@@ -553,44 +655,147 @@ fn draw(windows: &[Window], cx: usize, cy: usize) {
         // Yopiş tugmasi
         fill_rect(win.x + win.w - TITLE_H, win.y, TITLE_H, TITLE_H, QIZIL);
         draw_text(win.x + win.w - TITLE_H + 8, win.y + 6, "x", OQ, 2);
-        // Mazmun
-        let fg = if win.kind == Kind::Terminal { YASHIL } else { OQ };
-        let mut ty = win.y + TITLE_H + 8;
-        for line in &win.lines {
-            if ty + 20 > win.y + win.h {
-                break;
+        // Mazmun — turiga qarab
+        match win.kind {
+            Kind::Clock => draw_clock(win),
+            Kind::Image => draw_scene(win),
+            Kind::Editor => draw_editor(win),
+            _ => {
+                let fg = if win.kind == Kind::Terminal { YASHIL } else { OQ };
+                let mut ty = win.y + TITLE_H + 8;
+                for line in &win.lines {
+                    if ty + 20 > win.y + win.h {
+                        break;
+                    }
+                    draw_text(win.x + 10, ty, line, fg, 2);
+                    ty += 20;
+                }
+                // Terminal: tugamagan qator (taklif) + hozir terilayotgan kiriş
+                if win.kind == Kind::Terminal && ty + 20 <= win.y + win.h {
+                    let cur = String::from_utf8_lossy(&win.cur);
+                    draw_text(win.x + 10, ty, &alloc::format!("{}{}_", cur, win.input), fg, 2);
+                }
             }
-            draw_text(win.x + 10, ty, line, fg, 2);
-            ty += 20;
-        }
-        // Terminal: tugamagan qator (odatda taklif) + hozir terilayotgan kiriş
-        if win.kind == Kind::Terminal && ty + 20 <= win.y + win.h {
-            let cur = String::from_utf8_lossy(&win.cur);
-            draw_text(win.x + 10, ty, &alloc::format!("{}{}_", cur, win.input), fg, 2);
         }
     }
 
     // Vazifalar paneli
     fill_rect(0, h - TASKBAR_H, w, TASKBAR_H, 0x0a1420);
-    let bw = 150;
+    let (bw, gap, margin) = launcher_layout(w);
     for (i, l) in LAUNCHERS.iter().enumerate() {
-        let bx = 10 + i * (bw + 10);
+        let bx = margin + i * (bw + gap);
         fill_rect(bx, h - TASKBAR_H + 6, bw, TASKBAR_H - 12, 0x1b2d45);
         rect_outline(bx, h - TASKBAR_H + 6, bw, TASKBAR_H - 12, l.color);
-        draw_text(bx + 12, h - TASKBAR_H + 12, l.label, OQ, 2);
+        draw_text(bx + 10, h - TASKBAR_H + 12, l.label, OQ, 2);
     }
     let t = time::now();
     let vaqt = alloc::format!("{:02}:{:02}", t.hour, t.minute);
     draw_text(w - text_width(&vaqt, 2) - 12, h - TASKBAR_H + 12, &vaqt, KULRANG, 2);
 
-    // Kursor
-    for i in 0..18usize {
-        let width = (18 - i) / 2 + 1;
-        fill_rect(cx, cy + i, width + 2, 1, QORA);
-        if i >= 1 {
-            fill_rect(cx + 1, cy + i, width.saturating_sub(1), 1, OQ);
-        }
+    cursor(cx, cy);
+}
+
+/// Soat oynasi: katta vaqt va sana.
+fn draw_clock(win: &Window) {
+    let t = time::now();
+    let cx = win.x + win.w / 2;
+    let vaqt = alloc::format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second);
+    draw_text_centered(cx, win.y + TITLE_H + 40, &vaqt, OQ, 5);
+    let sana = alloc::format!("{:04}-{:02}-{:02}", t.year, t.month, t.day);
+    draw_text_centered(cx, win.y + TITLE_H + 110, &sana, ZAMIN_KOK, 2);
+}
+
+/// Matn muharriri: asboblar qatori (Saqla), matn, kursor, holat.
+fn draw_editor(win: &Window) {
+    // Asboblar qatori
+    let (bx, by, bw, bh) = win.save_btn();
+    fill_rect(win.x, win.y + TITLE_H, win.w, 36, 0x12202f);
+    fill_rect(bx, by, bw, bh, YASHIL);
+    draw_text(bx + 10, by + 4, "Saqla", QORA, 2);
+    let status = String::from_utf8_lossy(&win.cur);
+    if !status.is_empty() {
+        draw_text(win.x + 10, win.y + TITLE_H + 10, &status, KULRANG, 2);
     }
+    // Matn
+    let mut ty = win.y + TITLE_H + 44;
+    for line in &win.lines {
+        if ty + 20 > win.y + win.h {
+            break;
+        }
+        draw_text(win.x + 10, ty, line, OQ, 2);
+        ty += 20;
+    }
+    if ty + 20 <= win.y + win.h {
+        draw_text(win.x + 10, ty, &alloc::format!("{}_", win.input), OQ, 2);
+    }
+}
+
+/// Rasm köruvçi: namunaviy "Zamin" manzarasi (osmon, quyoş, togʻlar).
+fn draw_scene(win: &Window) {
+    let (x, y) = (win.x + 2, win.y + TITLE_H + 2);
+    let (w, h) = (win.w - 4, win.h - TITLE_H - 4);
+    // Osmon gradienti
+    for row in 0..h {
+        let t = row * 255 / h.max(1);
+        let c = blend(0x1b3a6b, 0xe8a05a, t as u8);
+        fill_rect(x, y + row, w, 1, c);
+    }
+    // Quyoş
+    let sx = x + w * 3 / 4;
+    let sy = y + h / 4;
+    disc(sx, sy, 26, SARIQ);
+    // Togʻlar (uçburçaklar) — "zamin"
+    hill(x, y, w, h, w / 3, h * 2 / 3, 0x2e4a3a);
+    hill(x, y, w, h, w * 2 / 3, h / 2, 0x24523a);
+    // Yer
+    fill_rect(x, y + h * 5 / 6, w, h / 6, 0x163024);
+}
+
+fn blend(a: u32, b: u32, t: u8) -> u32 {
+    let f = |sh: u32| {
+        let ca = (a >> sh) & 0xff;
+        let cb = (b >> sh) & 0xff;
+        (ca + (cb.wrapping_sub(ca).wrapping_mul(t as u32) >> 8)) & 0xff
+    };
+    (f(16) << 16) | (f(8) << 8) | f(0)
+}
+
+fn disc(cx: usize, cy: usize, r: usize, color: Color) {
+    for dy in 0..=2 * r {
+        let yy = dy as isize - r as isize;
+        let half = ((r * r) as isize - yy * yy).max(0);
+        let hw = isqrt(half as usize);
+        fill_rect(cx.saturating_sub(hw), cy + dy - r, hw * 2 + 1, 1, color);
+    }
+}
+
+/// Oddiy togʻ (uçburçak): (peak_x, peak_y) çöqqisi, poydevori pastda.
+fn hill(bx: usize, by: usize, _bw: usize, bh: usize, peak_x: usize, peak_h: usize, color: Color) {
+    let base_y = by + bh * 5 / 6;
+    let peak_y = base_y.saturating_sub(peak_h);
+    let span = peak_h; // 45° yonbagʻir
+    for row in 0..=(base_y - peak_y) {
+        let yy = peak_y + row;
+        if yy >= by + bh {
+            break;
+        }
+        let half = row.min(span);
+        let left = (bx + peak_x).saturating_sub(half);
+        fill_rect(left, yy, half * 2 + 1, 1, color);
+    }
+}
+
+fn isqrt(n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    let mut x = n;
+    let mut y = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    x
 }
 
 fn keycode_char(code: u16, shift: bool) -> Option<char> {
