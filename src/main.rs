@@ -399,6 +399,17 @@ extern "C" fn boot_tests(_: usize) {
     assert_eq!(frame::stats().0, frames_before, "jarayon xotirasi töliq qaytmadi");
     tprintln!(msg::TEST_USER, 42);
 
+    // FAT yoziş: ikkinçi disk bölsa — fayl yozib, qayta öqib tekşiramiz
+    if drivers::virtio_blk::fat_present() {
+        use crate::fs::fat;
+        let content = "Zamin OS — FAT yoziş sinovi (round-trip)\n".as_bytes();
+        fat::write_root_file("ZTEST.TXT", content).expect("FAT yoziş");
+        let files = fat::read_root().expect("FAT öqiş");
+        let ok = files.iter().any(|(n, d)| n == "ZTEST.TXT" && d.as_slice() == content);
+        assert!(ok, "FAT round-trip muvaffaqiyatsiz");
+        tprintln!(msg::TEST_FAT_WRITE);
+    }
+
     println!();
     task::spawn_kernel("terminal", shell::run, drivers::virtio_blk::present() as usize).expect("terminal");
 }

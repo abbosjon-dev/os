@@ -558,6 +558,11 @@ pub mod msg {
         "[test] PAN: ядро обращается к памяти пользователя только через копирование — OK",
         "[test] PAN: kernel touches user memory only through copy routines — OK",
     ];
+    pub const TEST_FAT_WRITE: Text = [
+        "[test] FAT yoziş: fayl yaratildi va qayta öqildi (round-trip) — OK",
+        "[test] запись FAT: файл создан и прочитан обратно (round-trip) — OK",
+        "[test] FAT write: file created and read back (round-trip) — OK",
+    ];
     pub const TEST_KASLR: Text = [
         "[test] KASLR: yadro steklari har yuklanişda {} xil joydan birida — OK",
         "[test] KASLR: стеки ядра при каждой загрузке в одном из {} мест — OK",
