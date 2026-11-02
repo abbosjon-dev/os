@@ -390,7 +390,7 @@ pub fn setup_home(username: &str, uid: u32) -> Result<String, FsError> {
     }
     // Namuna rasmlar — Rasmlar papkasiga (yoziş yöli orqali — diskka saqlanadi)
     if let Ok(pics) = v.child(home, Role::Pictures.names()[lang]) {
-        for (name, bytes) in [("zamin.png", crate::image::SAMPLE_PNG), ("zamin.svg", crate::image::SAMPLE_SVG)] {
+        for (name, bytes) in [("zamin.png", crate::image::SAMPLE_PNG), ("zamin.svg", crate::image::SAMPLE_SVG), ("zamin.gif", crate::image::SAMPLE_GIF)] {
             if v.child(pics, name).is_err() {
                 if let Ok(id) = v.add(pics, name, Data::File(FileData::new()), false) {
                     if let Data::File(d) = &mut v.node_mut(id)?.data {

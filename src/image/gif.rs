@@ -1,4 +1,5 @@
-//! GIF dekoderi — noldan (LZW ochiş). Birinçi kadr körsatiladi.
+//! GIF dekoderi — noldan (LZW). Barcha kadrlar (animatsiya) + shaffoflik +
+//! disposal + kadr kechikişi.
 
 use super::{rgb, Image};
 use alloc::vec::Vec;
@@ -7,7 +8,13 @@ fn u16le(d: &[u8], o: usize) -> usize {
     d[o] as usize | (d[o + 1] as usize) << 8
 }
 
+/// Birinçi kadr (statik).
 pub fn decode(d: &[u8]) -> Option<Image> {
+    decode_all(d).and_then(|mut f| f.drain(..).next()).map(|(img, _)| img)
+}
+
+/// Barcha kadrlar: (rasm, kechikiş_ms).
+pub fn decode_all(d: &[u8]) -> Option<Vec<(Image, u32)>> {
     if d.len() < 13 || (&d[..6] != b"GIF87a" && &d[..6] != b"GIF89a") {
         return None;
     }
@@ -18,7 +25,6 @@ pub fn decode(d: &[u8]) -> Option<Image> {
     }
     let packed = d[10];
     let mut pos = 13;
-    // Global rang jadvali
     let mut gct: Vec<u32> = Vec::new();
     if packed & 0x80 != 0 {
         let n = 1 << ((packed & 7) + 1);
@@ -32,15 +38,29 @@ pub fn decode(d: &[u8]) -> Option<Image> {
         pos += n * 3;
     }
 
-    while pos < d.len() {
+    let mut canvas = alloc::vec![0u32; sw * sh]; // joriy ekran
+    let mut frames: Vec<(Image, u32)> = Vec::new();
+    // Keyingi tasvir uçun grafik boşqaruvi
+    let mut transparent: Option<usize> = None;
+    let mut delay = 0u32;
+    let mut disposal = 0u8;
+
+    while pos < d.len() && frames.len() < 300 {
         match d[pos] {
             0x21 => {
-                // kengaytma — sub-bloklarni ötkazamiz
-                pos += 2; // 0x21 + yorliq
+                // kengaytma
+                let label = *d.get(pos + 1)?;
+                if label == 0xf9 {
+                    // Graphic Control Extension: size(1)=4, flags, delay(2), transp(1)
+                    let flags = d[pos + 3];
+                    disposal = (flags >> 2) & 7;
+                    delay = u16le(d, pos + 4) as u32 * 10; // sentisekund → ms
+                    transparent = if flags & 1 != 0 { Some(d[pos + 6] as usize) } else { None };
+                }
+                pos += 2;
                 pos = skip_subblocks(d, pos)?;
             }
             0x2c => {
-                // rasm tavsifi
                 if pos + 10 > d.len() {
                     return None;
                 }
@@ -50,7 +70,6 @@ pub fn decode(d: &[u8]) -> Option<Image> {
                 let ih = u16le(d, pos + 7);
                 let ipacked = d[pos + 9];
                 pos += 10;
-                // Mahalliy rang jadvali
                 let ct = if ipacked & 0x80 != 0 {
                     let n = 1 << ((ipacked & 7) + 1);
                     let mut t = Vec::new();
@@ -67,38 +86,62 @@ pub fn decode(d: &[u8]) -> Option<Image> {
                     gct.clone()
                 };
                 let interlaced = ipacked & 0x40 != 0;
-                if pos >= d.len() {
-                    return None;
-                }
-                let min_code = d[pos];
+                let min_code = *d.get(pos)?;
                 pos += 1;
                 let (data, next) = gather_subblocks(d, pos)?;
                 pos = next;
                 let indices = lzw_decode(&data, min_code, iw * ih)?;
-                // Kadrni ekranga joylaymiz
-                let mut img = Image::new(sw, sh);
-                let rows: Vec<usize> = if interlaced {
-                    interlace_rows(ih)
-                } else {
-                    (0..ih).collect()
-                };
+                // disposal: 2 = fondan tozalaş (oldingi kadrdan avval)
+                let saved = if disposal == 3 { Some(canvas.clone()) } else { None };
+                let rows: Vec<usize> = if interlaced { interlace_rows(ih) } else { (0..ih).collect() };
                 for (ri, &dy) in rows.iter().enumerate() {
                     for dx in 0..iw {
                         let idx = indices.get(ri * iw + dx).copied().unwrap_or(0) as usize;
-                        let color = ct.get(idx).copied().unwrap_or(0);
+                        if Some(idx) == transparent {
+                            continue; // shaffof — ekran öşa holicha
+                        }
                         let (px, py) = (ileft + dx, itop + dy);
                         if px < sw && py < sh {
-                            img.px[py * sw + px] = color;
+                            canvas[py * sw + px] = ct.get(idx).copied().unwrap_or(0);
                         }
                     }
                 }
-                return Some(img); // birinçi kadr yetarli
+                frames.push((Image { w: sw, h: sh, px: canvas.clone() }, delay.max(20)));
+                // Keyingi kadr uçun disposal qoʻllaymiz
+                match disposal {
+                    2 => {
+                        for (ri, &dy) in rows.iter().enumerate() {
+                            let _ = ri;
+                            for dx in 0..iw {
+                                let (px, py) = (ileft + dx, itop + dy);
+                                if px < sw && py < sh {
+                                    canvas[py * sw + px] = gct.first().copied().unwrap_or(0);
+                                }
+                            }
+                        }
+                    }
+                    3 => {
+                        if let Some(s) = saved {
+                            canvas = s;
+                        }
+                    }
+                    _ => {}
+                }
+                // GCE ni qayta örnatamiz
+                transparent = None;
+                delay = 0;
             }
-            0x3b => break, // tugaş
-            _ => return None,
+            0x3b => break,
+            _ => {
+                pos += 1;
+            }
         }
     }
-    None
+    if frames.is_empty() {
+        None
+    } else {
+        Some(frames)
+    }
 }
 
 fn skip_subblocks(d: &[u8], mut pos: usize) -> Option<usize> {
@@ -152,8 +195,8 @@ fn lzw_decode(data: &[u8], min_code: u8, expected: usize) -> Option<Vec<u8>> {
         for i in 0..clear {
             dict.push(alloc::vec![i as u8]);
         }
-        dict.push(Vec::new()); // clear
-        dict.push(Vec::new()); // end
+        dict.push(Vec::new());
+        dict.push(Vec::new());
     };
     reset(&mut dict);
     let mut out = Vec::with_capacity(expected);
@@ -186,7 +229,6 @@ fn lzw_decode(data: &[u8], min_code: u8, expected: usize) -> Option<Vec<u8>> {
         let entry = if code < dict.len() {
             dict[code].clone()
         } else if let Some(p) = prev {
-            // KwKwK holati
             let mut e = dict[p].clone();
             e.push(dict[p][0]);
             e

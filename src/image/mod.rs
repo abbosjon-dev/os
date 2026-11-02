@@ -19,6 +19,7 @@ mod pdf;
 mod png;
 mod qoi;
 mod sample;
+mod sample_gif;
 mod sample_svg;
 mod svg;
 mod testdata;
@@ -28,6 +29,7 @@ mod vector;
 mod wmf;
 
 pub use sample::SAMPLE_PNG;
+pub use sample_gif::SAMPLE_GIF;
 pub use sample_svg::SAMPLE_SVG;
 
 /// Dekodlangan rasm.
@@ -118,6 +120,16 @@ fn is_svg(data: &[u8]) -> bool {
     let s = core::str::from_utf8(head).unwrap_or("");
     let t = s.trim_start();
     t.starts_with("<?xml") && s.contains("<svg") || t.starts_with("<svg")
+}
+
+/// Animatsiya kadrlari: (rasm, kechikiş_ms). Birdan koʻp kadr — harakatli rasm.
+/// Hozirça GIF (va APNG). Boşqalar uçun — bitta kadr yoki None.
+pub fn decode_frames(name: &str, data: &[u8]) -> Option<Vec<(Image, u32)>> {
+    let is_gif = format_name(data) == Some("GIF") || name.rsplit_once('.').map(|(_, e)| e.eq_ignore_ascii_case("gif")).unwrap_or(false);
+    if is_gif {
+        return gif::decode_all(data);
+    }
+    None
 }
 
 /// Fayl nomini (kengaytma) hisobga olib dekodlaydi — TGA kabi "magic"siz

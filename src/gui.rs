@@ -131,7 +131,10 @@ struct Window {
     input: String,      // terminal kiriş qatori (hali yuborilmagan)
     path: String,       // Fayllar: joriy papka; Matn/Rasm: fayl yoʻli
     rows: Vec<(String, FKind)>, // Fayllar oynasi qatorlari (nom, tur)
-    img: Option<crate::image::Image>, // Rasm oynasi: dekodlangan rasm
+    img: Option<crate::image::Image>, // Rasm oynasi: dekodlangan rasm (yoki joriy kadr)
+    frames: Vec<(crate::image::Image, u32)>, // harakatli rasm kadrlari (rasm, ms)
+    frame: usize,       // joriy kadr indeksi
+    frame_ms: u64,      // oxirgi kadr almaşgan vaqt (ms)
     // Haqiqiy EL0 terminal jarayoni bilan quvur orqali bogʻ
     pid: task::Pid,     // 0 — jarayon yöq
     pin: usize,         // kiriş quvuri (GUI yozadi → bola stdin); NONE_PIPE — yöq
@@ -215,6 +218,9 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         path: String::new(),
         rows: Vec::new(),
         img: None,
+        frames: Vec::new(),
+        frame: 0,
+        frame_ms: 0,
         pid: 0, pin: NONE_PIPE, pout: NONE_PIPE,
         cur: Vec::new(), esc: None,
     }
@@ -344,8 +350,15 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
         let (w, h) = (u * 28, u * 22);
         let mut win = base(x.min(sw - w), y, w, h, Kind::Image, alloc::format!("Rasm — {}", name), Vec::new());
         win.path = String::from(path);
-        win.img = crate::image::decode_file(name, &data);
-        if win.img.is_none() {
+        // Harakatli rasm (GIF/APNG)?
+        if let Some(frames) = crate::image::decode_frames(name, &data).filter(|f| f.len() > 1) {
+            win.title = alloc::format!("Rasm — {} ({} kadr)", name, frames.len());
+            win.frames = frames;
+            win.frame_ms = crate::timer::uptime_ms();
+        } else {
+            win.img = crate::image::decode_file(name, &data);
+        }
+        if win.img.is_none() && win.frames.is_empty() {
             let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_uppercase()).unwrap_or_default();
             win.lines = alloc::vec![
                 alloc::format!("{} formati hali qöllanmaydi", ext),
@@ -753,6 +766,18 @@ fn desktop() {
                 changed = true;
             }
         }
+        // Harakatli rasm (GIF) kadrlarini vaqtiga qarab almaştiramiz
+        let now_ms = crate::timer::uptime_ms();
+        for win in windows.iter_mut() {
+            if win.frames.len() > 1 {
+                let delay = win.frames[win.frame].1.max(20) as u64;
+                if now_ms.wrapping_sub(win.frame_ms) >= delay {
+                    win.frame = (win.frame + 1) % win.frames.len();
+                    win.frame_ms = now_ms;
+                    changed = true;
+                }
+            }
+        }
         for e in input::poll() {
             match (e.typ, e.code) {
                 (input::EV_ABS, input::ABS_X) => {
@@ -1005,7 +1030,7 @@ fn draw_window(win: &Window, active: bool) {
     gfx::set_clip(win.x + 1, win.y + th, win.w.saturating_sub(2), win.h.saturating_sub(th + 1));
     match win.kind {
         Kind::Clock => draw_clock(win),
-        Kind::Image if win.img.is_some() => draw_image(win),
+        Kind::Image if win.img.is_some() || !win.frames.is_empty() => draw_image(win),
         Kind::Image if win.path.is_empty() => draw_scene(win), // dok "Rasm" — namuna manzara
         Kind::Image => draw_text_window(win),                  // oçib bölmagan rasm — xabar
         Kind::Editor => draw_editor(win),
@@ -1081,9 +1106,15 @@ fn file_icon(kind: FKind, x: usize, y: usize, s: usize) {
     gfx::fill_rect(x + s / 4, y + s * 2 / 3, s / 3, (s / 10).max(1), c);
 }
 
-/// Rasm oynasi: dekodlangan rasmni nisbat saqlab körsatadi.
+/// Rasm oynasi: dekodlangan rasmni (yoki harakatli kadrni) nisbat saqlab körsatadi.
 fn draw_image(win: &Window) {
-    let Some(img) = &win.img else { return };
+    let img = if !win.frames.is_empty() {
+        &win.frames[win.frame.min(win.frames.len() - 1)].0
+    } else if let Some(img) = &win.img {
+        img
+    } else {
+        return;
+    };
     let pad = body() / 2;
     let x = win.x + pad;
     let y = win.content_top();
