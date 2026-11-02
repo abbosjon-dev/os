@@ -373,11 +373,21 @@ cargo build && sh scripts/qemu-gfx.sh target/aarch64-unknown-none-softfloat/debu
 python3 scripts/screenshot.py target/aarch64-unknown-none-softfloat/debug/kernel ekran.png
 ```
 
-GPU va kiriş (virtio-input) bölsa, **oynalar menejeri** işga tuşadi: sichqoncha kursori,
-siljitiladigan oynalar (sarlavha, yopiş tugmasi), grafik terminal (haqiqiy buyruqlar:
-vaqt, fayllar, aks...), Fayllar va Haqida oynalari, pastda vazifalar paneli.
-Klaviatura va sichqoncha — özimiz yozgan virtio-keyboard / virtio-tablet drayveri.
+GPU va kiriş (virtio-input) bölsa, to'liq grafik muhit işga tuşadi:
 
+- **Grafik kiriş (login):** yuklanişda chiroyli parol ekrani — foydalanuvçi
+  parolni kiritadi, toʻgʻri bölsa şifrlangan disk ulanadi va ish stoliga ötiladi.
+  Bir neçta hisob bölsa — sichqoncha bilan tanlaş. (Grafika bölganda serial faqat
+  maʼmur zaxira konsuli bölib qoladi.)
+- **Oynalar menejeri:** sichqoncha kursori, siljitiladigan oynalar (sarlavha,
+  yopiş tugmasi), old plan/fokus, pastda vazifalar paneli.
+- **Grafik terminal:** oyna ichida haqiqiy EL0 foydalanuvçi terminali
+  (`/dasturlar/terminal`) quvurlar orqali işlaydi — oddiy terminal emulyatori
+  (bola stdin/stdout quvurlarga ulanadi, GUI I/O ni haydaydi, ANSI tozalaşni tuşunadi).
+- **Ilovalar:** Matn muharriri (`~/qaydlar.txt` ni saqlaydi), Soat (jonli vaqt),
+  Rasm köruvçi (namunaviy "Zamin" manzarasi), Fayllar, Haqida.
+
+Klaviatura va sichqoncha — özimiz yozgan virtio-keyboard / virtio-tablet drayveri.
 GPU bölmasa, tizim matn rejimida (UART terminali) işlayveradi.
 
 ## Backend mustahkamlaş (xavfsizlik va işonçlilik)
@@ -394,14 +404,31 @@ Grafikadan oldin backend 11 ta yönalişda mustahkamlandi:
 8. Rejalaştiruvçi: yadro mosligi (affinity) + ish öğirlaş
 9. Köp foydalanuvçi, fayl ruxsatlari, jarayon egasi (avval qöşilgan)
 10. FAT16/FAT32 öqiş (/fat)
-11. TLS 1.3 (HTTPS) — şifrlangan kanal (sertifikat tekşiruvi hali yöq)
+11. TLS 1.3 (HTTPS) — şifrlangan kanal
 
-Yadro öz-özini tekşirişi (yuklanişda `[test]`) endi 13 ta: heap, MMU, W^X, PAN, kripto,
-taymer, rejalaştiruvçi, SMP, mutex, disk, fuzz, stek qörğoni, foydalanuvçi rejimi.
+Keyin yana uchta yönaliş qoşildi:
+
+12. **KASLR:** yadro steklari joylaşuvi har yuklanişda tasodifiy (1 GiB sohada
+    16320 xil joy, ~14 bit entropiya). Qaytiş manzillari saqlanadigan eng muhim
+    yadro sohasi hujumçi uchun oldindan bilib bölmaydigan boʻladi.
+13. **FAT yoziş:** ikkinchi diskka fayl yaratiş/qayta yoziş (FAT16/FAT32) —
+    boʻsh klasterlarni topadi, zanjirni bogʻlaydi, FAT nusxalarini va 8.3 papka
+    yozuvini yangilaydi. Natija standart FAT drayverlari öqiy oladigan haqiqiy FAT.
+14. **X.509 sertifikat tahlili:** TLS qöl alişuvida server sertifikati tekşiriladi —
+    DER/ASN.1 tahlil, amal muddati (notBefore/notAfter) va host nomi (CN + SAN,
+    `*.` joker). Mos kelmasa ulaniş rad etiladi. *Eslatma:* imzo zanjiri (CA ildiz
+    işonçi) hali tekşirilmaydi — bu hujjatlaştirilgan keyingi qadam. Tahlilçi
+    haqiqiy sertifikatlar (ISRG Root X1 — RSA, USERTrust ECC — ECDSA) bilan sinaldi.
+
+Yadro öz-özini tekşirişi (yuklanişda `[test]`) endi 16 ta: heap, MMU, W^X, PAN, kripto,
+X.509, taymer, KASLR, rejalaştiruvçi, SMP, mutex, disk, fuzz, stek qörğoni,
+foydalanuvçi rejimi, va (ikkinchi disk bölsa) FAT yoziş.
 Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi.
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.1**. Versiya har bir özgarişda emas, faqat işlaydigan
-bosqiç (etap) yakunlanganda kötariladi. Versiya `Cargo.toml` da saqlanadi
+Joriy versiya: **0.0.2**. Versiya har bir özgarişda emas, faqat işlaydigan
+bosqiç (etap) yakunlanganda kötariladi. 0.0.2 — toʻliq grafik muhit (kiriş,
+oynada haqiqiy EL0 terminal, ilovalar) va backend mustahkamlaş (KASLR, FAT
+yoziş, X.509 tahlili) yakunlangan bosqich. Versiya `Cargo.toml` da saqlanadi
 va yadro işga tuşganda ekranga çiqadi.
