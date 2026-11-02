@@ -332,6 +332,8 @@ src/crypto/hkdf.rs    HKDF-SHA256 va TLS 1.3 kalit jadvali
 src/drivers/virtio_gpu.rs  virtio-gpu 2D drayveri
 src/gfx/mod.rs        Çiziş: piksel, töğriburçak, matn, gradient
 src/gfx_font.rs       8×16 bitmap şrift
+src/drivers/virtio_input.rs  Klaviatura/planşet drayveri
+src/gui.rs            Oynalar menejeri (oynalar, terminal, vazifalar paneli)
 user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 ```
 
@@ -351,7 +353,7 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [x] **8. Fayl tizimi** — VFS + ZaminFS 2 (bloklar, copy-on-write, şifrlangan daraxt)
 - [x] **9. Işonçlilik** — yadro jurnali, panic diskka yoziladi, fuzz sinovi
 - [x] **8½. Yadro himoyasi** — qörğonli yadro steklari, PAN, WXN, böşatilgan xotirani nollaş, ASLR
-- [ ] **9. Grafika** — framebuffer, kompozitor, oyna menejeri, şriftlar
+- [x] **9. Grafika** — virtio-gpu framebuffer, şrift, oynalar menejeri, grafik terminal, sichqoncha/klaviatura
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
 
@@ -370,6 +372,11 @@ cargo build && sh scripts/qemu-gfx.sh target/aarch64-unknown-none-softfloat/debu
 # Serversiz skrinshot (PNG):
 python3 scripts/screenshot.py target/aarch64-unknown-none-softfloat/debug/kernel ekran.png
 ```
+
+GPU va kiriş (virtio-input) bölsa, **oynalar menejeri** işga tuşadi: sichqoncha kursori,
+siljitiladigan oynalar (sarlavha, yopiş tugmasi), grafik terminal (haqiqiy buyruqlar:
+vaqt, fayllar, aks...), Fayllar va Haqida oynalari, pastda vazifalar paneli.
+Klaviatura va sichqoncha — özimiz yozgan virtio-keyboard / virtio-tablet drayveri.
 
 GPU bölmasa, tizim matn rejimida (UART terminali) işlayveradi.
 
