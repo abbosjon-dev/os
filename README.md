@@ -149,8 +149,11 @@ tanib, mos ilovada oçadi:
 - dastur (ELF) bossangiz — maʼlumot körsatiladi.
 
 **Rasm dekoderlari — hammasi noldan yozilgan** (ochiq kutubxonasiz):
-PNG (zlib/inflate + 5 filtr), JPEG (baseline — Huffman, IDCT, YCbCr),
-GIF (LZW), BMP, QOI, PNM. `image::decode(baytlar)` formatni avtomatik aniqlaydi.
+PNG/APNG (zlib/inflate + 5 filtr), JPEG (baseline — Huffman, IDCT, YCbCr),
+GIF (LZW), BMP/DIB, TGA, PCX, ICO/CUR, QOI, PNM (PBM/PGM/PPM, P1-P6).
+`image::decode_file(nom, baytlar)` formatni aniqlaydi. Boşqa (murakkab)
+formatlar — SVG, PDF, HEIC/AVIF, JXL, RAW, PSD, TIFF, WebP — tur böyiça
+tanilади (ikona), ammo hali oçilmaydi (keyingi bosqichlarda).
 
 ## Foydalanuvçilar va ruxsatlar
 
