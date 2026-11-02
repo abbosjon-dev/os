@@ -168,10 +168,13 @@ fn new_window(kind: Kind, n: usize) -> Window {
     let u = body(); // ölçam birligi
     // Oynani markazga yaqin, biroz surilgan joyga qöyamiz
     let place = |w: usize, h: usize| {
-        let x = (sw / 2).saturating_sub(w / 2) + (n * u * 2) % (u * 10);
-        let y = (menubar_h() + u * 2) + (n * u) % (u * 6);
+        // Kaskad: har yangi oyna biroz pastga-öngga suriladi
+        let step = u * 2;
+        let x = sw / 8 + (n * step) % (sw / 3);
+        let y = menubar_h() + u * 2 + (n * step) % (sh / 4);
+        let xmax = sw.saturating_sub(w).max(1);
         let ymax = sh.saturating_sub(dock_h() + h + u).max(menubar_h());
-        (x.min(sw.saturating_sub(w).max(1)), y.min(ymax))
+        (x.min(xmax), y.min(ymax))
     };
     match kind {
         Kind::Terminal => {
@@ -759,10 +762,11 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
 
 fn draw(windows: &[Window], cx: usize, cy: usize) {
     let (w, h) = gfx::size();
-    // Fon: chuqur koʻk→tün gradient + xira "Zamin" yozuvi
-    gradient_rect(0, 0, w, h, DESK_TOP, DESK_BOT);
-    let hero = (h / 5).clamp(40, 180);
-    gfx::draw_text_centered(w / 2, h / 2 - hero * 2 / 3, "Zamin", 0x1b3a63, hero);
+    gfx::reset_clip();
+    // Fon: yumşoq koʻp bosqiçli gradient (indigo → koʻk → tün)
+    let mid = h * 9 / 20;
+    gradient_rect(0, 0, w, mid, 0x24406e, 0x172a4a);
+    gradient_rect(0, mid, w, h - mid, 0x172a4a, 0x0a1320);
 
     draw_menubar(w);
 
@@ -770,77 +774,94 @@ fn draw(windows: &[Window], cx: usize, cy: usize) {
         let active = i == windows.len() - 1;
         draw_window(win, active);
     }
+    gfx::reset_clip();
 
-    draw_dock(w, h);
+    draw_dock(w, h, cx, cy, windows);
     cursor(cx, cy);
 }
 
-/// Fon yozuvi rangi (xira).
+/// Yuqori menyu paneli (shaffof).
 fn draw_menubar(w: usize) {
     let mb = menubar_h();
-    fill_round_rect_a(0, 0, w, mb, 0, 0x0c1726, 150);
-    fill_rect(0, mb - 1, w, 1, 0x24314a);
+    fill_round_rect_a(0, 0, w, mb, 0, 0x0b1424, 170);
+    fill_rect(0, mb - 1, w, 1, 0x1f2c42);
     let ty = (mb.saturating_sub(small())) / 2;
-    gfx::draw_text(body(), ty, "Zamin OS", OQ, small());
+    gfx::draw_text(body(), ty, "Zamin OS", 0xf2f6fc, small());
     let user = accounts::current().map(|a| a.username).unwrap_or_default();
     let t = time::now();
-    let right = alloc::format!("{}   {:02}:{:02}", user, t.hour, t.minute);
-    gfx::draw_text(w.saturating_sub(gfx::text_width(&right, small()) + body()), ty, &right, 0xd8e2f0, small());
+    let right = alloc::format!("{}     {:02}:{:02}", user, t.hour, t.minute);
+    gfx::draw_text(w.saturating_sub(gfx::text_width(&right, small()) + body()), ty, &right, 0xd4deee, small());
 }
 
-/// Bitta oynani mac uslubida chizadi (soya, yumaloq tana, sarlavha, mazmun).
+/// Bitta oynani so'nggi mac uslubida chizadi (yumşoq soya, shaffof tana,
+/// birlaşgan sarlavha, svetofor nuqtalari). Mazmun oyna içiga qirqiladi.
 fn draw_window(win: &Window, active: bool) {
+    gfx::reset_clip();
     let r = radius();
     let th = title_h();
-    // Soya
-    gfx::shadow(win.x, win.y, win.w, win.h, r, if active { 10 } else { 5 });
-    // Tana
-    fill_round_rect(win.x, win.y, win.w, win.h, r, WIN_BODY);
-    // Sarlavha paneli (yuqori yumaloq)
-    let tcol = if active { WIN_TITLE } else { 0x202735 };
+    // Yumşoq soya
+    gfx::shadow(win.x, win.y, win.w, win.h, r, if active { 14 } else { 7 });
+    // Tana (toza, shaffofmas)
+    fill_round_rect(win.x, win.y, win.w, win.h, r, if active { WIN_BODY } else { 0x191e29 });
+    // Birlaşgan sarlavha uçun biroz oçroq fon (yuqori burçaklar yumaloq)
+    let tcol = if active { WIN_TITLE } else { 0x1d2430 };
     fill_round_rect(win.x, win.y, win.w, th, r, tcol);
     fill_rect(win.x, win.y + th - r, win.w, r, tcol);
-    fill_rect(win.x, win.y + th, win.w, 1, 0x11161f);
-    gfx::round_outline(win.x, win.y, win.w, win.h, r, 1, if active { WIN_EDGE } else { 0x2a3142 });
+    fill_rect(win.x, win.y + th, win.w, 1, 0x0f131c);
+    // Yuqori ichki yorugʻ chiziq (shisha qirrasi)
+    fill_round_rect_a(win.x + r, win.y, win.w - 2 * r, 1, 0, 0xffffff, 30);
+    // Hairline chegara
+    gfx::round_outline(win.x, win.y, win.w, win.h, r, 1, if active { 0x3a4458 } else { 0x2a3040 });
     // Svetofor nuqtalari (çap)
     let (dx, dy, dr) = win.close_dot();
-    let dim = |c: Color| if active { c } else { 0x586074 };
-    gfx::fill_circle(dx, dy, dr, dim(QIZIL));
-    gfx::fill_circle(dx + dr * 3, dy, dr, dim(SARIQ));
-    gfx::fill_circle(dx + dr * 6, dy, dr, dim(YASHIL));
-    // Sarlavha matni (markazda)
+    let step = dr * 5 / 2;
+    let dim = |c: Color| if active { c } else { 0x4a5366 };
+    gfx::fill_circle(dx, dy, dr, dim(0xff5f57));
+    gfx::fill_circle(dx + step, dy, dr, dim(0xfebc2e));
+    gfx::fill_circle(dx + step * 2, dy, dr, dim(0x28c840));
+    // Sarlavha matni (markazda, nuqtalardan qoçib qirqiladi)
+    let tl = win.x + th * 2;
+    let tw = win.w.saturating_sub(th * 3);
+    gfx::set_clip(tl, win.y, tw, th);
     let ty = win.y + (th.saturating_sub(small())) / 2;
-    gfx::draw_text_centered(win.x + win.w / 2, ty, &win.title, if active { OQ } else { KULRANG }, small());
+    gfx::draw_text_centered(win.x + win.w / 2, ty, &win.title, if active { 0xeef3fa } else { 0x8696ac }, small());
+    gfx::reset_clip();
 
+    // Mazmun — oyna içiga qirqiladi
+    gfx::set_clip(win.x + 1, win.y + th, win.w.saturating_sub(2), win.h.saturating_sub(th + 1));
     match win.kind {
         Kind::Clock => draw_clock(win),
         Kind::Image => draw_scene(win),
         Kind::Editor => draw_editor(win),
         _ => draw_text_window(win),
     }
+    gfx::reset_clip();
 }
 
 /// Terminal/Fayllar/Haqida mazmunini chizadi.
 fn draw_text_window(win: &Window) {
     let mono = win.kind == Kind::Terminal;
     let px = small();
-    let lh = gfx::line_height(px, if mono { Font::Mono } else { Font::Ui }).max(px + 2);
-    let fg = if mono { YASHIL } else { 0xe6ecf5 };
-    let pad = body() / 2;
+    let lh = gfx::line_height(px, if mono { Font::Mono } else { Font::Ui }).max(px + 3);
+    let fg = if mono { 0x46d98a } else { 0xe7edf6 };
+    let pad = body();
     let mut ty = win.content_top();
     let draw_line = |x: usize, y: usize, s: &str, c: Color| {
         if mono { gfx::draw_text_mono(x, y, s, c, px) } else { gfx::draw_text(x, y, s, c, px) };
     };
     for line in &win.lines {
-        if ty + lh > win.y + win.h - pad {
+        if ty + lh > win.y + win.h - pad / 2 {
             break;
         }
         draw_line(win.x + pad, ty, line, fg);
         ty += lh;
     }
-    if win.kind == Kind::Terminal && ty + lh <= win.y + win.h - pad {
+    if win.kind == Kind::Terminal && ty + lh <= win.y + win.h - pad / 2 {
         let cur = String::from_utf8_lossy(&win.cur);
-        draw_line(win.x + pad, ty, &alloc::format!("{}{}_", cur, win.input), fg);
+        draw_line(win.x + pad, ty, &alloc::format!("{}{}", cur, win.input), fg);
+        // Kursor çizigʻi
+        let cwdt = gfx::text_width_mono(&alloc::format!("{}{}", cur, win.input), px);
+        fill_rect(win.x + pad + cwdt + 1, ty, (px / 10).max(1), px, 0x46d98a);
     }
 }
 
@@ -848,121 +869,142 @@ fn draw_text_window(win: &Window) {
 fn draw_clock(win: &Window) {
     let t = time::now();
     let cx = win.x + win.w / 2;
-    let big = (win.h / 4).clamp(28, 80);
+    let avail = (win.y + win.h).saturating_sub(win.content_top());
+    let big = (avail / 3).clamp(28, 96);
     let vaqt = alloc::format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second);
-    gfx::draw_text_centered(cx, win.content_top() + win.h / 10, &vaqt, OQ, big);
+    let cy0 = win.content_top() + avail / 2;
+    gfx::draw_text_centered(cx, cy0 - big, &vaqt, 0xf4f8ff, big);
     let sana = alloc::format!("{:04}-{:02}-{:02}", t.year, t.month, t.day);
-    gfx::draw_text_centered(cx, win.content_top() + win.h / 10 + big + body() / 2, &sana, 0x6fa8e8, body());
+    gfx::draw_text_centered(cx, cy0 + big / 3, &sana, 0x7fb0ea, body());
 }
 
 /// Matn muharriri: asboblar qatori (Saqla), matn, kursor, holat.
 fn draw_editor(win: &Window) {
     let px = small();
-    let lh = gfx::line_height(px, Font::Mono).max(px + 2);
+    let lh = gfx::line_height(px, Font::Mono).max(px + 3);
     // Asboblar qatori
     let (bx, by, bw, bh) = win.save_btn();
-    gfx::fill_round_rect(bx, by, bw, bh, bh / 3, YASHIL);
+    gfx::fill_round_rect(bx, by, bw, bh, bh / 2, 0x30c85a);
     let bty = by + (bh.saturating_sub(small())) / 2;
-    gfx::draw_text_centered(bx + bw / 2, bty, "Saqla", 0x0a2414, small());
+    gfx::draw_text_centered(bx + bw / 2, bty, "Saqla", 0x06230f, small());
     let status = String::from_utf8_lossy(&win.cur);
     if !status.is_empty() {
-        gfx::draw_text(win.x + body() / 2, by + (bh.saturating_sub(small())) / 2, &status, KULRANG, small());
+        gfx::draw_text(win.x + body(), by + (bh.saturating_sub(small())) / 2, &status, 0x8aa0bc, small());
     }
     // Matn
-    let pad = body() / 2;
-    let mut ty = by + bh + pad;
+    let pad = body();
+    let mut ty = by + bh + pad / 2;
     for line in &win.lines {
-        if ty + lh > win.y + win.h - pad {
+        if ty + lh > win.y + win.h - pad / 2 {
             break;
         }
-        gfx::draw_text_mono(win.x + pad, ty, line, 0xe6ecf5, px);
+        gfx::draw_text_mono(win.x + pad, ty, line, 0xe7edf6, px);
         ty += lh;
     }
-    if ty + lh <= win.y + win.h - pad {
-        gfx::draw_text_mono(win.x + pad, ty, &alloc::format!("{}_", win.input), 0xe6ecf5, px);
+    if ty + lh <= win.y + win.h - pad / 2 {
+        let w = gfx::text_width_mono(&win.input, px);
+        gfx::draw_text_mono(win.x + pad, ty, &win.input, 0xe7edf6, px);
+        fill_rect(win.x + pad + w + 1, ty, (px / 10).max(1), px, 0x7fb0ea);
     }
 }
 
 /// Rasm köruvçi: namunaviy "Zamin" manzarasi (osmon, quyoş, togʻlar).
 fn draw_scene(win: &Window) {
-    let pad = 3;
-    let (x, y) = (win.x + pad, win.content_top());
-    let (w, h) = (win.w - pad * 2, (win.y + win.h).saturating_sub(y + pad));
-    // Osmon gradienti
-    gfx::gradient_rect(x, y, w, h, 0x1b3a6b, 0xe8a05a);
+    let (x, y) = (win.x + 1, win.y + title_h() + 1);
+    let (w, h) = (win.w - 2, (win.y + win.h).saturating_sub(y + 1));
+    // Osmon gradienti (quyoş botişi)
+    gfx::gradient_rect(x, y, w, h * 5 / 6, 0x2b4a8c, 0xf0b36a);
     // Quyoş
-    gfx::fill_circle(x + w * 3 / 4, y + h / 4, (h / 8).max(8), SARIQ);
+    gfx::fill_circle(x + w * 3 / 4, y + h / 3, (h / 7).max(10), 0xfff1c0);
+    gfx::fill_circle(x + w * 3 / 4, y + h / 3, (h / 9).max(7), SARIQ);
     // Togʻlar
-    hill(x, y, w, h, w / 3, h * 2 / 3, 0x2e4a3a);
-    hill(x, y, w, h, w * 2 / 3, h / 2, 0x24523a);
+    hill(x, y, w, h, w / 3, h * 2 / 3, 0x2a4740);
+    hill(x, y, w, h, w * 2 / 3, h / 2, 0x1f5141);
     // Yer
-    fill_rect(x, y + h * 5 / 6, w, h - h * 5 / 6, 0x163024);
+    fill_rect(x, y + h * 5 / 6, w, h - h * 5 / 6, 0x143026);
 }
 
-/// Dok: markazlashgan shaffof panel + ilova ikonalari.
-fn draw_dock(sw: usize, sh: usize) {
-    let (dx, dy, dw, dh, icon, _gap) = dock_geom(sw, sh);
-    gfx::shadow(dx, dy, dw, dh, dh / 3, 6);
-    fill_round_rect_a(dx, dy, dw, dh, dh / 3, 0x1a2234, 205);
-    gfx::round_outline(dx, dy, dw, dh, dh / 3, 1, 0x323c52);
+/// Dok: markazlashgan shaffof panel + ilova ikonalari (siçqon tagida kattaroq).
+fn draw_dock(sw: usize, sh: usize, cx: usize, cy: usize, windows: &[Window]) {
+    let (dx, dy, dw, dh, _icon, _gap) = dock_geom(sw, sh);
+    let dr = dh * 3 / 8;
+    gfx::shadow(dx, dy, dw, dh, dr, 8);
+    fill_round_rect_a(dx, dy, dw, dh, dr, 0x1b2436, 210);
+    fill_round_rect_a(dx + dr, dy, dw - 2 * dr, 1, 0, 0xffffff, 30); // yuqori yorugʻlik
+    gfx::round_outline(dx, dy, dw, dh, dr, 1, 0x39435a);
     for (i, l) in LAUNCHERS.iter().enumerate() {
         let (ix, iy, isz) = dock_icon_rect(sw, sh, i);
+        let hover = cx >= ix && cx < ix + isz && cy >= dy && cy < dy + dh;
+        let open = windows.iter().any(|w| w.kind == l.kind);
+        if hover {
+            // Fon yoritgichi + nomi (tooltip)
+            fill_round_rect_a(ix - isz / 8, iy - isz / 8, isz + isz / 4, isz + isz / 4, isz / 4, 0xffffff, 24);
+            let lw = gfx::text_width(l.label, small());
+            let tx = (ix + isz / 2).saturating_sub(lw / 2 + body() / 2);
+            let tipw = lw + body();
+            let tipy = dy.saturating_sub(small() + body());
+            fill_round_rect_a(tx, tipy, tipw, small() + body() / 2, (small() + body() / 2) / 3, 0x0b1424, 230);
+            gfx::draw_text_centered(ix + isz / 2, tipy + body() / 4, l.label, OQ, small());
+        }
         draw_icon(l.kind, l.color, ix, iy, isz);
-        let _ = icon;
+        if open {
+            // Ishlayotgan ilova belgisi (nuqta)
+            let d = (isz / 12).max(2);
+            gfx::fill_circle(ix + isz / 2, dy + dh - d - 1, d, 0xcdd7e6);
+        }
     }
 }
 
-/// Bitta ilova ikonasini chizadi (yumaloq plitka + belgisi).
+/// Bitta ilova ikonasini chizadi (squircle plitka + belgisi).
 fn draw_icon(kind: Kind, color: Color, x: usize, y: usize, s: usize) {
-    let r = s / 4;
-    // Plitka: rangli gradient
-    gfx::fill_round_rect(x, y, s, s, r, color);
-    gfx::fill_round_rect_a(x, y, s, s / 2, r, OQ, 28); // yuqori yaltiraş
+    let r = s * 3 / 10; // squircle
+    // Plitka: rang + yuqori yorugʻlik + chegara
+    fill_round_rect(x, y, s, s, r, color);
+    gfx::fill_round_rect_a(x, y, s, s / 2, r, 0xffffff, 32);
+    gfx::round_outline(x, y, s, s, r, 1, 0x000000);
     let c = x + s / 2;
     let m = s / 2;
     match kind {
         Kind::Terminal => {
-            gfx::draw_text(x + s / 6, y + s / 3, ">_", OQ, m);
+            gfx::draw_text_mono(x + s / 5, y + s / 3, ">_", OQ, m * 4 / 5);
         }
         Kind::Files => {
-            // Papka
-            let fw = s * 3 / 5;
+            let fw = s * 11 / 20;
             let fh = s * 2 / 5;
             let fx = x + (s - fw) / 2;
-            let fy = y + (s - fh) / 2;
-            gfx::fill_round_rect(fx, fy - fh / 4, fw * 2 / 5, fh / 3, fh / 8, 0xfff1c2);
-            gfx::fill_round_rect(fx, fy, fw, fh, fh / 6, 0xffe08a);
+            let fy = y + (s - fh) / 2 + s / 20;
+            gfx::fill_round_rect(fx, fy - fh / 4, fw * 2 / 5, fh / 3, fh / 8, 0xffe9a8);
+            gfx::fill_round_rect(fx, fy, fw, fh, fh / 5, 0xffcf5e);
         }
         Kind::Editor => {
-            // Hujjat + qatorlar
             let dw = s * 2 / 5;
             let dh = s * 3 / 5;
             let dxp = x + (s - dw) / 2;
             let dyp = y + (s - dh) / 2;
-            gfx::fill_round_rect(dxp, dyp, dw, dh, dw / 8, OQ);
+            gfx::fill_round_rect(dxp, dyp, dw, dh, dw / 6, OQ);
             for k in 0..3 {
-                fill_rect(dxp + dw / 6, dyp + dh / 4 + k * dh / 5, dw * 2 / 3, (s / 24).max(1), 0x7a8aa0);
+                fill_rect(dxp + dw / 5, dyp + dh / 4 + k * dh / 5, dw * 3 / 5, (s / 22).max(1), 0x8392a8);
             }
         }
         Kind::Clock => {
             let rr = s * 2 / 5;
             gfx::fill_circle(c, y + m, rr, OQ);
-            gfx::fill_circle(c, y + m, rr * 9 / 10, 0x20334d);
-            // Strelkalar
-            fill_rect(c, y + m - rr / 2, (s / 24).max(1), rr / 2, OQ);
-            fill_rect(c, y + m, rr * 2 / 3, (s / 24).max(1), OQ);
+            gfx::fill_circle(c, y + m, rr * 17 / 20, 0x1b2740);
+            fill_rect(c, y + m - rr / 2, (s / 20).max(1), rr / 2, OQ);
+            fill_rect(c, y + m, rr * 3 / 5, (s / 20).max(1), OQ);
+            gfx::fill_circle(c, y + m, (s / 20).max(2), 0xff6b5c);
         }
         Kind::Image => {
             let iw = s * 3 / 5;
-            let ih = s * 2 / 5;
+            let ih = s * 7 / 15;
             let ix = x + (s - iw) / 2;
             let iy = y + (s - ih) / 2;
             gfx::gradient_rect(ix, iy, iw, ih, 0x8fd0ff, 0xffd59e);
-            gfx::fill_circle(ix + iw * 3 / 4, iy + ih / 3, (ih / 6).max(2), OQ);
-            hill(ix, iy, iw, ih, iw / 2, ih * 3 / 5, 0x2e6b4a);
+            gfx::fill_circle(ix + iw * 3 / 4, iy + ih / 3, (ih / 5).max(2), 0xfff6d8);
+            hill(ix, iy, iw, ih, iw / 2, ih * 3 / 5, 0x2e8b58);
         }
         Kind::About => {
-            gfx::draw_text_centered(c, y + s / 5, "i", OQ, s * 3 / 5);
+            gfx::draw_text_centered(c, y + s / 6, "i", OQ, s * 2 / 3);
         }
     }
 }

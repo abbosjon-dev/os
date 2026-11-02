@@ -47,10 +47,43 @@ struct Fb {
 
 static FB: SpinLock<Option<Fb>> = SpinLock::new(None);
 
+// Qirqiş (clip) töğriburçagi — chiziş şu soha bilan çeklanadi (oyna içidagi matn
+// çetga çiqib ketmasligi uçun). Boşlangʼiç holatda — butun ekran.
+use core::sync::atomic::{AtomicUsize, Ordering};
+static CLIP_X0: AtomicUsize = AtomicUsize::new(0);
+static CLIP_Y0: AtomicUsize = AtomicUsize::new(0);
+static CLIP_X1: AtomicUsize = AtomicUsize::new(usize::MAX);
+static CLIP_Y1: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+/// Chiziş sohasini çeklaydi (oyna mazmuni uçun).
+pub fn set_clip(x: usize, y: usize, w: usize, h: usize) {
+    CLIP_X0.store(x, Ordering::Relaxed);
+    CLIP_Y0.store(y, Ordering::Relaxed);
+    CLIP_X1.store(x + w, Ordering::Relaxed);
+    CLIP_Y1.store(y + h, Ordering::Relaxed);
+}
+
+/// Qirqişni olib taşlaydi (butun ekran).
+pub fn reset_clip() {
+    CLIP_X0.store(0, Ordering::Relaxed);
+    CLIP_Y0.store(0, Ordering::Relaxed);
+    CLIP_X1.store(usize::MAX, Ordering::Relaxed);
+    CLIP_Y1.store(usize::MAX, Ordering::Relaxed);
+}
+
+#[inline]
+fn in_clip(x: usize, y: usize) -> bool {
+    x >= CLIP_X0.load(Ordering::Relaxed)
+        && x < CLIP_X1.load(Ordering::Relaxed)
+        && y >= CLIP_Y0.load(Ordering::Relaxed)
+        && y < CLIP_Y1.load(Ordering::Relaxed)
+}
+
 pub fn init(width: u32, height: u32) -> bool {
     match gpu::init(width, height) {
         Some((w, h, fb)) => {
             *FB.lock() = Some(Fb { ptr: fb, w: w as usize, h: h as usize });
+            reset_clip();
             true
         }
         None => false,
@@ -67,7 +100,7 @@ pub fn size() -> (usize, usize) {
 
 #[inline]
 fn put(f: &Fb, x: usize, y: usize, c: Color) {
-    if x < f.w && y < f.h {
+    if x < f.w && y < f.h && in_clip(x, y) {
         unsafe { core::ptr::write_volatile((f.ptr + (y * f.w + x) * 4) as *mut u32, c) };
     }
 }
@@ -84,7 +117,7 @@ fn get(f: &Fb, x: usize, y: usize) -> Color {
 /// Alfa (0..255) bilan aralaştirib qöyadi.
 #[inline]
 fn blend(f: &Fb, x: usize, y: usize, c: Color, a: u32) {
-    if a == 0 || x >= f.w || y >= f.h {
+    if a == 0 || x >= f.w || y >= f.h || !in_clip(x, y) {
         return;
     }
     if a >= 255 {
