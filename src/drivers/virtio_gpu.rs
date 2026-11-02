@@ -8,7 +8,7 @@
 use super::virtio::{Transport, DEVICE_GPU};
 use crate::memory::{PAGE_SIZE, frame};
 use crate::sync::Mutex;
-use core::ptr::write_volatile;
+use core::ptr::{read_volatile, write_volatile};
 
 const CMD_GET_DISPLAY_INFO: u32 = 0x0100;
 const CMD_RESOURCE_CREATE_2D: u32 = 0x0101;
@@ -63,17 +63,47 @@ impl Gpu {
         wr32(self.cmd, off + 8, w);
         wr32(self.cmd, off + 12, h);
     }
+
+    /// Ekranning afzal körilgan (preferred) ölçamini soraydi (scanout 0).
+    /// Natija: (kenglik, balandlik) yoki yöq.
+    fn display_info(&mut self) -> Option<(u32, u32)> {
+        self.begin(CMD_GET_DISPLAY_INFO);
+        // Javob: hdr(24) + 16 ta display_one(24 bayt): rect(16)+enabled(4)+flags(4)
+        self.t.submit(&[(self.cmd, 24, false), (self.resp, 24 + 16 * 24, true)]);
+        let rd = |off: usize| unsafe { read_volatile((self.resp + off) as *const u32) };
+        // scanout 0 — hdr dan keyin: rect(x,y,w,h), enabled
+        let w = rd(24 + 8);
+        let h = rd(24 + 12);
+        let enabled = rd(24 + 16);
+        if enabled != 0 && (320..=4096).contains(&w) && (240..=2160).contains(&h) {
+            Some((w & !1, h & !1))
+        } else {
+            None
+        }
+    }
 }
 
 /// GPU ni topadi va `width`×`height` framebuffer tayyorlaydi. Natija: (width, height, fb).
-pub fn init(width: u32, height: u32) -> Option<(u32, u32, usize)> {
+pub fn init(req_w: u32, req_h: u32) -> Option<(u32, u32, usize)> {
     let t = Transport::probe(DEVICE_GPU)?;
     let cmd = frame::alloc_zeroed()?;
     let resp = frame::alloc_zeroed()?;
-    let fb_pages = (width as usize * height as usize * 4).div_ceil(PAGE_SIZE);
-    let fb = frame::alloc_contiguous(fb_pages)?;
+    // Ekranning afzal körilgan ölçamini soraymiz — har qanday ölçamga moslaşamiz.
+    let mut g = Gpu { t, cmd, resp, fb: 0, width: 0, height: 0 };
+    let cap = |w: u32, h: u32| (w.min(1920), h.min(1200));
+    let (mut width, mut height) = g.display_info().map(|(w, h)| cap(w, h)).unwrap_or((req_w, req_h));
+    // Framebuffer uçun qoşni xotira; katta ölçam ajralmasa — sorovga qaytamiz.
+    let mut fb_pages = (width as usize * height as usize * 4).div_ceil(PAGE_SIZE);
+    let fb = frame::alloc_contiguous(fb_pages).or_else(|| {
+        width = req_w;
+        height = req_h;
+        fb_pages = (width as usize * height as usize * 4).div_ceil(PAGE_SIZE);
+        frame::alloc_contiguous(fb_pages)
+    })?;
     unsafe { core::ptr::write_bytes(fb as *mut u8, 0, fb_pages * PAGE_SIZE) };
-    let mut g = Gpu { t, cmd, resp, fb, width, height };
+    g.fb = fb;
+    g.width = width;
+    g.height = height;
 
     // 1) Resurs yaratamiz (2D, B8G8R8X8)
     g.begin(CMD_RESOURCE_CREATE_2D);
