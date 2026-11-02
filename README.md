@@ -329,6 +329,9 @@ src/fs/fat.rs         FAT16/FAT32 öquvçi (faqat öqiş)
 src/net/tls.rs        TLS 1.3 mijozi (X25519, ChaCha20-Poly1305, HKDF)
 src/crypto/x25519.rs  X25519 kalit almaşinuvi
 src/crypto/hkdf.rs    HKDF-SHA256 va TLS 1.3 kalit jadvali
+src/drivers/virtio_gpu.rs  virtio-gpu 2D drayveri
+src/gfx/mod.rs        Çiziş: piksel, töğriburçak, matn, gradient
+src/gfx_font.rs       8×16 bitmap şrift
 user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 ```
 
@@ -351,6 +354,24 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [ ] **9. Grafika** — framebuffer, kompozitor, oyna menejeri, şriftlar
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
+
+## Grafika
+
+Zamin OS'da grafik rejim bor (virtio-gpu, 1024×768, 32-bit rang):
+
+- özimiz yozgan virtio-gpu 2D drayveri (resurs, scanout, transfer, flush);
+- framebufferga çiziş: piksel, töğriburçak, gradient, ramka;
+- 8×16 bitmap şrift (DejaVu Sans Mono dan), ASCII + özbek (ö ş ç ğ) + rus harflari;
+- yuklanişda grafik ish stoli çiziladi (logotip, panel, soat).
+
+```sh
+# Oynada (grafik muhit kerak):
+cargo build && sh scripts/qemu-gfx.sh target/aarch64-unknown-none-softfloat/debug/kernel
+# Serversiz skrinshot (PNG):
+python3 scripts/screenshot.py target/aarch64-unknown-none-softfloat/debug/kernel ekran.png
+```
+
+GPU bölmasa, tizim matn rejimida (UART terminali) işlayveradi.
 
 ## Backend mustahkamlaş (xavfsizlik va işonçlilik)
 

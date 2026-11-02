@@ -15,6 +15,8 @@ mod drivers;
 mod dtb;
 mod exceptions;
 mod fs;
+mod gfx;
+mod gfx_font;
 mod gic;
 mod i18n;
 mod ipc;
@@ -202,6 +204,15 @@ pub extern "C" fn kernel_main() -> ! {
         tprintln!(msg::FAT_MOUNTED, n);
     }
 
+    // 12) Grafika: virtio-gpu (bölsa) — ekranga ish stolini çizamiz
+    if gfx::init(1024, 768) {
+        let (w, _) = gfx::size();
+        tprintln!(msg::GPU_READY, w, gfx::size().1);
+        draw_desktop();
+    } else {
+        tprintln!(msg::GPU_NONE);
+    }
+
     // PID 0: boşqa iş bölmaganda — tugagan vazifalarni tozalaş va uxlaş
     loop {
         task::reap_detached();
@@ -225,6 +236,43 @@ pub extern "C" fn secondary_main(cpu: usize) -> ! {
 }
 
 /// Fon oqimi: har 2 soniyada özgarişlarni şifrlab diskka yozadi.
+/// Oddiy grafik ish stoli (namuna): fon, yuqori panel, logotip, panellar.
+fn draw_desktop() {
+    use gfx::*;
+    let (w, h) = size();
+    gradient(0x14243a, ZAMIN_TUN); // kökimtir tün gradienti
+    // Yuqori panel
+    fill_rect(0, 0, w, 36, 0x0a1420);
+    draw_text(12, 9, "Zamin OS", OQ, 2);
+    let soat = crate::time::now();
+    let vaqt = alloc::format!("{:02}:{:02}", soat.hour, soat.minute);
+    draw_text(w - text_width(&vaqt, 2) - 12, 9, &vaqt, KULRANG, 2);
+    // Markazdagi logotip qutisi
+    let (bw, bh) = (520, 240);
+    let (bx, by) = ((w - bw) / 2, (h - bh) / 2 - 40);
+    fill_rect(bx, by, bw, bh, 0x16273d);
+    rect_outline(bx, by, bw, bh, ZAMIN_KOK);
+    draw_text_centered(w / 2, by + 50, "ZAMIN OS", ZAMIN_KOK, 5);
+    draw_text_centered(w / 2, by + 120, "Rust'da noldan yozilgan OS", OQ, 2);
+    draw_text_centered(w / 2, by + 160, "ARM64 · grafik rejim", KULRANG, 2);
+    // Pastki uç panel
+    let labels = ["Terminal", "Fayllar", "Tarmoq"];
+    let colors = [ZAMIN_KOK, YASHIL, SARIQ];
+    for (i, (lbl, col)) in labels.iter().zip(colors).enumerate() {
+        let pw = 220;
+        let px = (w - 3 * pw - 2 * 30) / 2 + i * (pw + 30);
+        let py = by + bh + 50;
+        fill_rect(px, py, pw, 90, 0x1b2d45);
+        rect_outline(px, py, pw, 90, col);
+        fill_rect(px + 16, py + 20, 50, 50, col);
+        draw_text(px + 84, py + 36, lbl, OQ, 2);
+    }
+    // Pastki holat satri
+    fill_rect(0, h - 28, w, 28, 0x0a1420);
+    draw_text(12, h - 24, "Dasturçi: Abbosjon Dev · zamin.app", KULRANG, 2);
+    flush();
+}
+
 extern "C" fn saver(_: usize) {
     loop {
         task::sleep_ms(2000);

@@ -500,6 +500,8 @@ pub mod msg {
     ];
     pub const FS_IO: Text = ["disk xatosi", "ошибка диска", "disk error"];
     pub const SH_SAVE_FAIL: Text = ["  Saqlab bölmadi: {}", "  Не удалось сохранить: {}", "  Save failed: {}"];
+    pub const GPU_READY: Text = ["[gpu ] virtio-gpu: {}x{} ish stoli çizildi", "[gpu ] virtio-gpu: рабочий стол {}x{}", "[gpu ] virtio-gpu: desktop {}x{}"];
+    pub const GPU_NONE: Text = ["[gpu ] grafik qurilma yöq (matn rejimi)", "[gpu ] нет видеоустройства (текстовый режим)", "[gpu ] no GPU (text mode)"];
     pub const FAT_MOUNTED: Text = [
         "[fat ] ikkinçi disk (FAT) /fat ga ulandi: {} ta fayl",
         "[fat ] второй диск (FAT) подключён к /fat: файлов — {}",
