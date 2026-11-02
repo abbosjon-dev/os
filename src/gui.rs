@@ -3,12 +3,14 @@
 
 use crate::drivers::virtio_input as input;
 use crate::gfx::{self, *};
-use crate::{fs, task, time};
+use crate::task::{Handle, SpawnOptions};
+use crate::{accounts, fs, pipe, task, time};
 use alloc::string::String;
 use alloc::vec::Vec;
 
 const TITLE_H: usize = 28;
 const TASKBAR_H: usize = 40;
+const NONE_PIPE: usize = usize::MAX;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -24,8 +26,14 @@ struct Window {
     h: usize,
     kind: Kind,
     title: String,
-    lines: Vec<String>, // çiqiş satrlari
-    input: String,      // terminal kiriş qatori
+    lines: Vec<String>, // tugagan çiqiş satrlari
+    input: String,      // terminal kiriş qatori (hali yuborilmagan)
+    // Haqiqiy EL0 terminal jarayoni bilan quvur orqali bogʻ
+    pid: task::Pid,     // 0 — jarayon yöq
+    pin: usize,         // kiriş quvuri (GUI yozadi → bola stdin); NONE_PIPE — yöq
+    pout: usize,        // çiqiş quvuri (bola stdout → GUI öqiydi); NONE_PIPE — yöq
+    cur: Vec<u8>,       // hali tugamagan çiqiş qatori (bayt oqimi)
+    esc: Option<String>, // qayta işlanayotgan ESC ketma-ketligi
 }
 
 impl Window {
@@ -52,63 +60,167 @@ const LAUNCHERS: [Launcher; 3] = [
     Launcher { label: "Haqida", kind: Kind::About, color: SARIQ },
 ];
 
+fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines: Vec<String>) -> Window {
+    Window {
+        x, y, w, h, kind, title, lines,
+        input: String::new(),
+        pid: 0, pin: NONE_PIPE, pout: NONE_PIPE,
+        cur: Vec::new(), esc: None,
+    }
+}
+
 fn new_window(kind: Kind, n: usize) -> Window {
     let (x, y) = (120 + n * 40 % 300, 80 + n * 36 % 200);
     match kind {
-        Kind::Terminal => Window {
-            x, y, w: 560, h: 360, kind,
-            title: String::from("Zamin terminali"),
-            lines: alloc::vec![String::from("Zamin OS grafik terminali. Buyruqlar: yordam")],
-            input: String::new(),
-        },
+        Kind::Terminal => {
+            let mut win = base(x, y, 580, 380, kind, String::from("Zamin terminali"), Vec::new());
+            spawn_terminal(&mut win);
+            win
+        }
         Kind::Files => {
             let mut lines = alloc::vec![String::from("~ (uy papkasi):")];
             for e in fs::list("/uy").unwrap_or_default() {
                 lines.push(alloc::format!("  {}/", e.name));
             }
-            Window { x, y, w: 420, h: 320, kind, title: String::from("Fayllar"), lines, input: String::new() }
+            base(x, y, 420, 320, kind, String::from("Fayllar"), lines)
         }
-        Kind::About => Window {
-            x, y, w: 460, h: 260, kind,
-            title: String::from("Zamin OS haqida"),
-            lines: alloc::vec![
-                String::from("Zamin OS"),
-                alloc::format!("Versiya {}", env!("CARGO_PKG_VERSION")),
-                String::new(),
-                String::from("Rust'da noldan yozilgan ARM64 OS"),
-                String::from("Dasturçi: Abbosjon Dev"),
-                String::from("zamin.app · info@zamin.app"),
-            ],
-            input: String::new(),
-        },
+        Kind::About => base(x, y, 460, 260, kind, String::from("Zamin OS haqida"), alloc::vec![
+            String::from("Zamin OS"),
+            alloc::format!("Versiya {}", env!("CARGO_PKG_VERSION")),
+            String::new(),
+            String::from("Rust'da noldan yozilgan ARM64 OS"),
+            String::from("Dasturçi: Abbosjon Dev"),
+            String::from("zamin.app · info@zamin.app"),
+        ]),
     }
 }
 
-/// Terminal buyruğini bajaradi.
-fn run_command(w: &mut Window, cmd: &str) {
-    let (name, args) = cmd.split_once(' ').unwrap_or((cmd, ""));
-    match name {
-        "" => {}
-        "yordam" => w.lines.push(String::from("buyruqlar: yordam, vaqt, fayllar, aks, tozala")),
-        "vaqt" => {
-            let t = time::now();
-            w.lines.push(alloc::format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.year, t.month, t.day, t.hour, t.minute, t.second));
+/// Oynaga haqiqiy `/dasturlar/terminal` (EL0) jarayonini quvurlar bilan ulaydi.
+/// Kiriş quvuri: GUI yozuvçi, bola öquvçi (stdin). Çiqiş quvuri: bola yozuvçi
+/// (stdout/stderr), GUI öquvçi.
+fn spawn_terminal(win: &mut Window) {
+    let Ok(image) = fs::read_all("/dasturlar/terminal") else {
+        win.lines.push(String::from("terminal dasturi topilmadi (/dasturlar/terminal)"));
+        return;
+    };
+    let pin = pipe::create_raw();
+    let pout = pipe::create_raw();
+    pipe::add_ref(pin, true); // GUI — yozuvçi
+    pipe::add_ref(pout, false); // GUI — öquvçi
+    let opts = SpawnOptions {
+        detached: true,
+        parent: 0,
+        stdio: [Handle::PipeRead(pin), Handle::PipeWrite(pout), Handle::PipeWrite(pout)],
+        env: task::default_env(),
+        trusted: false, // grafik terminal: tizim buyruqlari (parol, tiklaş) ruxsatsiz
+        cwd: task::default_cwd(),
+        uid: accounts::current_uid(),
+        jail: None,
+        extra: None,
+    };
+    match task::spawn_user("terminal", &image, "", opts) {
+        Ok(pid) => {
+            win.pid = pid;
+            win.pin = pin;
+            win.pout = pout;
         }
-        "fayllar" => {
-            let path = if args.is_empty() { "/uy" } else { args };
-            match fs::list(path) {
-                Ok(list) => {
-                    for e in list {
-                        w.lines.push(alloc::format!("  {}{}", e.name, if e.is_dir { "/" } else { "" }));
-                    }
+        Err(_) => {
+            pipe::release(pin, true);
+            pipe::release(pout, false);
+            win.lines.push(String::from("terminalni işga tuşirib bölmadi"));
+        }
+    }
+}
+
+/// Oyna quvurlarini va jarayonini yopadi.
+fn close_terminal(win: &mut Window) {
+    if win.pid != 0 {
+        task::kill(win.pid);
+        win.pid = 0;
+    }
+    if win.pin != NONE_PIPE {
+        pipe::release(win.pin, true);
+        win.pin = NONE_PIPE;
+    }
+    if win.pout != NONE_PIPE {
+        pipe::release(win.pout, false);
+        win.pout = NONE_PIPE;
+    }
+}
+
+/// Bola jarayon çiqişini (bayt oqimi) oyna satrlariga qoşadi.
+/// Oddiy terminal emulyatori: `\n`, `\r`, orqaga oçiriş, ANSI ESC (tozalaş) ni tuşunadi.
+fn feed(win: &mut Window, bytes: &[u8]) {
+    for &b in bytes {
+        if let Some(esc) = win.esc.as_mut() {
+            esc.push(b as char);
+            if esc.len() >= 2 && (0x40..=0x7e).contains(&b) {
+                let seq = core::mem::take(&mut win.esc).unwrap();
+                if seq.ends_with('J') {
+                    // ekranni tozalaş (\x1b[2J)
+                    win.lines.clear();
+                    win.cur.clear();
                 }
-                Err(_) => w.lines.push(String::from("  papka topilmadi")),
+                // boşqa ketma-ketliklar (kursor, \x1b[H) — eʼtiborsiz
+            } else if esc.len() > 24 {
+                win.esc = None;
+            }
+            continue;
+        }
+        match b {
+            0x1b => win.esc = Some(String::new()),
+            b'\n' => push_line(win),
+            b'\r' => win.cur.clear(),
+            0x08 => {
+                win.cur.pop();
+            }
+            0..=0x1f => {}
+            _ => win.cur.push(b),
+        }
+    }
+    let max = term_rows(win);
+    while win.lines.len() > max {
+        win.lines.remove(0);
+    }
+}
+
+fn push_line(win: &mut Window) {
+    let line = String::from_utf8_lossy(&core::mem::take(&mut win.cur)).into_owned();
+    win.lines.push(line);
+}
+
+fn term_rows(win: &Window) -> usize {
+    (win.h.saturating_sub(TITLE_H + 24)) / 20
+}
+
+/// Terminal oynalaridan çiqişni öqib, satrlarga qoşadi. Bola tugasa — qaytadan işga tuşiradi.
+/// Biror narsa özgargan bölsa `true`.
+fn pump(windows: &mut [Window]) -> bool {
+    let mut changed = false;
+    for win in windows.iter_mut() {
+        if win.kind != Kind::Terminal || win.pout == NONE_PIPE {
+            continue;
+        }
+        loop {
+            match pipe::try_read(win.pout, 4096) {
+                Some(data) if !data.is_empty() => {
+                    feed(win, &data);
+                    changed = true;
+                }
+                Some(_) => break, // hozirça maʼlumot yöq
+                None => {
+                    // bola tugadi (stdout yopildi) — yangi terminal oçamiz
+                    close_terminal(win);
+                    push_line(win);
+                    win.lines.push(String::from("[terminal tugadi — qaytadan oçildi]"));
+                    spawn_terminal(win);
+                    changed = true;
+                    break;
+                }
             }
         }
-        "aks" => w.lines.push(String::from(args)),
-        "tozala" => w.lines.clear(),
-        _ => w.lines.push(alloc::format!("nomaʼlum buyruq: {}", name)),
     }
+    changed
 }
 
 pub extern "C" fn run(_: usize) {
@@ -168,6 +280,10 @@ pub extern "C" fn run(_: usize) {
                 }
             }
         }
+        // Terminal jarayonlari çiqişini öqiymiz
+        if pump(&mut windows) {
+            changed = true;
+        }
         if changed {
             draw(&windows, cx, cy);
             gfx::flush();
@@ -179,11 +295,16 @@ pub extern "C" fn run(_: usize) {
 fn type_key(w: &mut Window, code: u16, shift: bool) {
     match code {
         28 => {
-            // Enter
-            let cmd = core::mem::take(&mut w.input);
-            w.lines.push(alloc::format!("zamin> {}", cmd));
-            run_command(w, cmd.trim());
-            let max = (w.h - TITLE_H - 40) / 20;
+            // Enter: qatorni bola stdin iga yuboramiz; ekranda özimiz aks ettiramiz (bola qaytarmaydi)
+            let line = core::mem::take(&mut w.input);
+            w.cur.extend_from_slice(line.as_bytes());
+            push_line(w);
+            if w.pin != NONE_PIPE {
+                let mut data = line.into_bytes();
+                data.push(b'\n');
+                let _ = pipe::try_write(w.pin, &data);
+            }
+            let max = term_rows(w);
             while w.lines.len() > max {
                 w.lines.remove(0);
             }
@@ -193,7 +314,7 @@ fn type_key(w: &mut Window, code: u16, shift: bool) {
         }
         _ => {
             if let Some(ch) = keycode_char(code, shift) {
-                if w.input.len() < 60 {
+                if w.input.len() < 120 {
                     w.input.push(ch);
                 }
             }
@@ -218,7 +339,8 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
     // Yuqoridan (oxirgi = eng tepada) oynalarni tekşiramiz
     for i in (0..windows.len()).rev() {
         if windows[i].close_btn(cx, cy) {
-            windows.remove(i);
+            let mut w = windows.remove(i);
+            close_terminal(&mut w);
             return;
         }
         if windows[i].title_bar(cx, cy) {
@@ -255,16 +377,19 @@ fn draw(windows: &[Window], cx: usize, cy: usize) {
         fill_rect(win.x + win.w - TITLE_H, win.y, TITLE_H, TITLE_H, QIZIL);
         draw_text(win.x + win.w - TITLE_H + 8, win.y + 6, "x", OQ, 2);
         // Mazmun
+        let fg = if win.kind == Kind::Terminal { YASHIL } else { OQ };
         let mut ty = win.y + TITLE_H + 8;
         for line in &win.lines {
             if ty + 20 > win.y + win.h {
                 break;
             }
-            draw_text(win.x + 10, ty, line, if win.kind == Kind::Terminal { YASHIL } else { OQ }, 2);
+            draw_text(win.x + 10, ty, line, fg, 2);
             ty += 20;
         }
+        // Terminal: tugamagan qator (odatda taklif) + hozir terilayotgan kiriş
         if win.kind == Kind::Terminal && ty + 20 <= win.y + win.h {
-            draw_text(win.x + 10, ty, &alloc::format!("zamin> {}_", win.input), OQ, 2);
+            let cur = String::from_utf8_lossy(&win.cur);
+            draw_text(win.x + 10, ty, &alloc::format!("{}{}_", cur, win.input), fg, 2);
         }
     }
 

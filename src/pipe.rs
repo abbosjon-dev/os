@@ -38,6 +38,54 @@ pub fn create() -> PipeId {
     }
 }
 
+/// Yangi quvur, dastaksiz (readers=0, writers=0). Egalari `add_ref` bilan oʻzini qoʻshadi.
+/// Grafik terminal kabi, ikkala uçni ham öziga ulaydiganlar uçun.
+pub fn create_raw() -> PipeId {
+    let mut p = PIPES.lock();
+    let pipe = Pipe { buf: VecDeque::new(), readers: 0, writers: 0 };
+    if let Some(i) = p.iter().position(|x| x.is_none()) {
+        p[i] = Some(pipe);
+        i
+    } else {
+        p.push(Some(pipe));
+        p.len() - 1
+    }
+}
+
+/// Öqiydi, kutmasdan. Maʼlumot bölmasa böş qaytadi (fayl oxiri bilan aralaşmaydi).
+/// `None` — yozuvçilar qolmadi (fayl oxiri); `Some(vec)` — oʻqilgan baytlar (boʻsh boʻlishi mumkin).
+pub fn try_read(id: PipeId, max: usize) -> Option<Vec<u8>> {
+    let mut ps = PIPES.lock();
+    let p = ps.get_mut(id).and_then(|x| x.as_mut())?;
+    if !p.buf.is_empty() {
+        let n = max.min(p.buf.len());
+        let out: Vec<u8> = p.buf.drain(..n).collect();
+        drop(ps);
+        crate::task::wake_event(event(id));
+        return Some(out);
+    }
+    if p.writers == 0 {
+        return None;
+    }
+    Some(Vec::new())
+}
+
+/// Yozadi, kutmasdan. Buferda joy bölgança yozadi; qolgani taşlanadi.
+/// Natija: yozilgan baytlar, yoki `ERR_BROKEN_PIPE` (öquvçi qolmadi).
+pub fn try_write(id: PipeId, data: &[u8]) -> Result<usize, i64> {
+    let mut ps = PIPES.lock();
+    let p = ps.get_mut(id).and_then(|x| x.as_mut()).ok_or(ERR_BROKEN_PIPE)?;
+    if p.readers == 0 {
+        return Err(ERR_BROKEN_PIPE);
+    }
+    let room = CAPACITY.saturating_sub(p.buf.len());
+    let n = room.min(data.len());
+    p.buf.extend(&data[..n]);
+    drop(ps);
+    crate::task::wake_event(event(id));
+    Ok(n)
+}
+
 /// Dastak nusxalandi (masalan, bola jarayonga berildi).
 pub fn add_ref(id: PipeId, writer: bool) {
     if let Some(Some(p)) = PIPES.lock().get_mut(id) {
