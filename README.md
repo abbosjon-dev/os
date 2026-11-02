@@ -135,8 +135,22 @@ abbosjon@zamin:~> fayllar /fat
 abbosjon@zamin:~> öqi /fat/readme.txt
 ```
 
-Qisqa (8.3) nomlar öqiladi; yoziş yöq. Katta fayllar hozirça xotiraga yuklanadi (keyingi
-versiyada bloklab öqiladi).
+Qisqa (8.3) nomlar; yoziş ham qöllanadi (yaratiş/qayta yoziş).
+
+## Fayllar va rasmlar
+
+Grafik **Fayllar menejeri** papkalar içida yuradi va fayllarni turiga qarab
+tanib, mos ilovada oçadi:
+
+- fayl turi kengaytmadan aniqlanadi (papka, rasm, matn, dastur, audio, video,
+  arxiv) va tur ikonasi bilan körsatiladi;
+- rasm faylini bossangiz — **rasm köruvçi** uni dekodlab körsatadi;
+- matn faylini bossangiz — muharrirda oçiladi (tahrirlab saqlash mumkin);
+- dastur (ELF) bossangiz — maʼlumot körsatiladi.
+
+**Rasm dekoderlari — hammasi noldan yozilgan** (ochiq kutubxonasiz):
+PNG (zlib/inflate + 5 filtr), JPEG (baseline — Huffman, IDCT, YCbCr),
+GIF (LZW), BMP, QOI, PNM. `image::decode(baytlar)` formatni avtomatik aniqlaydi.
 
 ## Foydalanuvçilar va ruxsatlar
 
@@ -439,5 +453,7 @@ bosqiç (etap) yakunlanganda kötariladi.
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
 - 0.0.3 — tiniq (anti-aliased) masshtablanadigan grafika, mac uslubidagi UI
   (yumaloq oynalar, dok, ikonalar), har qanday ekran ölçamiga moslaşuv.
+- 0.0.4 — fayllar bilan işlaş: Fayllar menejeri (tur tanib oçadi) va rasm
+  köruvçi; PNG/JPEG/GIF/BMP/QOI/PNM dekoderlari (noldan).
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
