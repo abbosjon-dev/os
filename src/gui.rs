@@ -386,6 +386,31 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
         windows.push(win);
         return;
     }
+    // Videomi? (tur yoki konteyner sarlavhasidan)
+    if crate::video::is_video_ext(name) || crate::video::format_name(&data).is_some() {
+        let (w, h) = (u * 28, u * 22);
+        let mut win = base(x.min(sw - w), y, w, h, Kind::Image, alloc::format!("Video — {}", name), Vec::new());
+        win.path = String::from(path);
+        if let Some(frames) = crate::video::decode_frames(&data).filter(|f| !f.is_empty()) {
+            win.title = alloc::format!("Video — {} ({} kadr)", name, frames.len());
+            win.frames = frames;
+            win.frame_ms = crate::timer::uptime_ms();
+        } else if let Some(vi) = crate::video::info(&data) {
+            // taniladi, ammo dekod qilinmaydi — metama'lumotni körsatamiz
+            win.lines = alloc::vec![
+                alloc::format!("{} video — {}", vi.container, vi.codec),
+                alloc::format!("öl'çam: {}x{}", vi.w, vi.h),
+                alloc::format!("davomiylik: {}.{} s", vi.duration_ms / 1000, (vi.duration_ms % 1000) / 100),
+                String::new(),
+                String::from("Dekod qilinadi: MJPEG/AVI"),
+                String::from("H.264/HEVC/VP9/AV1 — taniladi"),
+            ];
+        } else {
+            win.lines = alloc::vec![String::from("Video oçib bölmadi")];
+        }
+        windows.push(win);
+        return;
+    }
     // Rasmmi? (tur yoki sarlavha baytidan)
     let is_img = FKind::of(name, false) == FKind::Image || crate::image::format_name(&data).is_some();
     if is_img {

@@ -39,6 +39,7 @@ mod task;
 mod time;
 mod timer;
 mod uart;
+mod video;
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -495,6 +496,10 @@ fn self_tests() {
     // Audio dekoderi: WAV
     audio::self_test().expect("audio (WAV) dekoderi yiqildi");
     tprintln!(msg::TEST_AUDIO);
+
+    // Video dekoderi: MJPEG/AVI + konteyner taniş (MP4/MOV/MKV/WebM)
+    video::self_test().expect("video (MJPEG) dekoderi yiqildi");
+    tprintln!(msg::TEST_VIDEO);
 
     // Taymer uzilişlari: 50 ms içida kamida 3 ta tick kelişi kerak
     let start_ticks = timer::ticks();

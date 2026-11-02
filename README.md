@@ -162,6 +162,32 @@ tanib, mos ilovada oçadi:
 ammo hali oçilmaydi. Vektor/hujjat formatlarida matn/font va gradient
 soddalaştirilgan.
 
+## Audio va video
+
+**Audio dekoderlar — hammasi noldan yozilgan:**
+
+- **WAV** (RIFF): PCM 8/16/24/32-bit, float, hamda o'yin/media kodeklari —
+  G.711 **μ-law**/**A-law**, **IMA/DVI ADPCM**, **Microsoft ADPCM**.
+- **AIFF/AIFC** (big-endian, 80-bit kengaytirilgan chastota).
+- **FLAC** — yoʻqotishsiz (Rice, fixed/LPC, kanal dekorrelyatsiyasi).
+- **MP3** (MPEG-1 Audio Layer III) — to'liq zanjir: sarlavha, yon maʼlumot,
+  bit rezervuar, Huffman (ISO jadvallari), qayta kvantlaş, qayta tartiblaş,
+  stereo (MS/intensity), antialias, IMDCT (uzun/qisqa bloklar), polifaz sintez
+  filtri. Taniş barcha versiyalar uçun (MPEG-1/2/2.5, Layer I/II/III, VBR, ID3).
+  ffmpeg bilan tekşirilgan (korrelyatsiya 1.0000).
+
+Grafik **Övoz köruvçi** toʻlqin shaklini chizadi va virtio-sound orqali chaladi.
+
+**Video:**
+
+- **MJPEG/AVI** — to'liq dekod qilinadi (kadrlar JPEG dekoderi orqali), GUI da
+  ketma-ket oʻynatiladi. ffmpeg bilan kadr-ba-kadr tekşirilgan.
+- **MP4/MOV** (ISO BMFF), **MKV/WebM** (EBML) — konteyner, kodek, oʻlçam va
+  davomiylik taniladi (H.264/HEVC/VP9/AV1 kodeklari hozircha dekod qilinmaydi).
+
+`audio::decode(nom, baytlar)` va `video::decode_frames(baytlar)` dekodlaydi.
+Namuna fayllar: `Musiqa/zamin.wav`, `Musiqa/zamin.mp3`, `Videolar/zamin.avi`.
+
 ## Foydalanuvçilar va ruxsatlar
 
 - `hisoblar` — röyxat; administrator `hisoblar qöş dilnoza` / `hisoblar öçir dilnoza`.
@@ -378,7 +404,8 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [x] **9. Işonçlilik** — yadro jurnali, panic diskka yoziladi, fuzz sinovi
 - [x] **8½. Yadro himoyasi** — qörğonli yadro steklari, PAN, WXN, böşatilgan xotirani nollaş, ASLR
 - [x] **9. Grafika** — virtio-gpu framebuffer, şrift, oynalar menejeri, grafik terminal, sichqoncha/klaviatura
-- [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar
+- [x] **9½. Media** — rasm (16+ format), audio (WAV/AIFF/FLAC/MP3 + ADPCM/μ-law/A-law), video (MJPEG/AVI dekod; MP4/MOV/MKV/WebM taniş) — hammasi noldan
+- [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar (davom etmoqda)
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
 
 ## Grafika
@@ -450,14 +477,15 @@ Keyin yana uchta yönaliş qoşildi:
     işonçi) hali tekşirilmaydi — bu hujjatlaştirilgan keyingi qadam. Tahlilçi
     haqiqiy sertifikatlar (ISRG Root X1 — RSA, USERTrust ECC — ECDSA) bilan sinaldi.
 
-Yadro öz-özini tekşirişi (yuklanişda `[test]`) endi 16 ta: heap, MMU, W^X, PAN, kripto,
-X.509, taymer, KASLR, rejalaştiruvçi, SMP, mutex, disk, fuzz, stek qörğoni,
-foydalanuvçi rejimi, va (ikkinchi disk bölsa) FAT yoziş.
+Yadro öz-özini tekşirişi (yuklanişda `[test]`): heap, MMU, W^X, PAN, kripto,
+X.509, rasm (15 format), audio (WAV/FLAC/MP3), video (MJPEG/AVI), taymer, KASLR,
+rejalaştiruvçi, SMP, mutex, disk, fuzz, stek qörğoni, foydalanuvçi rejimi, va
+(ikkinchi disk bölsa) FAT yoziş.
 Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi.
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.3**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.9**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -471,5 +499,8 @@ bosqiç (etap) yakunlanganda kötariladi.
   oʻynatiş), audio (WAV/AIFF dekoder + toʻlqin köruvchi va ijro boshi).
 - 0.0.7 — haqiqiy övoz çiqariş: virtio-sound drayveri (PCM, koʻp navbat).
 - 0.0.8 — FLAC (yöqotişsiz audio) va APNG (harakatli PNG) dekoderlari.
+- 0.0.9 — **MP3** (MPEG-1 Layer III) dekoderi va kengaytirilgan WAV kodeklari
+  (μ-law/A-law/ADPCM); **video**: MJPEG/AVI dekod, MP4/MOV/MKV/WebM taniş.
+  Barça media dekoderlari ffmpeg bilan tekşirilgan.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

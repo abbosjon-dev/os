@@ -588,6 +588,11 @@ pub mod msg {
         "[test] аудио: декодеры WAV, FLAC и MP3 — OK",
         "[test] audio: WAV, FLAC and MP3 decoders — OK",
     ];
+    pub const TEST_VIDEO: Text = [
+        "[test] video: MJPEG/AVI dekoderi, MP4/MOV/MKV/WebM taniş — OK",
+        "[test] видео: декодер MJPEG/AVI, распознавание MP4/MOV/MKV/WebM — OK",
+        "[test] video: MJPEG/AVI decoder, MP4/MOV/MKV/WebM recognition — OK",
+    ];
     pub const TEST_X509: Text = [
         "[test] X.509: sertifikat tahlili, amal muddati va host nomi tekşiruvi — OK",
         "[test] X.509: разбор сертификата, проверка срока и имени хоста — OK",
