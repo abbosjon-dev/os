@@ -71,6 +71,21 @@ Boşqa bölimlar haqiqiy tizim maʼlumotini körsatadi: **Tarmoq** (virtio-net, 
 
 <img src="docs/settings-network.png" width="480">
 
+### Kontekst menyulari va öz rasmingiz fonda
+
+![Kontekst menyulari](docs/context-menus.jpg)
+
+Siçqonning **öng tugmasi**:
+- **Fayllarda rasm ustida** — Oçiş, **Fon qilib qöyiş**, Öçiriş; papka ustida — Oçiş, Öçiriş;
+  boʻş joyda — Yangi papka, Yangilaş.
+- **Ish stolida** — Fon rasmini almaştiriş… (Sozlamalar → Ekran), Yangi papka, Terminal,
+  Sozlamalar; ish stoli ikonasi ustida — Oçiş.
+
+Tanlangan rasm ekranni toʻliq qoplaydigan qilib kesiladi ("cover"), yöli diskka
+saqlanadi (`fon_yol=`) va Sozlamalarda 5-variant — **"Sizning rasmingiz"** bölib çiqadi.
+(Qulf ekranida — foydalanuvçi fayllari hali şifrlangan bölgani uçun — asosiy foto
+körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlanmaydi.
+
 ### Tezkor qidiruv (Alt+Space)
 
 <img src="docs/search.png" width="420" align="right">
@@ -612,7 +627,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.18**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.19**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -652,5 +667,7 @@ bosqiç (etap) yakunlanganda kötariladi.
   klaviatura toʻliq US belgilari bilan (Shift+raqam, qavslar va h.k.).
 - 0.0.18 — **Jonli Sozlamalar**: fon rasmi (foto + 3 protsedural) va asosiy rang tanlaş,
   diskka saqlaş; Tarmoq/Övoz/Foydalanuvçilar/Xavfsizlik bölimlari haqiqiy maʼlumot bilan.
+- 0.0.19 — **Kontekst menyulari** (öng tugma: Fayllar, ish stoli), **öz rasmini fon qilish**,
+  yangi papka va öçiriş, eskizlar keşi, Rasmlar'da yangi namuna foto (saroy.jpg).
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

@@ -394,7 +394,8 @@ pub fn setup_home(username: &str, uid: u32) -> Result<String, FsError> {
     let pics = v.child(home, Role::Pictures.names()[lang]).ok();
     let music = v.child(home, Role::Music.names()[lang]).ok();
     let videos = v.child(home, Role::Videos.names()[lang]).ok();
-    let seeds: [(Option<NodeId>, &str, &[u8]); 8] = [
+    let seeds: [(Option<NodeId>, &str, &[u8]); 9] = [
+        (pics, "saroy.jpg", crate::wallpaper::SMALL_JPG),
         (pics, "zamin.png", crate::image::SAMPLE_PNG),
         (pics, "zamin.svg", crate::image::SAMPLE_SVG),
         (pics, "zamin.gif", crate::image::SAMPLE_GIF),

@@ -408,14 +408,13 @@ fn new_window(kind: Kind, n: usize) -> Window {
             ])
         }
         Kind::Settings => {
-            let (w, h) = (u * 34, u * 27);
+            let (w, h) = (u * 34, u * 24);
             let (x, y) = place(w, h);
             let mut win = base(x, y, w, h, kind, String::from("Sozlamalar"), Vec::new());
             // Fon eskizlari (bir marta yasaladi)
-            let (tw, th) = (192, 120);
-            win.thumbs = (0..WALL_NAMES.len())
-                .map(|i| if i == 0 { PHOTO_THUMB.lock().clone() } else { Some(make_wallpaper(i, tw, th)) })
-                .collect();
+            let (tw, th) = (192, 108);
+            let pt = PHOTO_THUMB.lock().clone();
+            win.thumbs = (0..wall_count()).map(|i| build_wallpaper(i, tw, th, &pt)).collect();
             win
         }
         Kind::Trash => {
@@ -445,11 +444,24 @@ fn load_dir(win: &mut Window, path: &str) {
         // Rasm bölsa — kiçik eskiz (bir marta dekodlanadi, keşlanadi)
         let thumb = if kind == FKind::Image {
             let fp = path_join(path, &e.name);
-            fs::read_all(&fp)
-                .ok()
-                .filter(|d| d.len() < 4 * 1024 * 1024)
-                .and_then(|d| crate::image::decode_file(&e.name, &d))
-                .map(|img| make_thumb(&img, 128))
+            let size = fs::read_all(&fp).map(|d| d.len()).unwrap_or(0);
+            // Keşdan (yöl + ölçam mos kelsa) — qayta dekodlamaymiz
+            let cached = THUMB_CACHE.lock().iter().find(|(p, s, _)| *p == fp && *s == size).map(|(_, _, i)| i.clone());
+            cached.or_else(|| {
+                let t = fs::read_all(&fp)
+                    .ok()
+                    .filter(|d| d.len() < 4 * 1024 * 1024)
+                    .and_then(|d| crate::image::decode_file(&e.name, &d))
+                    .map(|img| make_thumb(&img, 128));
+                if let Some(t) = &t {
+                    let mut c = THUMB_CACHE.lock();
+                    if c.len() >= 48 {
+                        c.remove(0);
+                    }
+                    c.push((fp.clone(), size, t.clone()));
+                }
+                t
+            })
         } else {
             None
         };
@@ -794,8 +806,9 @@ fn login_screen() {
     let mut cx = sw / 2;
     let mut cy = sh / 2;
     // Qulf ekrani foni: ish stoli rasmi, bir marta xiralashtirilgan
-    let wsel = crate::config::UI_WALL.load(Ordering::Relaxed) as usize % WALL_NAMES.len();
-    let base_bg = if wsel == 0 { crate::image::decode(crate::wallpaper::JPG) } else { Some(make_wallpaper(wsel, sw, sh)) };
+    let wsel = sel_wall();
+    let photo = if wsel == 0 || wsel == WALL_CUSTOM { crate::image::decode(crate::wallpaper::JPG) } else { None };
+    let base_bg = build_wallpaper(wsel, sw, sh, &photo);
     let bg = base_bg.map(|mut im| {
         for p in im.px.iter_mut() {
             let (r, g, b) = ((*p >> 16) & 0xff, (*p >> 8) & 0xff, *p & 0xff);
@@ -972,8 +985,9 @@ fn desktop() {
     // Ish stoli foni (JPEG, ichki dekoder bilan bir marta dekodlanadi)
     let photo = crate::image::decode(crate::wallpaper::JPG);
     *PHOTO_THUMB.lock() = photo.as_ref().map(|p| make_thumb(p, 192));
-    let mut cur_wall = crate::config::UI_WALL.load(Ordering::Relaxed) as usize % WALL_NAMES.len();
-    let mut wp = if cur_wall == 0 { photo.clone() } else { Some(make_wallpaper(cur_wall, sw, sh)) };
+    let mut cur_wall = sel_wall();
+    let mut cur_path = crate::config::UI_WALL_PATH.lock().clone();
+    let mut wp = build_wallpaper(cur_wall, sw, sh, &photo);
     let mut windows: Vec<Window> = Vec::new();
     let mut cx = sw / 2;
     let mut cy = sh / 2;
@@ -999,6 +1013,7 @@ fn desktop() {
         history: Vec::new(),
         notif_open: false,
         search: None,
+        ctx: None,
     };
     let mut alt = false;
     {
@@ -1024,10 +1039,12 @@ fn desktop() {
             changed = true;
         }
         // Fon rasmi özgargan bölsa — yangisini yasaymiz
-        let want = crate::config::UI_WALL.load(Ordering::Relaxed) as usize % WALL_NAMES.len();
-        if want != cur_wall {
+        let want = sel_wall();
+        let want_path = crate::config::UI_WALL_PATH.lock().clone();
+        if want != cur_wall || (want == WALL_CUSTOM && want_path != cur_path) {
             cur_wall = want;
-            wp = if want == 0 { photo.clone() } else { Some(make_wallpaper(want, sw, sh)) };
+            cur_path = want_path;
+            wp = build_wallpaper(want, sw, sh, &photo);
             changed = true;
         }
         // Bildirişnomalar navbati → ekran va tarix
@@ -1174,7 +1191,8 @@ fn desktop() {
                                 w.hidden = false;
                             }
                         }
-                        if !search_click(&mut desk, &mut windows, cx, cy, &mut opened)
+                        if !ctx_click(&mut desk, &mut windows, cx, cy, &mut opened)
+                            && !search_click(&mut desk, &mut windows, cx, cy, &mut opened)
                             && !notif_click(&mut desk, cx, cy)
                             && !menu_click(&mut desk, &mut windows, cx, cy, &mut opened)
                             && !handle_click(&mut windows, cx, cy, sh, &mut drag, &mut opened, &mut desk.anim)
@@ -1187,6 +1205,14 @@ fn desktop() {
                         drag = None;
                     }
                     changed = true;
+                }
+                (input::EV_KEY, BTN_RIGHT) => {
+                    if e.value == 1 {
+                        desk.menu = None;
+                        desk.notif_open = false;
+                        desk.ctx = build_ctx(&windows, &desk, cx, cy);
+                        changed = true;
+                    }
                 }
                 (input::EV_KEY, 42) | (input::EV_KEY, 54) => shift = e.value != 0,
                 (input::EV_KEY, 56) | (input::EV_KEY, 100) => {
@@ -1233,6 +1259,7 @@ fn desktop() {
                     desk.menu = None;
                     desk.notif_open = false;
                     desk.switcher = None;
+                    desk.ctx = None;
                     changed = true;
                 }
                 (input::EV_KEY, _) if alt => {}
@@ -1526,6 +1553,9 @@ fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Imag
     if let Some(sr) = &desk.search {
         draw_search(sr);
     }
+    if let Some(c) = &desk.ctx {
+        draw_ctx(c, cx, cy);
+    }
     cursor(cx, cy);
 }
 
@@ -1693,6 +1723,213 @@ struct Desk {
     history: Vec<(String, String, Color, String)>, // (sarlavha, matn, rang, vaqt)
     notif_open: bool,           // bildirişnomalar paneli oçiqmi
     search: Option<Search>,     // tezkor qidiruv (Alt+Space)
+    ctx: Option<Ctx>,           // öng tugma menyusi
+}
+
+// ---------------- Kontekst menyusi (öng tugma) ----------------
+
+const BTN_RIGHT: u16 = 0x111;
+
+#[derive(Clone)]
+enum CAct {
+    Open(String),            // fayl — mos ilovada, papka — Fayllarda
+    Nav(String, usize),      // papkaga şu Fayllar oynasida kiriş
+    SetWall(String),         // rasmni fon qilib qöyiş
+    Delete(String, usize),   // öçiriş (+ oynani yangilaş)
+    NewFolder(String, usize),
+    Refresh(usize),
+    App(Kind),
+    WallSettings,
+    Sep,
+}
+
+struct Ctx {
+    x: usize,
+    y: usize,
+    items: Vec<(String, CAct)>,
+}
+
+/// Öng tugma bosilgan joyga qarab kontekst menyusini tuzadi.
+fn build_ctx(windows: &[Window], desk: &Desk, cx: usize, cy: usize) -> Option<Ctx> {
+    let (sw, sh) = gfx::size();
+    let (_, dy, _, _, _, _) = dock_geom(sw, sh);
+    if cy < menubar_h() || cy >= dy {
+        return None;
+    }
+    let s = |t: &str| String::from(t);
+    let mut items: Vec<(String, CAct)> = Vec::new();
+    if let Some(i) = windows.iter().rposition(|w| !w.hidden && w.contains(cx, cy)) {
+        let w = &windows[i];
+        if w.kind != Kind::Files {
+            return None;
+        }
+        let g = files_geo(w);
+        if cx < g.gx || cy < g.gy {
+            return None;
+        }
+        if let Some(r) = file_row_at(w, cx, cy) {
+            let (name, kind) = &w.rows[r];
+            let p = path_join(&w.path, name);
+            if *kind == FKind::Dir {
+                items.push((s("Oçiş"), CAct::Nav(p.clone(), w.id)));
+            } else {
+                items.push((s("Oçiş"), CAct::Open(p.clone())));
+                if *kind == FKind::Image && !crate::video::is_video_ext(name) {
+                    items.push((s("Fon qilib qöyiş"), CAct::SetWall(p.clone())));
+                }
+            }
+            items.push((s("Sep"), CAct::Sep));
+            items.push((s("Öçiriş"), CAct::Delete(p, w.id)));
+        } else {
+            items.push((s("Yangi papka"), CAct::NewFolder(w.path.clone(), w.id)));
+            items.push((s("Yangilaş"), CAct::Refresh(w.id)));
+        }
+    } else if let Some(k) = (0..desk.icons.len()).find(|&k| {
+        let (x, y, cw, ch) = desk_icon_rect(k);
+        cx >= x && cx < x + cw && cy >= y && cy < y + ch
+    }) {
+        items.push((s("Oçiş"), CAct::Open(alloc::format!("~/{}", desk.icons[k]))));
+    } else {
+        items.push((s("Fon rasmini almaştiriş…"), CAct::WallSettings));
+        items.push((s("Yangi papka"), CAct::NewFolder(s("~"), 0)));
+        items.push((s("Sep"), CAct::Sep));
+        items.push((s("Terminal"), CAct::App(Kind::Terminal)));
+        items.push((s("Sozlamalar"), CAct::App(Kind::Settings)));
+    }
+    Some(Ctx { x: cx, y: cy, items })
+}
+
+/// Kontekst menyusi joylaşuvi: (x, y, eni, [(y0, y1)]).
+fn ctx_layout(c: &Ctx) -> (usize, usize, usize, Vec<(usize, usize)>) {
+    let (sw, sh) = gfx::size();
+    let u = body();
+    let w = c.items.iter().map(|(n, _)| gfx::text_width(n, small())).max().unwrap_or(0).max(u * 6) + u * 2;
+    let h: usize = c.items.iter().map(|(_, a)| if matches!(a, CAct::Sep) { u / 2 } else { u * 3 / 2 }).sum::<usize>() + u / 2;
+    let x = c.x.min(sw.saturating_sub(w + 2));
+    let y = c.y.min(sh.saturating_sub(h + 2));
+    let mut yy = y + u / 4;
+    let mut rows = Vec::new();
+    for (_, a) in &c.items {
+        let hh = if matches!(a, CAct::Sep) { u / 2 } else { u * 3 / 2 };
+        rows.push((yy, yy + hh));
+        yy += hh;
+    }
+    (x, y, w, rows)
+}
+
+fn draw_ctx(c: &Ctx, mx: usize, my: usize) {
+    let u = body();
+    let (x, y, w, rows) = ctx_layout(c);
+    let h = rows.last().map(|r| r.1).unwrap_or(y) + u / 4 - y;
+    gfx::shadow(x, y, w, h, u / 2, 10);
+    fill_round_rect_a(x, y, w, h, u / 2, 0x1a2131, 248);
+    gfx::round_outline(x, y, w, h, u / 2, 1, 0x34405a);
+    for ((name, act), (y0, y1)) in c.items.iter().zip(rows.iter()) {
+        if matches!(act, CAct::Sep) {
+            fill_rect(x + u / 2, (y0 + y1) / 2, w - u, 1, 0x34405a);
+            continue;
+        }
+        let hover = mx >= x && mx < x + w && my >= *y0 && my < *y1;
+        if hover {
+            fill_round_rect_a(x + u / 4, *y0, w - u / 2, y1 - y0, u / 3, accent(), 230);
+        }
+        let col = if matches!(act, CAct::Delete(..)) && !hover { 0xff6b61 } else if hover { OQ } else { 0xe1e8f2 };
+        gfx::draw_text(x + u, y0 + (y1 - y0 - small()) / 2, name, col, small());
+    }
+}
+
+/// Kontekst menyusiga bosiş: element — bajaradi; taşqarisi — yopadi.
+fn ctx_click(desk: &mut Desk, windows: &mut Vec<Window>, cx: usize, cy: usize, opened: &mut usize) -> bool {
+    let Some(c) = desk.ctx.take() else { return false };
+    let (x, _, w, rows) = ctx_layout(&c);
+    if cx >= x && cx < x + w {
+        if let Some(k) = rows.iter().position(|r| cy >= r.0 && cy < r.1) {
+            let act = c.items[k].1.clone();
+            if matches!(act, CAct::Sep) {
+                desk.ctx = Some(c);
+                return true;
+            }
+            ctx_exec(act, desk, windows, opened);
+        }
+    }
+    true
+}
+
+fn reload_files(windows: &mut [Window], id: usize) {
+    if let Some(w) = windows.iter_mut().find(|w| w.id == id) {
+        let p = w.path.clone();
+        load_dir(w, &p);
+    }
+}
+
+fn ctx_exec(act: CAct, desk: &mut Desk, windows: &mut Vec<Window>, opened: &mut usize) {
+    match act {
+        CAct::Open(p) => {
+            let is_dir = fs::list(&p).is_ok();
+            if is_dir {
+                menu_act(MAct::Path(p), windows, opened);
+            } else {
+                open_file(windows, &p, *opened);
+                *opened += 1;
+            }
+        }
+        CAct::Nav(p, id) => {
+            if let Some(w) = windows.iter_mut().find(|w| w.id == id) {
+                load_dir(w, &p);
+            }
+        }
+        CAct::SetWall(p) => {
+            let name = String::from(p.rsplit('/').next().unwrap_or(""));
+            *crate::config::UI_WALL_PATH.lock() = p;
+            crate::config::UI_WALL.store(WALL_CUSTOM as u8, Ordering::Relaxed);
+            let _ = crate::config::save_current();
+            notify("Fon özgartirildi", &name, 0x2fbf5f);
+        }
+        CAct::Delete(p, id) => {
+            let name = String::from(p.rsplit('/').next().unwrap_or(""));
+            match fs::remove(&p) {
+                Ok(()) => {
+                    let _ = fs::commit();
+                    notify("Öçirildi", &name, 0xff453a);
+                }
+                Err(e) => notify("Öçirib bölmadi", &alloc::format!("{}: {:?}", name, e), 0xff9f0a),
+            }
+            reload_files(windows, id);
+            desk.icons = home_icons();
+        }
+        CAct::NewFolder(dir, id) => {
+            let mut n = 1;
+            let path = loop {
+                let name = if n == 1 { String::from("Yangi papka") } else { alloc::format!("Yangi papka {}", n) };
+                let p = path_join(&dir, &name);
+                if fs::node_of(&p).is_err() {
+                    break p;
+                }
+                n += 1;
+                if n > 99 {
+                    return;
+                }
+            };
+            match fs::mkdir(&path) {
+                Ok(_) => {
+                    let _ = fs::commit();
+                    notify("Papka yaratildi", path.rsplit('/').next().unwrap_or(""), 0x2f88ff);
+                }
+                Err(e) => notify("Papka yaratib bölmadi", &alloc::format!("{:?}", e), 0xff9f0a),
+            }
+            reload_files(windows, id);
+            desk.icons = home_icons();
+        }
+        CAct::Refresh(id) => reload_files(windows, id),
+        CAct::App(k) => menu_act(MAct::Open(k), windows, opened),
+        CAct::WallSettings => {
+            let mut w = new_window(Kind::Settings, *opened);
+            w.tab = 1;
+            *opened += 1;
+            windows.push(w);
+        }
+        CAct::Sep => {}
+    }
 }
 
 // ---------------- Tezkor qidiruv (Alt+Space) ----------------
@@ -3038,6 +3275,9 @@ fn draw_files(win: &Window) {
     }
 }
 
+/// Eskizlar keşi: (yöl, fayl ölçami, eskiz).
+static THUMB_CACHE: crate::sync::SpinLock<Vec<(String, usize, crate::image::Image)>> = crate::sync::SpinLock::new(Vec::new());
+
 /// Rasmdan kiçik eskiz (eng katta tomoni `max`, eng-yaqin namuna).
 fn make_thumb(img: &crate::image::Image, max: usize) -> crate::image::Image {
     let (w, h) = (img.w.max(1), img.h.max(1));
@@ -3340,6 +3580,54 @@ const ACCENTS: [Color; 6] = [0x2f88ff, 0x2fbf5f, 0xbf5af2, 0xff9f0a, 0xff375f, 0
 const ACCENT_NAMES: [&str; 6] = ["Kök", "Yaşil", "Binafşa", "Töq sariq", "Pushti", "Firuza"];
 const WALL_NAMES: [&str; 4] = ["Zamin manzarasi", "Tun", "Aurora", "Şafaq"];
 
+const WALL_CUSTOM: usize = 4;
+
+/// Fonlar soni: 4 ta ichki + (tanlangan bölsa) foydalanuvçi rasmi.
+fn wall_count() -> usize {
+    if crate::config::UI_WALL_PATH.lock().is_empty() { 4 } else { 5 }
+}
+fn wall_name(i: usize) -> &'static str {
+    if i == WALL_CUSTOM { "Sizning rasmingiz" } else { WALL_NAMES[i % WALL_NAMES.len()] }
+}
+/// Hozir tanlangan fon (yaroqsiz bölsa — 0).
+fn sel_wall() -> usize {
+    let v = crate::config::UI_WALL.load(Ordering::Relaxed) as usize;
+    if v < wall_count() { v } else { 0 }
+}
+
+/// Rasmni maydonni toʻliq qoplaydigan qilib kesadi va masştablaydi ("cover").
+fn cover(img: &crate::image::Image, w: usize, h: usize) -> crate::image::Image {
+    let (iw, ih) = (img.w.max(1), img.h.max(1));
+    // manbadagi kesiş töğriburçagi
+    let (cw, ch) = if iw * h > ih * w { (ih * w / h, ih) } else { (iw, iw * h / w) };
+    let (ox, oy) = ((iw - cw.min(iw)) / 2, (ih - ch.min(ih)) / 2);
+    let mut px = Vec::with_capacity(w * h);
+    for y in 0..h {
+        let sy = oy + y * ch / h;
+        for x in 0..w {
+            px.push(img.px[sy.min(ih - 1) * iw + (ox + x * cw / w).min(iw - 1)]);
+        }
+    }
+    crate::image::Image { w, h, px }
+}
+
+/// Fonni yasaydi: 0 — foto, 1..3 — protsedural, 4 — foydalanuvçi rasmi.
+fn build_wallpaper(idx: usize, w: usize, h: usize, photo: &Option<crate::image::Image>) -> Option<crate::image::Image> {
+    match idx {
+        0 => photo.as_ref().map(|p| if p.w == w && p.h == h { p.clone() } else { cover(p, w, h) }),
+        WALL_CUSTOM => {
+            let path = crate::config::UI_WALL_PATH.lock().clone();
+            let name = path.rsplit('/').next().unwrap_or("");
+            let img = fs::read_all(&path).ok().and_then(|d| crate::image::decode_file(name, &d));
+            match img {
+                Some(im) => Some(cover(&im, w, h)),
+                None => photo.as_ref().map(|p| cover(p, w, h)),
+            }
+        }
+        i => Some(make_wallpaper(i, w, h)),
+    }
+}
+
 /// Tanlangan asosiy rang (tanlov fonlari, belgilar).
 fn accent() -> Color {
     ACCENTS[(crate::config::UI_ACCENT.load(Ordering::Relaxed) as usize) % ACCENTS.len()]
@@ -3496,17 +3784,17 @@ fn wall_thumb_rect(win: &Window, i: usize) -> (usize, usize, usize, usize) {
     let u = body();
     let (_, x, y, _) = settings_geo(win);
     let rw = (win.x + win.w).saturating_sub(x + u);
-    let tw = (rw - u) / 2;
+    let tw = (rw - u * 2) / 3;
     let th = tw * 9 / 16;
     let y0 = y + u * 2 + small() + u / 2;
-    (x + (i % 2) * (tw + u), y0 + (i / 2) * (th + u * 3 / 2), tw, th)
+    (x + (i % 3) * (tw + u), y0 + (i / 3) * (th + u * 3 / 2), tw, th)
 }
 
 /// Asosiy rang namunasi markazi va radiusi.
 fn accent_swatch(win: &Window, i: usize) -> (usize, usize, usize) {
     let u = body();
     let (_, x, _, _) = settings_geo(win);
-    let (_, ty, _, th) = wall_thumb_rect(win, 2);
+    let (_, ty, _, th) = wall_thumb_rect(win, 3);
     let y = ty + th + u * 2 + small() + u / 2;
     (x + u * 3 / 4 + i * (u * 2), y, u * 3 / 4)
 }
@@ -3561,8 +3849,8 @@ fn draw_settings(win: &Window) {
         1 => {
             // Ekran: fon rasmi + asosiy rang
             gfx::draw_text(x, y, "Fon rasmi", 0x9fb0c3, small() * 9 / 10);
-            let cur = crate::config::UI_WALL.load(Ordering::Relaxed) as usize;
-            for i in 0..WALL_NAMES.len() {
+            let cur = sel_wall();
+            for i in 0..win.thumbs.len() {
                 let (tx, ty, tw, th) = wall_thumb_rect(win, i);
                 if let Some(Some(t)) = win.thumbs.get(i) {
                     gfx::blit_scaled(tx, ty, tw, th, t.w, t.h, &t.px);
@@ -3574,7 +3862,7 @@ fn draw_settings(win: &Window) {
                 } else {
                     gfx::round_outline(tx, ty, tw, th, 2, 1, 0x3a4458);
                 }
-                gfx::draw_text_centered(tx + tw / 2, ty + th + u / 4, WALL_NAMES[i], if i == cur { OQ } else { 0xaebccf }, small() * 4 / 5);
+                gfx::draw_text_centered(tx + tw / 2, ty + th + u / 4, wall_name(i), if i == cur { OQ } else { 0xaebccf }, small() * 4 / 5);
             }
             let (_, sy, sr) = accent_swatch(win, 0);
             gfx::draw_text(x, sy - sr - small() - u / 3, "Asosiy rang", 0x9fb0c3, small() * 9 / 10);
@@ -3698,12 +3986,12 @@ fn settings_click(win: &mut Window, cx: usize, cy: usize) -> bool {
         }
     }
     if win.tab == 1 {
-        for i in 0..WALL_NAMES.len() {
+        for i in 0..win.thumbs.len() {
             let (tx, ty, tw, th) = wall_thumb_rect(win, i);
             if cx >= tx && cx < tx + tw && cy >= ty && cy < ty + th {
                 crate::config::UI_WALL.store(i as u8, Ordering::Relaxed);
                 let _ = crate::config::save_current();
-                notify("Sozlamalar", &alloc::format!("Fon: {}", WALL_NAMES[i]), 0x8a93a6);
+                notify("Sozlamalar", &alloc::format!("Fon: {}", wall_name(i)), 0x8a93a6);
                 return true;
             }
         }
