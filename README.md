@@ -41,6 +41,21 @@ tomonda vidjetlar — ob-havo, kalendar, musiqa pleeri va tizim halqalari
 - Dokdagi ikona: ilova oçiq bölsa (yashirilgan ham) — oynani old planga qaytaradi,
   bölmasa — yangi oçadi. Ostidagi nuqta oçiq ilovani bildiradi.
 
+### Ish stoli ikonalari va animatsiyalar
+
+<img src="docs/desktop-icons.png" width="160" align="left" style="margin-right:12px">
+
+Ish stolining çap tomonida uy papkalari (Hujjatlar, Yuklamalar, Musiqa, Rasmlar,
+Videolar) ikonalari: **bir marta bosiş — tanlaş**, **ikki marta — Fayllarda oçiş**.
+
+Oynalar **animatsiya** bilan: yangi oyna dok ikonasidan kattalaşib çiqadi, yashirilganda
+dokka "uçib" kiradi, kattalaştiriş/qaytariş silliq oʻtadi (easeOutCubic, 230 ms).
+Quyidagi kadrlar animatsiya sekinlaştirilgan holda olingan:
+
+<br clear="left">
+
+![Animatsiya kadrlari](docs/animation.jpg)
+
 ### Qulf ekrani
 
 ![Qulf ekrani](docs/lockscreen.png)
@@ -548,7 +563,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.14**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.15**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -580,5 +595,7 @@ bosqiç (etap) yakunlanganda kötariladi.
   oʻlçovlardan; yangi qulf ekrani (fon rasmi + soat).
 - 0.0.14 — **Oyna boshqaruvi**: sariq — dokka yashiriş, yashil — kattalashtiriş/qaytariş,
   hover belgilari (× − +), burçakdan ölçamni özgartiriş, dok ikonasi oçiq oynani qaytaradi.
+- 0.0.15 — **Ish stoli ikonalari** (uy papkalari; bir marta — tanlaş, ikki marta — oçiş)
+  va **oyna animatsiyalari** (oçiliş, yashiriş, qaytariş, kattalaştiriş).
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
