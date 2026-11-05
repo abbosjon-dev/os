@@ -155,6 +155,8 @@ struct Window {
     esc: Option<String>, // qayta işlanayotgan ESC ketma-ketligi
     side: Vec<String>,  // Fayllar: yon panel papkalari (uy papkasidagi)
     thumbs: Vec<Option<crate::image::Image>>, // Fayllar: rasm eskizlari (rows bilan bir xil tartibda)
+    hidden: bool,       // dokka yashirilgan (sariq tugma)
+    saved: Option<(usize, usize, usize, usize)>, // kattalashtirişdan oldingi (x, y, w, h)
 }
 
 impl Window {
@@ -166,6 +168,27 @@ impl Window {
         let r = (body() * 2 / 5).max(5);
         (self.x + title_h() / 2 + r, self.y + title_h() / 2, r)
     }
+    /// Svetofor tugmasi: 0 — yopiş, 1 — yashiriş, 2 — kattalashtiriş.
+    fn dot_at(&self, cx: usize, cy: usize) -> Option<usize> {
+        let (dx, dy, r) = self.close_dot();
+        let step = r * 5 / 2;
+        (0..3).find(|&k| {
+            let (ddx, ddy) = (cx as isize - (dx + k * step) as isize, cy as isize - dy as isize);
+            ((ddx * ddx + ddy * ddy) as usize) <= (r + 3) * (r + 3)
+        })
+    }
+    /// Siçqon svetofor tugmalari ustidami (belgilarni körsatiş uçun)?
+    fn over_dots(&self, cx: usize, cy: usize) -> bool {
+        let (dx, dy, r) = self.close_dot();
+        let step = r * 5 / 2;
+        cx + r + 4 >= dx && cx <= dx + step * 2 + r + 4 && cy + r + 4 >= dy && cy <= dy + r + 4
+    }
+    /// Öng-pastki burçak — ölçamni özgartiriş tutqiçi.
+    fn on_grip(&self, cx: usize, cy: usize) -> bool {
+        let g = body();
+        cx + g >= self.x + self.w && cx < self.x + self.w + 3 && cy + g >= self.y + self.h && cy < self.y + self.h + 3
+    }
+    #[allow(dead_code)]
     fn close_btn(&self, cx: usize, cy: usize) -> bool {
         let (dx, dy, r) = self.close_dot();
         let r = r + 3; // bosiş uçun biroz kattaroq
@@ -228,6 +251,28 @@ const LAUNCHERS: [Launcher; 10] = [
     Launcher { label: "Savat", kind: Kind::Trash, color: 0xcfd7e3 },
 ];
 
+/// Oyna şu dok ilovasiga tegişlimi (oçiq ilova belgisi va qayta oçiş uçun)?
+fn win_of_launcher(w: &Window, lk: Kind) -> bool {
+    let is_video = crate::video::is_video_ext(&w.path);
+    match lk {
+        Kind::Music => w.kind == Kind::Audio,
+        Kind::Video => w.kind == Kind::Image && is_video,
+        Kind::Image => w.kind == Kind::Image && !is_video,
+        Kind::Code => w.kind == Kind::Editor,
+        k => w.kind == k,
+    }
+}
+
+/// Kattalashtirilgan oyna maydoni (menyu va dok orasida).
+fn zoom_rect() -> (usize, usize, usize, usize) {
+    let (sw, sh) = gfx::size();
+    let (_, dy, _, _, _, _) = dock_geom(sw, sh);
+    let m = body() / 3;
+    (m, menubar_h() + m, sw - 2 * m, dy.saturating_sub(menubar_h() + 3 * m))
+}
+
+const RESIZE: usize = 1 << 40; // drag ofsetidagi belgi: ölçam özgartiriş rejimi
+
 /// Dok (markazlashgan panel) geometriyasi: (dx, dy, dw, dh, icon, gap).
 fn dock_geom(sw: usize, sh: usize) -> (usize, usize, usize, usize, usize, usize) {
     let n = LAUNCHERS.len();
@@ -267,6 +312,8 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         cur: Vec::new(), esc: None,
         side: Vec::new(),
         thumbs: Vec::new(),
+        hidden: false,
+        saved: None,
     }
 }
 
@@ -1013,7 +1060,7 @@ fn desktop() {
                     changed = true;
                 }
                 (input::EV_KEY, code) if e.value == 1 => {
-                    if let Some(w) = windows.last_mut().filter(|w| w.kind.takes_keys()) {
+                    if let Some(w) = windows.last_mut().filter(|w| !w.hidden && w.kind.takes_keys()) {
                         type_key(w, code, shift);
                         changed = true;
                     }
@@ -1023,7 +1070,15 @@ fn desktop() {
         }
         // Siljitiş
         if pressed {
-            if let Some((idx, off)) = drag {
+            if let Some((idx, RESIZE)) = drag {
+                if idx < windows.len() {
+                    let u = body();
+                    let w = &mut windows[idx];
+                    w.w = cx.saturating_sub(w.x).clamp(u * 16, sw.saturating_sub(w.x));
+                    w.h = cy.saturating_sub(w.y).clamp(u * 10, sh.saturating_sub(w.y));
+                    changed = true;
+                }
+            } else if let Some((idx, off)) = drag {
                 let nx = cx.saturating_sub(off & 0xffff);
                 let ny = cy.saturating_sub(off >> 16);
                 if idx < windows.len() {
@@ -1127,6 +1182,13 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
             let (ix, iy, isz) = dock_icon_rect(sw, sh, i);
             let _ = icon;
             if cx >= ix && cx < ix + isz && cy >= iy && cy < iy + isz {
+                // Ilova oçiq bölsa (yashirilgan ham) — uni old planga qaytaramiz
+                if let Some(j) = windows.iter().rposition(|w| win_of_launcher(w, l.kind)) {
+                    let mut w = windows.remove(j);
+                    w.hidden = false;
+                    windows.push(w);
+                    return true;
+                }
                 match l.kind {
                     Kind::Music => open_file(windows, "~/Musiqa/kuy.mp3", *opened),
                     Kind::Video => open_file(windows, "~/Videolar/zamin.avi", *opened),
@@ -1141,9 +1203,39 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
     }
     // Yuqoridan (oxirgi = eng tepada) oynalarni tekşiramiz
     for i in (0..windows.len()).rev() {
-        if windows[i].close_btn(cx, cy) {
-            let mut w = windows.remove(i);
-            close_terminal(&mut w);
+        if windows[i].hidden {
+            continue;
+        }
+        match windows[i].dot_at(cx, cy) {
+            Some(0) => {
+                let mut w = windows.remove(i);
+                close_terminal(&mut w);
+                return true;
+            }
+            Some(1) => {
+                // Yashiriş: oyna eng pastki qatlamga, dokdan qaytariladi
+                let mut w = windows.remove(i);
+                w.hidden = true;
+                windows.insert(0, w);
+                return true;
+            }
+            Some(_) => {
+                let mut w = windows.remove(i);
+                if let Some((x, y, ww, hh)) = w.saved.take() {
+                    (w.x, w.y, w.w, w.h) = (x, y, ww, hh);
+                } else {
+                    w.saved = Some((w.x, w.y, w.w, w.h));
+                    (w.x, w.y, w.w, w.h) = zoom_rect();
+                }
+                windows.push(w);
+                return true;
+            }
+            None => {}
+        }
+        if windows[i].on_grip(cx, cy) {
+            let w = windows.remove(i);
+            windows.push(w);
+            *drag = Some((windows.len() - 1, RESIZE));
             return true;
         }
         if windows[i].kind == Kind::Editor && windows[i].in_save_btn(cx, cy) {
@@ -1216,9 +1308,12 @@ fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Imag
 
     draw_menubar(w, desk.menu);
 
+    let top = windows.iter().rposition(|w| !w.hidden);
     for (i, win) in windows.iter().enumerate() {
-        let active = i == windows.len() - 1;
-        draw_window(win, active);
+        if win.hidden {
+            continue;
+        }
+        draw_window(win, Some(i) == top, cx, cy);
     }
     gfx::reset_clip();
 
@@ -1803,7 +1898,7 @@ fn days_in_month(y: u64, m: u64) -> u64 {
 
 /// Bitta oynani so'nggi mac uslubida chizadi (yumşoq soya, shaffof tana,
 /// birlaşgan sarlavha, svetofor nuqtalari). Mazmun oyna içiga qirqiladi.
-fn draw_window(win: &Window, active: bool) {
+fn draw_window(win: &Window, active: bool, mx: usize, my: usize) {
     gfx::reset_clip();
     let r = radius();
     let th = title_h();
@@ -1823,10 +1918,30 @@ fn draw_window(win: &Window, active: bool) {
     // Svetofor nuqtalari (çap)
     let (dx, dy, dr) = win.close_dot();
     let step = dr * 5 / 2;
-    let dim = |c: Color| if active { c } else { 0x4a5366 };
+    let hover = win.over_dots(mx, my);
+    let dim = |c: Color| if active || hover { c } else { 0x4a5366 };
     gfx::fill_circle(dx, dy, dr, dim(0xff5f57));
     gfx::fill_circle(dx + step, dy, dr, dim(0xfebc2e));
     gfx::fill_circle(dx + step * 2, dy, dr, dim(0x28c840));
+    if hover {
+        // macOS kabi belgilar: × − +
+        let (fx, fy) = (dx as f32, dy as f32);
+        let q = dr as f32 * 0.5;
+        let t = (dr as f32 * 0.16).max(0.9);
+        let bar = |x0: f32, y0: f32, x1: f32, y1: f32, c: Color| {
+            let (ddx, ddy) = (x1 - x0, y1 - y0);
+            let l = crate::image::vector::fsqrt(ddx * ddx + ddy * ddy).max(0.001);
+            let (nx, ny) = (-ddy / l * t, ddx / l * t);
+            gfx::fill_poly(&[(x0 + nx, y0 + ny), (x1 + nx, y1 + ny), (x1 - nx, y1 - ny), (x0 - nx, y0 - ny)], c);
+        };
+        bar(fx - q, fy - q, fx + q, fy + q, 0x6e1410);
+        bar(fx - q, fy + q, fx + q, fy - q, 0x6e1410);
+        let mx2 = fx + step as f32;
+        bar(mx2 - q * 1.2, fy, mx2 + q * 1.2, fy, 0x7a5300);
+        let zx = fx + step as f32 * 2.0;
+        bar(zx - q * 1.2, fy, zx + q * 1.2, fy, 0x0b5a17);
+        bar(zx, fy - q * 1.2, zx, fy + q * 1.2, 0x0b5a17);
+    }
     // Sarlavha matni (markazda, nuqtalardan qoçib qirqiladi)
     let tl = win.x + th * 2;
     let tw = win.w.saturating_sub(th * 3);
@@ -1854,6 +1969,14 @@ fn draw_window(win: &Window, active: bool) {
         _ => draw_text_window(win),
     }
     gfx::reset_clip();
+    // Ölçam tutqiçi (faol oynada, öng-pastki burçak)
+    if active {
+        let (ex, ey) = ((win.x + win.w) as f32 - 3.0, (win.y + win.h) as f32 - 3.0);
+        for k in 1..=2 {
+            let d = (body() as f32 * 0.33) * k as f32;
+            gfx::fill_poly(&[(ex - d, ey), (ex, ey - d), (ex, ey - d + 1.4), (ex - d + 1.4, ey)], 0x6a7891);
+        }
+    }
 }
 
 /// Fayllar oynasi geometriyasi.
@@ -2611,7 +2734,7 @@ fn draw_dock(sw: usize, sh: usize, cx: usize, cy: usize, windows: &[Window]) {
     for (i, l) in LAUNCHERS.iter().enumerate() {
         let (ix, iy, isz) = dock_icon_rect(sw, sh, i);
         let hover = cx >= ix && cx < ix + isz && cy >= dy && cy < dy + dh;
-        let open = windows.iter().any(|w| w.kind == l.kind);
+        let open = windows.iter().any(|w| win_of_launcher(w, l.kind));
         if hover {
             // Fon yoritgichi + nomi (tooltip)
             fill_round_rect_a(ix - isz / 8, iy - isz / 8, isz + isz / 4, isz + isz / 4, isz / 4, 0xffffff, 24);

@@ -30,6 +30,17 @@ tomonda vidjetlar — ob-havo, kalendar, musiqa pleeri va tizim halqalari
 - **Tizim halqalari haqiqiy:** CPU — rejalaştiruvçi har uzilişda band/böş vazifani
   sanaydi; RAM — fizik sahifalar; Disk — ZaminFS band bloklari.
 
+### Oyna boshqaruvi
+
+![Yashiriş, ölçam va qaytariş](docs/window-controls.png)
+
+- 🔴 **yopiş**, 🟡 **dokka yashiriş**, 🟢 **butun ekranga kattalashtiriş** (yana bosilsa —
+  oldingi ölçam). Siçqon tugmalar ustida bölganda macOS kabi `× − +` belgilari chiqadi.
+- Sarlavhadan sudrab **siljitiş**, öng-pastki burçakdan sudrab **ölçamni özgartiriş**
+  (mazmun — Fayllar grid, terminal satrlari, rasm — yangi ölçamga moslaşadi).
+- Dokdagi ikona: ilova oçiq bölsa (yashirilgan ham) — oynani old planga qaytaradi,
+  bölmasa — yangi oçadi. Ostidagi nuqta oçiq ilovani bildiradi.
+
 ### Qulf ekrani
 
 ![Qulf ekrani](docs/lockscreen.png)
@@ -537,7 +548,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.13**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.14**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -567,5 +578,7 @@ bosqiç (etap) yakunlanganda kötariladi.
   menyulari (qayta yuklaş/öçiriş bilan), kalendarda oylar almaşadi, pleer haqiqiy
   kuyni chaladi ("Zamin kuyi", Karplus-Strong sintezi), CPU/Disk halqalari haqiqiy
   oʻlçovlardan; yangi qulf ekrani (fon rasmi + soat).
+- 0.0.14 — **Oyna boshqaruvi**: sariq — dokka yashiriş, yashil — kattalashtiriş/qaytariş,
+  hover belgilari (× − +), burçakdan ölçamni özgartiriş, dok ikonasi oçiq oynani qaytaradi.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
