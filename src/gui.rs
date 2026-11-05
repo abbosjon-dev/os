@@ -155,6 +155,7 @@ struct Window {
     esc: Option<String>, // qayta işlanayotgan ESC ketma-ketligi
     side: Vec<String>,  // Fayllar: yon panel papkalari (uy papkasidagi)
     thumbs: Vec<Option<crate::image::Image>>, // Fayllar: rasm eskizlari (rows bilan bir xil tartibda)
+    id: usize,          // yagona raqam (animatsiya uçun)
     hidden: bool,       // dokka yashirilgan (sariq tugma)
     saved: Option<(usize, usize, usize, usize)>, // kattalashtirişdan oldingi (x, y, w, h)
 }
@@ -312,10 +313,13 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         cur: Vec::new(), esc: None,
         side: Vec::new(),
         thumbs: Vec::new(),
+        id: NEXT_WIN_ID.fetch_add(1, Ordering::Relaxed),
         hidden: false,
         saved: None,
     }
 }
+
+static NEXT_WIN_ID: AtomicUsize = AtomicUsize::new(1);
 
 fn new_window(kind: Kind, n: usize) -> Window {
     let (sw, sh) = gfx::size();
@@ -971,7 +975,19 @@ fn desktop() {
     let mut shift = false;
     let mut opened = 0;
     let mut last_sec = time::now().second;
-    let mut desk = Desk { menu: None, cal_off: 0, clip: None, playing: false, pos: 0, t: 0, cpu: task::cpu_load() };
+    let mut desk = Desk {
+        menu: None,
+        cal_off: 0,
+        clip: None,
+        playing: false,
+        pos: 0,
+        t: 0,
+        cpu: task::cpu_load(),
+        icons: home_icons(),
+        sel: None,
+        last_click: (0, usize::MAX),
+        anim: None,
+    };
     let mut last_play_draw = 0u64;
 
     draw(&windows, cx, cy, &wp, &desk);
@@ -985,6 +1001,19 @@ fn desktop() {
             last_sec = sec;
             // menyu soati, CPU halqasi va soat oynasi — har soniyada
             desk.cpu = task::cpu_load();
+            if sec % 5 == 0 {
+                desk.icons = home_icons();
+            }
+            changed = true;
+        }
+        // Animatsiya
+        if let Some(a) = desk.anim {
+            if crate::timer::uptime_ms().saturating_sub(a.t0) >= a.dur {
+                if let Some(w) = windows.iter_mut().find(|w| w.id == a.reveal) {
+                    w.hidden = false;
+                }
+                desk.anim = None;
+            }
             changed = true;
         }
         // Vidjet pleeri
@@ -1043,10 +1072,17 @@ fn desktop() {
                 (input::EV_KEY, input::BTN_LEFT) => {
                     if e.value == 1 {
                         pressed = true;
+                        // Davom etayotgan animatsiyani yakunlaymiz (oyna yashirin qolmasin)
+                        if let Some(a) = desk.anim.take() {
+                            if let Some(w) = windows.iter_mut().find(|w| w.id == a.reveal) {
+                                w.hidden = false;
+                            }
+                        }
                         if !menu_click(&mut desk, &mut windows, cx, cy, &mut opened)
-                            && !handle_click(&mut windows, cx, cy, sh, &mut drag, &mut opened)
+                            && !handle_click(&mut windows, cx, cy, sh, &mut drag, &mut opened, &mut desk.anim)
+                            && !widget_click(&mut desk, sw, cx, cy)
                         {
-                            widget_click(&mut desk, sw, cx, cy);
+                            desk_icon_click(&mut desk, &mut windows, cx, cy, &mut opened);
                         }
                     } else {
                         pressed = false;
@@ -1173,7 +1209,17 @@ fn save_notes(w: &Window) -> String {
     }
 }
 
-fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag: &mut Option<(usize, usize)>, opened: &mut usize) -> bool {
+#[allow(clippy::too_many_arguments)]
+fn handle_click(
+    windows: &mut Vec<Window>,
+    cx: usize,
+    cy: usize,
+    sh: usize,
+    drag: &mut Option<(usize, usize)>,
+    opened: &mut usize,
+    anim: &mut Option<Anim>,
+) -> bool {
+    let now = crate::timer::uptime_ms();
     // Dok (pastdagi markazlashgan panel)?
     let (sw, _) = gfx::size();
     let (_, dy, _, _, icon, _) = dock_geom(sw, sh);
@@ -1184,8 +1230,10 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
             if cx >= ix && cx < ix + isz && cy >= iy && cy < iy + isz {
                 // Ilova oçiq bölsa (yashirilgan ham) — uni old planga qaytaramiz
                 if let Some(j) = windows.iter().rposition(|w| win_of_launcher(w, l.kind)) {
-                    let mut w = windows.remove(j);
-                    w.hidden = false;
+                    let w = windows.remove(j);
+                    if w.hidden {
+                        *anim = Some(Anim { from: (ix, iy, isz, isz), to: (w.x, w.y, w.w, w.h), t0: now, dur: ANIM_MS, reveal: w.id });
+                    }
                     windows.push(w);
                     return true;
                 }
@@ -1196,6 +1244,11 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
                     _ => windows.push(new_window(l.kind, *opened)),
                 }
                 *opened += 1;
+                // Yangi oyna dok ikonasidan kattalaşib çiqadi
+                if let Some(w) = windows.last_mut() {
+                    w.hidden = true;
+                    *anim = Some(Anim { from: (ix, iy, isz, isz), to: (w.x, w.y, w.w, w.h), t0: now, dur: ANIM_MS, reveal: w.id });
+                }
                 return true;
             }
         }
@@ -1216,17 +1269,21 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
                 // Yashiriş: oyna eng pastki qatlamga, dokdan qaytariladi
                 let mut w = windows.remove(i);
                 w.hidden = true;
+                *anim = Some(Anim { from: (w.x, w.y, w.w, w.h), to: dock_rect_for(&w), t0: now, dur: ANIM_MS, reveal: 0 });
                 windows.insert(0, w);
                 return true;
             }
             Some(_) => {
                 let mut w = windows.remove(i);
+                let from = (w.x, w.y, w.w, w.h);
                 if let Some((x, y, ww, hh)) = w.saved.take() {
                     (w.x, w.y, w.w, w.h) = (x, y, ww, hh);
                 } else {
                     w.saved = Some((w.x, w.y, w.w, w.h));
                     (w.x, w.y, w.w, w.h) = zoom_rect();
                 }
+                w.hidden = true;
+                *anim = Some(Anim { from, to: (w.x, w.y, w.w, w.h), t0: now, dur: ANIM_MS, reveal: w.id });
                 windows.push(w);
                 return true;
             }
@@ -1305,6 +1362,7 @@ fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Imag
 
     // Vidjetlar — ish stoli qatlamida (oynalar ularning ustida)
     draw_widgets(w, h, desk);
+    draw_desk_icons(desk);
 
     draw_menubar(w, desk.menu);
 
@@ -1316,6 +1374,9 @@ fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Imag
         draw_window(win, Some(i) == top, cx, cy);
     }
     gfx::reset_clip();
+    if let Some(a) = &desk.anim {
+        draw_anim(a);
+    }
 
     draw_dock(w, h, cx, cy, windows);
     if let Some(m) = desk.menu {
@@ -1469,6 +1530,125 @@ struct Desk {
     pos: u32,
     t: u64,
     cpu: u32,
+    icons: Vec<String>,         // ish stoli ikonalari (uy papkalari)
+    sel: Option<usize>,         // tanlangan ikona
+    last_click: (u64, usize),   // ikki marta bosiş: (vaqt, ikona)
+    anim: Option<Anim>,
+}
+
+/// Oyna animatsiyasi: "arvoh" töğriburçak bir joydan ikkinçisiga oʻtadi.
+#[derive(Clone, Copy)]
+struct Anim {
+    from: (usize, usize, usize, usize),
+    to: (usize, usize, usize, usize),
+    t0: u64,
+    dur: u64,
+    reveal: usize, // tugaganda körsatiladigan oyna id (0 — yöq)
+}
+
+const ANIM_MS: u64 = 230;
+
+fn home_icons() -> Vec<String> {
+    let mut v: Vec<String> =
+        fs::list("~").unwrap_or_default().into_iter().filter(|e| e.is_dir).map(|e| e.name).collect();
+    v.sort();
+    v
+}
+
+/// Ish stoli ikonasi joyi: (x, y, katak eni, katak boʻyi).
+fn desk_icon_rect(i: usize) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (cw, ch) = (u * 5, u * 5);
+    (u / 2, menubar_h() + u / 2 + i * ch, cw, ch)
+}
+
+/// Ish stoli papka ikonalari (oq yorliq, soyali).
+fn draw_desk_icons(desk: &Desk) {
+    let u = body();
+    let isz = u * 3;
+    let px = small() * 9 / 10;
+    for (i, name) in desk.icons.iter().enumerate() {
+        let (x, y, cw, ch) = desk_icon_rect(i);
+        let sel = desk.sel == Some(i);
+        if sel {
+            fill_round_rect_a(x + (cw - isz) / 2 - u / 4, y + u / 8, isz + u / 2, isz + u / 4, u / 3, 0xffffff, 50);
+        }
+        big_icon(FKind::Dir, name, x + (cw - isz) / 2, y + u / 4, isz);
+        let lbl = fit_text(name, cw - u / 4, px);
+        let ty = y + isz + u / 2;
+        if sel {
+            let lw = gfx::text_width(&lbl, px);
+            fill_round_rect(x + cw / 2 - lw / 2 - u / 4, ty - 1, lw + u / 2, px + 4, u / 4, 0x2f6fd6);
+        } else {
+            gfx::draw_text_centered(x + cw / 2 + 1, ty + 1, &lbl, 0x000000, px);
+        }
+        gfx::draw_text_centered(x + cw / 2, ty, &lbl, OQ, px);
+        let _ = ch;
+    }
+}
+
+/// Ish stoli ikonasiga bosiş: bir marta — tanlaş, ikki marta — oçiş.
+fn desk_icon_click(desk: &mut Desk, windows: &mut Vec<Window>, cx: usize, cy: usize, opened: &mut usize) -> bool {
+    let hit = (0..desk.icons.len()).find(|&i| {
+        let (x, y, cw, ch) = desk_icon_rect(i);
+        cx >= x && cx < x + cw && cy >= y && cy < y + ch
+    });
+    let now = crate::timer::uptime_ms();
+    match hit {
+        Some(i) => {
+            if desk.last_click.1 == i && desk.sel == Some(i) && now.wrapping_sub(desk.last_click.0) < 500 {
+                let mut w = new_window(Kind::Files, *opened);
+                load_dir(&mut w, &alloc::format!("~/{}", desk.icons[i]));
+                *opened += 1;
+                let (x, y, cw, _) = desk_icon_rect(i);
+                let u = body();
+                w.hidden = true;
+                desk.anim = Some(Anim {
+                    from: (x + (cw - u * 3) / 2, y + u / 4, u * 3, u * 3),
+                    to: (w.x, w.y, w.w, w.h),
+                    t0: now,
+                    dur: ANIM_MS,
+                    reveal: w.id,
+                });
+                windows.push(w);
+                desk.sel = None;
+            } else {
+                desk.sel = Some(i);
+            }
+            desk.last_click = (now, i);
+            true
+        }
+        None => {
+            let had = desk.sel.is_some();
+            desk.sel = None;
+            had
+        }
+    }
+}
+
+/// Animatsiya arvohini chizadi (easeOutCubic).
+fn draw_anim(a: &Anim) {
+    let now = crate::timer::uptime_ms();
+    let t = (now.saturating_sub(a.t0) as f32 / a.dur as f32).min(1.0);
+    let e = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
+    let lerp = |p: usize, q: usize| (p as f32 + (q as f32 - p as f32) * e) as usize;
+    let (x, y, w, h) = (lerp(a.from.0, a.to.0), lerp(a.from.1, a.to.1), lerp(a.from.2, a.to.2), lerp(a.from.3, a.to.3));
+    if w < 4 || h < 4 {
+        return;
+    }
+    let r = radius().min(w / 2).min(h / 2);
+    let th = title_h().min(h / 3);
+    fill_round_rect_a(x, y, w, h, r, WIN_BODY, 215);
+    fill_round_rect_a(x, y, w, th, r, WIN_TITLE, 230);
+    gfx::round_outline(x, y, w, h, r, 1, 0x4a5670);
+}
+
+/// Oyna uçun dok ikonasining töğriburçagi (yashiriş/qaytariş animatsiyasi).
+fn dock_rect_for(w: &Window) -> (usize, usize, usize, usize) {
+    let (sw, sh) = gfx::size();
+    let i = LAUNCHERS.iter().position(|l| win_of_launcher(w, l.kind)).unwrap_or(LAUNCHERS.len() / 2);
+    let (ix, iy, isz) = dock_icon_rect(sw, sh, i);
+    (ix, iy, isz, isz)
 }
 
 /// Vidjetlar geometriyasi: (px, pw, [y, h] × 4: ob-havo, kalendar, pleer, tizim).
