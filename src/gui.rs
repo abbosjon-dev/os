@@ -987,7 +987,16 @@ fn desktop() {
         sel: None,
         last_click: (0, usize::MAX),
         anim: None,
+        switcher: None,
+        toasts: Vec::new(),
+        history: Vec::new(),
+        notif_open: false,
     };
+    let mut alt = false;
+    {
+        let name = accounts::current().map(|a| if a.full_name.is_empty() { a.username } else { a.full_name }).unwrap_or_default();
+        notify("Xuş kelibsiz!", &alloc::format!("{} · Zamin OS {}", name, env!("CARGO_PKG_VERSION")), 0x2fbf5f);
+    }
     let mut last_play_draw = 0u64;
 
     draw(&windows, cx, cy, &wp, &desk);
@@ -1005,6 +1014,34 @@ fn desktop() {
                 desk.icons = home_icons();
             }
             changed = true;
+        }
+        // Bildirişnomalar navbati → ekran va tarix
+        {
+            let mut q = NOTIFY_Q.lock();
+            for (t, b, c) in q.drain(..) {
+                let tm = time::now();
+                desk.history.push((t.clone(), b.clone(), c, alloc::format!("{:02}:{:02}", tm.hour, tm.minute)));
+                if desk.history.len() > 20 {
+                    desk.history.remove(0);
+                }
+                desk.toasts.push(Toast { title: t, body: b, color: c, t0: crate::timer::uptime_ms() });
+                if desk.toasts.len() > 3 {
+                    desk.toasts.remove(0);
+                }
+                changed = true;
+            }
+        }
+        if !desk.toasts.is_empty() {
+            let now = crate::timer::uptime_ms();
+            let before = desk.toasts.len();
+            desk.toasts.retain(|t| now.saturating_sub(t.t0) < TOAST_MS);
+            let sliding = desk.toasts.iter().any(|t| {
+                let a = now.saturating_sub(t.t0);
+                a < SLIDE_MS || a > TOAST_MS - SLIDE_MS
+            });
+            if sliding || before != desk.toasts.len() {
+                changed = true;
+            }
         }
         // Animatsiya
         if let Some(a) = desk.anim {
@@ -1078,7 +1115,8 @@ fn desktop() {
                                 w.hidden = false;
                             }
                         }
-                        if !menu_click(&mut desk, &mut windows, cx, cy, &mut opened)
+                        if !notif_click(&mut desk, cx, cy)
+                            && !menu_click(&mut desk, &mut windows, cx, cy, &mut opened)
                             && !handle_click(&mut windows, cx, cy, sh, &mut drag, &mut opened, &mut desk.anim)
                             && !widget_click(&mut desk, sw, cx, cy)
                         {
@@ -1091,10 +1129,49 @@ fn desktop() {
                     changed = true;
                 }
                 (input::EV_KEY, 42) | (input::EV_KEY, 54) => shift = e.value != 0,
-                (input::EV_KEY, 1) if e.value == 1 && desk.menu.is_some() => {
-                    desk.menu = None; // Esc — menyuni yopadi
+                (input::EV_KEY, 56) | (input::EV_KEY, 100) => {
+                    alt = e.value != 0;
+                    if !alt {
+                        // Alt qoʻyib yuborildi — tanlangan oyna faollaşadi
+                        if let Some(sel) = desk.switcher.take() {
+                            let list = switcher_list(&windows);
+                            if let Some(&wi) = list.get(sel % list.len().max(1)) {
+                                activate_window(&mut windows, wi, &mut desk.anim);
+                            }
+                            changed = true;
+                        }
+                    }
+                }
+                (input::EV_KEY, 15) if e.value == 1 && alt => {
+                    let n = windows.len().min(10);
+                    if n > 0 {
+                        let cur = desk.switcher.unwrap_or(0);
+                        desk.switcher = Some(if shift { (cur + n - 1) % n } else { (cur + 1) % n });
+                        changed = true;
+                    }
+                }
+                (input::EV_KEY, 17) | (input::EV_KEY, 50) | (input::EV_KEY, 33) if e.value == 1 && alt => {
+                    // Alt+W — yopiş, Alt+M — yashiriş, Alt+F — kattalaştiriş
+                    if let Some(i) = windows.iter().rposition(|w| !w.hidden) {
+                        match e.code {
+                            17 => {
+                                let mut w = windows.remove(i);
+                                close_terminal(&mut w);
+                            }
+                            50 => minimize_window(&mut windows, i, &mut desk.anim),
+                            _ => zoom_window(&mut windows, i, &mut desk.anim),
+                        }
+                        changed = true;
+                    }
+                }
+                (input::EV_KEY, 1) if e.value == 1 => {
+                    // Esc — menyu, panel va almaştirgiçni yopadi
+                    desk.menu = None;
+                    desk.notif_open = false;
+                    desk.switcher = None;
                     changed = true;
                 }
+                (input::EV_KEY, _) if alt => {}
                 (input::EV_KEY, code) if e.value == 1 => {
                     if let Some(w) = windows.last_mut().filter(|w| !w.hidden && w.kind.takes_keys()) {
                         type_key(w, code, shift);
@@ -1267,24 +1344,11 @@ fn handle_click(
             }
             Some(1) => {
                 // Yashiriş: oyna eng pastki qatlamga, dokdan qaytariladi
-                let mut w = windows.remove(i);
-                w.hidden = true;
-                *anim = Some(Anim { from: (w.x, w.y, w.w, w.h), to: dock_rect_for(&w), t0: now, dur: ANIM_MS, reveal: 0 });
-                windows.insert(0, w);
+                minimize_window(windows, i, anim);
                 return true;
             }
             Some(_) => {
-                let mut w = windows.remove(i);
-                let from = (w.x, w.y, w.w, w.h);
-                if let Some((x, y, ww, hh)) = w.saved.take() {
-                    (w.x, w.y, w.w, w.h) = (x, y, ww, hh);
-                } else {
-                    w.saved = Some((w.x, w.y, w.w, w.h));
-                    (w.x, w.y, w.w, w.h) = zoom_rect();
-                }
-                w.hidden = true;
-                *anim = Some(Anim { from, to: (w.x, w.y, w.w, w.h), t0: now, dur: ANIM_MS, reveal: w.id });
-                windows.push(w);
+                zoom_window(windows, i, anim);
                 return true;
             }
             None => {}
@@ -1297,6 +1361,7 @@ fn handle_click(
         }
         if windows[i].kind == Kind::Editor && windows[i].in_save_btn(cx, cy) {
             let msg = save_notes(&windows[i]);
+            notify("Matn muharriri", &msg, 0x4aa3df);
             windows[i].cur = msg.into_bytes(); // holat xabari
             return true;
         }
@@ -1379,8 +1444,15 @@ fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Imag
     }
 
     draw_dock(w, h, cx, cy, windows);
+    draw_toasts(desk);
+    if desk.notif_open {
+        draw_notif_panel(desk);
+    }
     if let Some(m) = desk.menu {
         draw_menu(m, cx, cy);
+    }
+    if let Some(sel) = desk.switcher {
+        draw_switcher(windows, sel);
     }
     cursor(cx, cy);
 }
@@ -1534,6 +1606,240 @@ struct Desk {
     sel: Option<usize>,         // tanlangan ikona
     last_click: (u64, usize),   // ikki marta bosiş: (vaqt, ikona)
     anim: Option<Anim>,
+    switcher: Option<usize>,    // Alt+Tab: tanlangan element (oynalar yangiligi tartibida)
+    toasts: Vec<Toast>,         // ekrandagi bildirişnomalar
+    history: Vec<(String, String, Color, String)>, // (sarlavha, matn, rang, vaqt)
+    notif_open: bool,           // bildirişnomalar paneli oçiqmi
+}
+
+// ---------------- Bildirişnomalar ----------------
+
+struct Toast {
+    title: String,
+    body: String,
+    color: Color,
+    t0: u64,
+}
+
+const TOAST_MS: u64 = 4500;
+const SLIDE_MS: u64 = 280;
+
+static NOTIFY_Q: crate::sync::SpinLock<Vec<(String, String, Color)>> = crate::sync::SpinLock::new(Vec::new());
+
+/// Bildirişnoma yuborish (yadroning istalgan joyidan; GUI keyingi kadrda körsatadi).
+pub fn notify(title: &str, body: &str, color: Color) {
+    let mut q = NOTIFY_Q.lock();
+    if q.len() < 16 {
+        q.push((String::from(title), String::from(body), color));
+    }
+}
+
+fn toast_geo(sw: usize, k: usize) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (tw, th) = (u * 16, u * 3);
+    (sw.saturating_sub(tw + u / 2), menubar_h() + u / 2 + k * (th + u / 2), tw, th)
+}
+
+/// Ekrandagi bildirişnomalar (öngdan sirpanib kiradi va çiqadi).
+fn draw_toasts(desk: &Desk) {
+    let (sw, _) = gfx::size();
+    let u = body();
+    let now = crate::timer::uptime_ms();
+    for (k, t) in desk.toasts.iter().enumerate() {
+        let (x0, y, w, h) = toast_geo(sw, k);
+        let age = now.saturating_sub(t.t0);
+        let slide = if age < SLIDE_MS {
+            1.0 - age as f32 / SLIDE_MS as f32
+        } else if age > TOAST_MS - SLIDE_MS {
+            (age - (TOAST_MS - SLIDE_MS)) as f32 / SLIDE_MS as f32
+        } else {
+            0.0
+        };
+        let e = slide * slide;
+        let x = x0 + ((w + u) as f32 * e) as usize;
+        if x >= sw {
+            continue;
+        }
+        gfx::shadow(x, y, w, h, u / 2, 10);
+        fill_round_rect_a(x, y, w, h, u / 2, 0x1c2434, 245);
+        gfx::round_outline(x, y, w, h, u / 2, 1, 0x3a4660);
+        let isz = u * 3 / 2;
+        gfx::fill_round_rect(x + u / 2, y + (h - isz) / 2, isz, isz, isz / 4, t.color);
+        zamin_logo(x + u / 2 + isz / 2, y + h / 2, isz * 3 / 5);
+        let tx = x + u + isz;
+        let tw = w.saturating_sub(isz + u * 3 / 2);
+        gfx::draw_text(tx, y + u / 3, &fit_text(&t.title, tw, small()), OQ, small());
+        gfx::draw_text(tx, y + u / 3 + small() + u / 4, &fit_text(&t.body, tw, small() * 9 / 10), 0xaebccf, small() * 9 / 10);
+        gfx::draw_text(x + w - u * 2, y + u / 3, "hozir", 0x6f7f95, small() * 4 / 5);
+    }
+}
+
+/// Qoʻngʻiroq belgisi markazi (menyu panelida, sanadan çapda).
+fn bell_pos(sw: usize) -> (usize, usize) {
+    let t = time::now();
+    let date = alloc::format!(
+        "{}, {}-{} {:02}:{:02}",
+        weekday_short(t.year, t.month, t.day),
+        t.day,
+        month_name(t.month),
+        t.hour,
+        t.minute
+    );
+    let rx = sw.saturating_sub(gfx::text_width(&date, small()) + body());
+    (rx.saturating_sub(body() + small() * 9 / 2), menubar_h() / 2)
+}
+
+fn notif_panel_geo(sw: usize, n: usize) -> (usize, usize, usize, usize) {
+    let u = body();
+    let pw = u * 17;
+    let ph = u * 2 + n.max(1) * (u * 3 + u / 3) + u / 2;
+    (sw.saturating_sub(pw + u / 2), menubar_h() + 3, pw, ph)
+}
+
+/// Bildirişnomalar markazi: oxirgi xabarlar (yangisi tepada).
+fn draw_notif_panel(desk: &Desk) {
+    let (sw, _) = gfx::size();
+    let u = body();
+    let n = desk.history.len().min(6);
+    let (x, y, w, h) = notif_panel_geo(sw, n);
+    gfx::shadow(x, y, w, h, u / 2, 12);
+    fill_round_rect_a(x, y, w, h, u / 2, 0x151c2a, 248);
+    gfx::round_outline(x, y, w, h, u / 2, 1, 0x34405a);
+    gfx::draw_text(x + u, y + u / 2, "Bildirişnomalar", OQ, small());
+    if n > 0 {
+        let cw = gfx::text_width("Tozalaş", small() * 9 / 10);
+        gfx::draw_text(x + w - cw - u, y + u / 2, "Tozalaş", 0x63a8ff, small() * 9 / 10);
+    } else {
+        gfx::draw_text_centered(x + w / 2, y + u * 2 + u, "Bildirişnomalar yöq", 0x6f7f95, small());
+    }
+    for (k, (t, b, c, tm)) in desk.history.iter().rev().take(6).enumerate() {
+        let iy = y + u * 2 + k * (u * 3 + u / 3);
+        fill_round_rect_a(x + u / 2, iy, w - u, u * 3, u / 2, 0xffffff, 14);
+        let isz = u * 5 / 4;
+        gfx::fill_round_rect(x + u, iy + (u * 3 - isz) / 2, isz, isz, isz / 4, *c);
+        let tx = x + u * 3 / 2 + isz;
+        let tw = w.saturating_sub(isz + u * 4);
+        gfx::draw_text(tx, iy + u / 3, &fit_text(t, tw, small() * 9 / 10), OQ, small() * 9 / 10);
+        gfx::draw_text(tx, iy + u / 3 + small(), &fit_text(b, tw, small() * 4 / 5), 0x9fb0c3, small() * 4 / 5);
+        let tmw = gfx::text_width(tm, small() * 4 / 5);
+        gfx::draw_text(x + w - u - tmw, iy + u / 3, tm, 0x6f7f95, small() * 4 / 5);
+    }
+}
+
+/// Bildirişnoma qatlamiga bosiş (toast, qoʻngʻiroq, panel). Bosildi — true.
+fn notif_click(desk: &mut Desk, cx: usize, cy: usize) -> bool {
+    let (sw, _) = gfx::size();
+    let u = body();
+    if desk.notif_open {
+        let n = desk.history.len().min(6);
+        let (x, y, w, h) = notif_panel_geo(sw, n);
+        if cx >= x && cx < x + w && cy >= y && cy < y + h {
+            if n > 0 && cy < y + u * 2 && cx >= x + w - u * 5 {
+                desk.history.clear(); // "Tozalaş"
+            }
+            return true;
+        }
+        desk.notif_open = false;
+        return true;
+    }
+    let (bx, by) = bell_pos(sw);
+    if cy < menubar_h() && cx + u >= bx && cx <= bx + u {
+        let _ = by;
+        desk.notif_open = true;
+        desk.menu = None;
+        return true;
+    }
+    for k in 0..desk.toasts.len() {
+        let (x, y, w, h) = toast_geo(sw, k);
+        if cx >= x && cx < x + w && cy >= y && cy < y + h {
+            desk.toasts.remove(k); // bosilgan xabar yopiladi
+            return true;
+        }
+    }
+    false
+}
+
+// ---------------- Ilova almaştirgiç (Alt+Tab) va yorliqlar ----------------
+
+/// Oyna uçun ikona turi va rangi.
+fn win_icon(w: &Window) -> (Kind, Color) {
+    match w.kind {
+        Kind::Audio => (Kind::Audio, 0xff7a2f),
+        Kind::Image if crate::video::is_video_ext(&w.path) => (Kind::Video, 0x8257ff),
+        k => (k, menu_kind_color(k)),
+    }
+}
+
+/// Alt+Tab ro'yxati: oynalar yangiligi tartibida (oxirgi faol — birinçi).
+fn switcher_list(windows: &[Window]) -> Vec<usize> {
+    (0..windows.len()).rev().collect()
+}
+
+fn draw_switcher(windows: &[Window], sel: usize) {
+    let (sw, sh) = gfx::size();
+    let u = body();
+    let list = switcher_list(windows);
+    let n = list.len().min(10);
+    if n == 0 {
+        return;
+    }
+    let isz = u * 4;
+    let gap = u;
+    let pw = n * isz + (n + 1) * gap;
+    let ph = isz + u * 3 + u / 2;
+    let (x, y) = ((sw - pw) / 2, (sh - ph) / 2);
+    gfx::shadow(x, y, pw, ph, u, 14);
+    fill_round_rect_a(x, y, pw, ph, u, 0x141b28, 235);
+    gfx::round_outline(x, y, pw, ph, u, 1, 0x3a4660);
+    for (k, &wi) in list.iter().take(n).enumerate() {
+        let ix = x + gap + k * (isz + gap);
+        let iy = y + gap;
+        if k == sel % n {
+            fill_round_rect_a(ix - u / 3, iy - u / 3, isz + u * 2 / 3, isz + u * 2 / 3, u / 2, 0xffffff, 40);
+        }
+        let (kind, col) = win_icon(&windows[wi]);
+        draw_icon(kind, col, ix, iy, isz);
+        if windows[wi].hidden {
+            gfx::fill_circle(ix + isz / 2, iy + isz + u / 3, (u / 6).max(2), 0x8a93a6);
+        }
+    }
+    let title = &windows[list[sel % n]].title;
+    gfx::draw_text_centered(sw / 2, y + gap + isz + u * 2 / 3, &fit_text(title, pw - u * 2, small()), OQ, small());
+}
+
+/// i-oynani old planga oladi (yashirilgan bölsa — dokdan çiqadi).
+fn activate_window(windows: &mut Vec<Window>, i: usize, anim: &mut Option<Anim>) {
+    if i >= windows.len() {
+        return;
+    }
+    let w = windows.remove(i);
+    if w.hidden {
+        *anim = Some(Anim { from: dock_rect_for(&w), to: (w.x, w.y, w.w, w.h), t0: crate::timer::uptime_ms(), dur: ANIM_MS, reveal: w.id });
+    }
+    windows.push(w);
+}
+
+/// i-oynani dokka yashiradi (animatsiya bilan).
+fn minimize_window(windows: &mut Vec<Window>, i: usize, anim: &mut Option<Anim>) {
+    let mut w = windows.remove(i);
+    w.hidden = true;
+    *anim = Some(Anim { from: (w.x, w.y, w.w, w.h), to: dock_rect_for(&w), t0: crate::timer::uptime_ms(), dur: ANIM_MS, reveal: 0 });
+    windows.insert(0, w);
+}
+
+/// i-oynani kattalaştiradi yoki oldingi ölçamga qaytaradi.
+fn zoom_window(windows: &mut Vec<Window>, i: usize, anim: &mut Option<Anim>) {
+    let mut w = windows.remove(i);
+    let from = (w.x, w.y, w.w, w.h);
+    if let Some((x, y, ww, hh)) = w.saved.take() {
+        (w.x, w.y, w.w, w.h) = (x, y, ww, hh);
+    } else {
+        w.saved = Some((w.x, w.y, w.w, w.h));
+        (w.x, w.y, w.w, w.h) = zoom_rect();
+    }
+    w.hidden = true;
+    *anim = Some(Anim { from, to: (w.x, w.y, w.w, w.h), t0: crate::timer::uptime_ms(), dur: ANIM_MS, reveal: w.id });
+    windows.push(w);
 }
 
 /// Oyna animatsiyasi: "arvoh" töğriburçak bir joydan ikkinçisiga oʻtadi.
@@ -1842,6 +2148,9 @@ fn widget_click(desk: &mut Desk, sw: usize, cx: usize, cy: usize) -> bool {
             }
             desk.playing = !desk.playing;
             desk.t = crate::timer::uptime_ms();
+            if desk.playing && !crate::audio::sound::present() {
+                notify("Övoz qurilmasi topilmadi", "Ijro faqat vizual körsatiladi (virtio-sound yöq)", 0xff9f0a);
+            }
             if desk.playing {
                 crate::audio::sound::play(&c.samples, c.rate, c.channels, desk.pos);
             } else {
@@ -2004,6 +2313,7 @@ fn menu_click(desk: &mut Desk, windows: &mut Vec<Window>, cx: usize, cy: usize, 
     }
     if let Some(t) = menubar_title_at(cx, cy) {
         desk.menu = Some(t);
+        desk.notif_open = false;
         return true;
     }
     false

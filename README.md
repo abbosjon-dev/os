@@ -56,6 +56,25 @@ Quyidagi kadrlar animatsiya sekinlaştirilgan holda olingan:
 
 ![Animatsiya kadrlari](docs/animation.jpg)
 
+### Klaviatura yorliqlari va bildirişnomalar
+
+| Ilova almaştirgiç (Alt+Tab) | Bildirişnomalar markazi |
+|---|---|
+| ![Alt+Tab](docs/switcher.png) | ![Bildirişnomalar](docs/notifications.png) |
+
+| Yorliq | Amal |
+|---|---|
+| `Alt+Tab` / `Alt+Shift+Tab` | Ilova almaştirgiç — Alt qoʻyib yuborilganda tanlangan oyna faollaşadi (yashirilgani ham) |
+| `Alt+W` | Faol oynani yopiş |
+| `Alt+M` | Faol oynani dokka yashiriş |
+| `Alt+F` | Kattalaştiriş / oldingi ölçam |
+| `Esc` | Menyu, bildirişnomalar paneli va almaştirgiçni yopiş |
+
+**Bildirişnomalar** öng yuqoridan sirpanib çiqadi (4.5 s, bosilsa yopiladi), menyu
+panelidagi qoʻngʻiroq — oxirgi xabarlar tarixi ("Tozalaş" bilan). Yadroning istalgan
+joyidan `gui::notify(sarlavha, matn, rang)` bilan yuboriladi. Hozir: kiriş, fayl
+saqlaş, övoz qurilmasi yöqligi haqida.
+
 ### Qulf ekrani
 
 ![Qulf ekrani](docs/lockscreen.png)
@@ -563,7 +582,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.15**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.16**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -597,5 +616,7 @@ bosqiç (etap) yakunlanganda kötariladi.
   hover belgilari (× − +), burçakdan ölçamni özgartiriş, dok ikonasi oçiq oynani qaytaradi.
 - 0.0.15 — **Ish stoli ikonalari** (uy papkalari; bir marta — tanlaş, ikki marta — oçiş)
   va **oyna animatsiyalari** (oçiliş, yashiriş, qaytariş, kattalaştiriş).
+- 0.0.16 — **Klaviatura yorliqlari** (Alt+Tab almaştirgiç, Alt+W/M/F) va
+  **bildirişnomalar** (toastlar + tarix paneli, `gui::notify` API).
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
