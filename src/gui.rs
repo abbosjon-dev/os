@@ -991,6 +991,7 @@ fn desktop() {
         toasts: Vec::new(),
         history: Vec::new(),
         notif_open: false,
+        search: None,
     };
     let mut alt = false;
     {
@@ -1097,6 +1098,50 @@ fn desktop() {
             }
         }
         for e in input::poll() {
+            // Qidiruv oçiq: klaviatura unga tegişli
+            if e.typ == input::EV_KEY && e.code != input::BTN_LEFT && desk.search.is_some() {
+                match e.code {
+                    42 | 54 => shift = e.value != 0,
+                    56 | 100 => alt = e.value != 0,
+                    _ if e.value == 0 => {}
+                    1 => desk.search = None,
+                    57 if alt => desk.search = None,
+                    103 => {
+                        let s = desk.search.as_mut().unwrap();
+                        s.sel = s.sel.saturating_sub(1);
+                    }
+                    108 => {
+                        let s = desk.search.as_mut().unwrap();
+                        if s.sel + 1 < s.res.len() {
+                            s.sel += 1;
+                        }
+                    }
+                    28 => {
+                        let s = desk.search.take().unwrap();
+                        if let Some((_, _, a)) = s.res.get(s.sel).cloned() {
+                            search_exec(a, &mut windows, &mut opened);
+                        }
+                    }
+                    14 => {
+                        let s = desk.search.as_mut().unwrap();
+                        s.q.pop();
+                        s.res = search_results(&s.q);
+                        s.sel = 0;
+                    }
+                    code => {
+                        if let Some(c) = keycode_char(code, shift) {
+                            let s = desk.search.as_mut().unwrap();
+                            if s.q.len() < 40 {
+                                s.q.push(c);
+                                s.res = search_results(&s.q);
+                                s.sel = 0;
+                            }
+                        }
+                    }
+                }
+                changed = true;
+                continue;
+            }
             match (e.typ, e.code) {
                 (input::EV_ABS, input::ABS_X) => {
                     cx = (e.value as usize * sw) / 32768;
@@ -1115,7 +1160,8 @@ fn desktop() {
                                 w.hidden = false;
                             }
                         }
-                        if !notif_click(&mut desk, cx, cy)
+                        if !search_click(&mut desk, &mut windows, cx, cy, &mut opened)
+                            && !notif_click(&mut desk, cx, cy)
                             && !menu_click(&mut desk, &mut windows, cx, cy, &mut opened)
                             && !handle_click(&mut windows, cx, cy, sh, &mut drag, &mut opened, &mut desk.anim)
                             && !widget_click(&mut desk, sw, cx, cy)
@@ -1141,6 +1187,10 @@ fn desktop() {
                             changed = true;
                         }
                     }
+                }
+                (input::EV_KEY, 57) if e.value == 1 && alt => {
+                    open_search(&mut desk); // Alt+Space — tezkor qidiruv
+                    changed = true;
                 }
                 (input::EV_KEY, 15) if e.value == 1 && alt => {
                     let n = windows.len().min(10);
@@ -1454,6 +1504,9 @@ fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Imag
     if let Some(sel) = desk.switcher {
         draw_switcher(windows, sel);
     }
+    if let Some(sr) = &desk.search {
+        draw_search(sr);
+    }
     cursor(cx, cy);
 }
 
@@ -1522,7 +1575,8 @@ fn draw_menubar(w: usize, open: Option<usize>) {
     status_wifi(sx, cy2, small());
     sx = sx.saturating_sub(small() * 3 / 2);
     status_bell(sx, cy2, small());
-    let _ = sx;
+    sx = sx.saturating_sub(small() * 3 / 2);
+    status_search(sx, cy2, small());
 }
 
 /// Menyu logosi — yashil olmos-yulduz.
@@ -1569,6 +1623,15 @@ fn weekday_short(year: u64, month: u64, day: u64) -> &'static str {
 }
 
 // Holat belgilari (markaz cy, baland s)
+fn status_search(cx: usize, cy: usize, s: usize) {
+    let r = s * 3 / 10;
+    let (fx, fy) = ((cx - s / 10) as f32, (cy - s / 10) as f32);
+    gfx::fill_circle(fx as usize, fy as usize, r, 0xdbe4f0);
+    gfx::fill_circle(fx as usize, fy as usize, r * 3 / 5, 0x0f1726);
+    let q = r as f32;
+    gfx::fill_poly(&[(fx + q * 0.55, fy + q * 0.8), (fx + q * 0.8, fy + q * 0.55), (fx + q * 1.7, fy + q * 1.45), (fx + q * 1.45, fy + q * 1.7)], 0xdbe4f0);
+}
+
 fn status_bell(cx: usize, cy: usize, s: usize) {
     let col = 0xdbe4f0;
     gfx::fill_round_rect(cx - s / 4, cy - s / 3, s / 2, s * 2 / 5, s / 6, col);
@@ -1610,6 +1673,275 @@ struct Desk {
     toasts: Vec<Toast>,         // ekrandagi bildirişnomalar
     history: Vec<(String, String, Color, String)>, // (sarlavha, matn, rang, vaqt)
     notif_open: bool,           // bildirişnomalar paneli oçiqmi
+    search: Option<Search>,     // tezkor qidiruv (Alt+Space)
+}
+
+// ---------------- Tezkor qidiruv (Alt+Space) ----------------
+
+#[derive(Clone)]
+enum SAct {
+    App(Kind),
+    Dir(String),
+    File(String),
+    Calc,
+    Reboot,
+    Shutdown,
+}
+
+struct Search {
+    q: String,
+    sel: usize,
+    res: Vec<(String, String, SAct)>, // (nom, izoh, amal)
+}
+
+const SEARCH_APPS: [(&str, Kind); 11] = [
+    ("Terminal", Kind::Terminal),
+    ("Fayllar", Kind::Files),
+    ("Matn muharriri", Kind::Editor),
+    ("Soat", Kind::Clock),
+    ("Musiqa", Kind::Music),
+    ("Video", Kind::Video),
+    ("Rasmlar", Kind::Image),
+    ("Brauzer", Kind::Browser),
+    ("Sozlamalar", Kind::Settings),
+    ("Zamin OS haqida", Kind::About),
+    ("Savat", Kind::Trash),
+];
+
+/// Uy papkasidagi fayl va papkalar (çuqurlik ≤ 3).
+fn collect_files(path: &str, depth: usize, out: &mut Vec<(String, String, bool)>) {
+    if depth > 3 || out.len() > 400 {
+        return;
+    }
+    for e in fs::list(path).unwrap_or_default() {
+        let p = path_join(path, &e.name);
+        out.push((e.name.clone(), p.clone(), e.is_dir));
+        if e.is_dir {
+            collect_files(&p, depth + 1, out);
+        }
+    }
+}
+
+/// Oddiy hisoblaş: + - * / ( ) va kasrlar. Natija yoki None.
+fn calc(expr: &str) -> Option<f64> {
+    let b: Vec<u8> = expr.bytes().filter(|c| !c.is_ascii_whitespace()).collect();
+    if b.is_empty() || !b.iter().any(|c| b"+-*/".contains(c)) || !b.iter().all(|c| b"0123456789.+-*/()".contains(c)) {
+        return None;
+    }
+    fn num(b: &[u8], i: &mut usize) -> Option<f64> {
+        if *i < b.len() && b[*i] == b'(' {
+            *i += 1;
+            let v = sum(b, i)?;
+            if *i < b.len() && b[*i] == b')' {
+                *i += 1;
+                return Some(v);
+            }
+            return None;
+        }
+        if *i < b.len() && b[*i] == b'-' {
+            *i += 1;
+            return num(b, i).map(|v| -v);
+        }
+        let st = *i;
+        while *i < b.len() && (b[*i].is_ascii_digit() || b[*i] == b'.') {
+            *i += 1;
+        }
+        let txt = core::str::from_utf8(&b[st..*i]).ok()?;
+        let (ip, fp) = txt.split_once('.').unwrap_or((txt, ""));
+        if ip.is_empty() && fp.is_empty() {
+            return None;
+        }
+        let mut v = 0f64;
+        for c in ip.bytes() {
+            v = v * 10.0 + (c - b'0') as f64;
+        }
+        let mut sc = 0.1f64;
+        for c in fp.bytes() {
+            v += (c - b'0') as f64 * sc;
+            sc *= 0.1;
+        }
+        Some(v)
+    }
+    fn prod(b: &[u8], i: &mut usize) -> Option<f64> {
+        let mut v = num(b, i)?;
+        while *i < b.len() && (b[*i] == b'*' || b[*i] == b'/') {
+            let op = b[*i];
+            *i += 1;
+            let r = num(b, i)?;
+            v = if op == b'*' { v * r } else if r == 0.0 { return None } else { v / r };
+        }
+        Some(v)
+    }
+    fn sum(b: &[u8], i: &mut usize) -> Option<f64> {
+        let mut v = prod(b, i)?;
+        while *i < b.len() && (b[*i] == b'+' || b[*i] == b'-') {
+            let op = b[*i];
+            *i += 1;
+            let r = prod(b, i)?;
+            v = if op == b'+' { v + r } else { v - r };
+        }
+        Some(v)
+    }
+    let mut i = 0;
+    let v = sum(&b, &mut i)?;
+    if i == b.len() { Some(v) } else { None }
+}
+
+fn fmt_num(v: f64) -> String {
+    if v == (v as i64) as f64 && v.abs() < 1e15 {
+        alloc::format!("{}", v as i64)
+    } else {
+        let s = alloc::format!("{:.6}", v);
+        String::from(s.trim_end_matches('0').trim_end_matches('.'))
+    }
+}
+
+/// Soʻrov böyiça natijalar: hisob, ilovalar, tizim amallari, papka/fayllar.
+fn search_results(q: &str) -> Vec<(String, String, SAct)> {
+    let mut out = Vec::new();
+    let ql = q.trim().to_lowercase();
+    if ql.is_empty() {
+        for (n, k) in SEARCH_APPS.iter().take(6) {
+            out.push((String::from(*n), String::from("Ilova"), SAct::App(*k)));
+        }
+        return out;
+    }
+    if let Some(v) = calc(q) {
+        out.push((alloc::format!("= {}", fmt_num(v)), alloc::format!("Hisob: {}", q.trim()), SAct::Calc));
+    }
+    let score = |name: &str| -> Option<u8> {
+        let n = name.to_lowercase();
+        if n.starts_with(&ql) {
+            Some(0)
+        } else if n.contains(&ql) {
+            Some(1)
+        } else {
+            None
+        }
+    };
+    let mut apps: Vec<(u8, &str, Kind)> =
+        SEARCH_APPS.iter().filter_map(|(n, k)| score(n).map(|sc| (sc, *n, *k))).collect();
+    apps.sort_by_key(|a| a.0);
+    for (_, n, k) in apps {
+        out.push((String::from(n), String::from("Ilova"), SAct::App(k)));
+    }
+    for (n, a) in [("Qayta yuklaş", SAct::Reboot), ("Öçiriş", SAct::Shutdown)] {
+        if score(n).is_some() {
+            out.push((String::from(n), String::from("Tizim"), a));
+        }
+    }
+    let mut files = Vec::new();
+    collect_files("~", 0, &mut files);
+    let mut hits: Vec<(u8, String, String, bool)> =
+        files.into_iter().filter_map(|(n, p, d)| score(&n).map(|sc| (sc, n, p, d))).collect();
+    hits.sort_by_key(|h| h.0);
+    for (_, n, p, d) in hits {
+        out.push((n, p.clone(), if d { SAct::Dir(p) } else { SAct::File(p) }));
+    }
+    out.truncate(8);
+    out
+}
+
+fn search_geo(n: usize) -> (usize, usize, usize, usize, usize) {
+    let (sw, sh) = gfx::size();
+    let u = body();
+    let w = (u * 30).min(sw - u * 2);
+    let bar = u * 5 / 2;
+    let row = u * 2;
+    let h = bar + if n > 0 { n * row + u / 2 } else { 0 };
+    ((sw - w) / 2, sh / 5, w, h, row)
+}
+
+fn draw_search(s: &Search) {
+    let u = body();
+    let (x, y, w, h, row) = search_geo(s.res.len());
+    gfx::shadow(x, y, w, h, u, 16);
+    fill_round_rect_a(x, y, w, h, u, 0x161d2b, 248);
+    gfx::round_outline(x, y, w, h, u, 1, 0x3a4660);
+    let bar = u * 5 / 2;
+    // lupa
+    let (lx, ly) = (x + u * 3 / 2, y + bar / 2);
+    let lr = u / 2;
+    gfx::fill_circle(lx, ly, lr, 0x9fb0c3);
+    gfx::fill_circle(lx, ly, lr * 2 / 3, 0x161d2b);
+    gfx::fill_poly(
+        &[
+            ((lx + lr / 2) as f32, (ly + lr / 2 + 2) as f32),
+            ((lx + lr / 2 + 2) as f32, (ly + lr / 2) as f32),
+            ((lx + lr * 3 / 2) as f32, (ly + lr * 3 / 2 - 1) as f32),
+            ((lx + lr * 3 / 2 - 1) as f32, (ly + lr * 3 / 2) as f32),
+        ],
+        0x9fb0c3,
+    );
+    let tx = x + u * 3;
+    let big = small() * 6 / 5;
+    let ty = y + (bar - big) / 2;
+    if s.q.is_empty() {
+        gfx::draw_text(tx, ty, "Ilova, fayl yoki hisob…", 0x6f7f95, big);
+        fill_rect(tx, ty, 2, big + 2, 0x63a8ff);
+    } else {
+        let ex = gfx::draw_text(tx, ty, &s.q, OQ, big);
+        fill_rect(ex + 1, ty, 2, big + 2, 0x63a8ff);
+    }
+    if s.res.is_empty() {
+        return;
+    }
+    fill_rect(x + u / 2, y + bar, w - u, 1, 0x2a3346);
+    for (k, (name, sub, act)) in s.res.iter().enumerate() {
+        let ry = y + bar + u / 4 + k * row;
+        if k == s.sel {
+            fill_round_rect_a(x + u / 3, ry, w - u * 2 / 3, row, u / 2, 0x2f88ff, 220);
+        }
+        let isz = row * 3 / 4;
+        let (ix, iy) = (x + u, ry + (row - isz) / 2);
+        match act {
+            SAct::App(kd) => {
+                let col = LAUNCHERS.iter().find(|l| l.kind == *kd).map(|l| l.color).unwrap_or(menu_kind_color(*kd));
+                draw_icon(*kd, col, ix, iy, isz);
+            }
+            SAct::Dir(_) => big_icon(FKind::Dir, name, ix, iy, isz),
+            SAct::File(_) => big_icon(FKind::of(name, false), name, ix, iy, isz),
+            SAct::Calc => {
+                gfx::fill_round_rect(ix, iy, isz, isz, isz / 4, 0xff9f0a);
+                gfx::draw_text_centered(ix + isz / 2, iy + isz / 8, "=", OQ, isz * 3 / 4);
+            }
+            SAct::Reboot | SAct::Shutdown => {
+                gfx::fill_circle(ix + isz / 2, iy + isz / 2, isz / 2, if matches!(act, SAct::Shutdown) { 0xff453a } else { 0xff9f0a });
+            }
+        }
+        let nx = ix + isz + u * 2 / 3;
+        let nw = w.saturating_sub(isz + u * 3);
+        gfx::draw_text(nx, ry + (row - small()) / 2, &fit_text(name, nw / 2 + nw / 4, small()), OQ, small());
+        let sw2 = gfx::text_width(&fit_text(sub, nw / 2, small() * 4 / 5), small() * 4 / 5);
+        gfx::draw_text(
+            (x + w).saturating_sub(sw2 + u),
+            ry + (row - small() * 4 / 5) / 2,
+            &fit_text(sub, nw / 2, small() * 4 / 5),
+            if k == s.sel { 0xdbe6ff } else { 0x6f7f95 },
+            small() * 4 / 5,
+        );
+    }
+}
+
+/// Qidiruv natijasini bajaradi.
+fn search_exec(act: SAct, windows: &mut Vec<Window>, opened: &mut usize) {
+    match act {
+        SAct::App(k) => menu_act(MAct::Open(k), windows, opened),
+        SAct::Dir(p) => menu_act(MAct::Path(p), windows, opened),
+        SAct::File(p) => {
+            open_file(windows, &p, *opened);
+            *opened += 1;
+        }
+        SAct::Reboot => menu_act(MAct::Reboot, windows, opened),
+        SAct::Shutdown => menu_act(MAct::Shutdown, windows, opened),
+        SAct::Calc => {}
+    }
+}
+
+fn open_search(desk: &mut Desk) {
+    desk.menu = None;
+    desk.notif_open = false;
+    desk.search = Some(Search { q: String::new(), sel: 0, res: search_results("") });
 }
 
 // ---------------- Bildirişnomalar ----------------
@@ -1724,6 +2056,34 @@ fn draw_notif_panel(desk: &Desk) {
         let tmw = gfx::text_width(tm, small() * 4 / 5);
         gfx::draw_text(x + w - u - tmw, iy + u / 3, tm, 0x6f7f95, small() * 4 / 5);
     }
+}
+
+/// Qidiruvga oid bosiş: natija — bajaradi, taşqarisi — yopadi, lupa — oçadi.
+fn search_click(desk: &mut Desk, windows: &mut Vec<Window>, cx: usize, cy: usize, opened: &mut usize) -> bool {
+    if let Some(s) = &desk.search {
+        let (x, y, w, h, row) = search_geo(s.res.len());
+        if cx >= x && cx < x + w && cy >= y && cy < y + h {
+            let bar = body() * 5 / 2;
+            if cy >= y + bar + body() / 4 {
+                let k = (cy - y - bar - body() / 4) / row;
+                if let Some((_, _, a)) = s.res.get(k).cloned() {
+                    desk.search = None;
+                    search_exec(a, windows, opened);
+                }
+            }
+            return true;
+        }
+        desk.search = None;
+        return true;
+    }
+    let (sw, _) = gfx::size();
+    let (bx, _) = bell_pos(sw);
+    let mx = bx.saturating_sub(small() * 3 / 2);
+    if cy < menubar_h() && cx + body() * 2 / 3 >= mx && cx <= mx + body() * 2 / 3 {
+        open_search(desk);
+        return true;
+    }
+    false
 }
 
 /// Bildirişnoma qatlamiga bosiş (toast, qoʻngʻiroq, panel). Bosildi — true.
@@ -3400,13 +3760,24 @@ fn keycode_char(code: u16, shift: bool) -> Option<char> {
     let c = match code {
         2..=11 => {
             let row = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
-            return Some(row[(code - 2) as usize]);
+            let sh = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'];
+            return Some(if shift { sh } else { row }[(code - 2) as usize]);
         }
+        12 => return Some(if shift { '_' } else { '-' }),
+        13 => return Some(if shift { '+' } else { '=' }),
+        26 => return Some(if shift { '{' } else { '[' }),
+        27 => return Some(if shift { '}' } else { ']' }),
+        39 => return Some(if shift { ':' } else { ';' }),
+        40 => return Some(if shift { '"' } else { '\'' }),
+        41 => return Some(if shift { '~' } else { '`' }),
+        43 => return Some(if shift { '|' } else { '\\' }),
+        51 => return Some(if shift { '<' } else { ',' }),
+        52 => return Some(if shift { '>' } else { '.' }),
+        53 => return Some(if shift { '?' } else { '/' }),
         16 => 'q', 17 => 'w', 18 => 'e', 19 => 'r', 20 => 't', 21 => 'y', 22 => 'u', 23 => 'i', 24 => 'o', 25 => 'p',
         30 => 'a', 31 => 's', 32 => 'd', 33 => 'f', 34 => 'g', 35 => 'h', 36 => 'j', 37 => 'k', 38 => 'l',
         44 => 'z', 45 => 'x', 46 => 'c', 47 => 'v', 48 => 'b', 49 => 'n', 50 => 'm',
         57 => ' ',
-        52 => '.', 51 => ',', 53 => '/', 12 => '-',
         _ => return None,
     };
     Some(if shift { c.to_ascii_uppercase() } else { c })

@@ -56,6 +56,20 @@ Quyidagi kadrlar animatsiya sekinlaştirilgan holda olingan:
 
 ![Animatsiya kadrlari](docs/animation.jpg)
 
+### Tezkor qidiruv (Alt+Space)
+
+<img src="docs/search.png" width="420" align="right">
+
+`Alt+Space` yoki menyu panelidagi lupa — bitta maydondan:
+- **ilovalar** (nomi böyiça),
+- **papka va fayllar** (uy papkasi içida, yöli bilan) — Enter mos ilovada oçadi,
+- **kalkulyator**: `12*(3+4)/2` → `= 42` (+ − × ÷, qavslar, kasrlar),
+- **tizim amallari**: qayta yuklaş, öçiriş.
+
+↑/↓ — tanlaş, Enter — oçiş, Esc — yopiş, siçqon bilan ham bosiladi.
+
+<br clear="right">
+
 ### Klaviatura yorliqlari va bildirişnomalar
 
 | Ilova almaştirgiç (Alt+Tab) | Bildirişnomalar markazi |
@@ -64,6 +78,7 @@ Quyidagi kadrlar animatsiya sekinlaştirilgan holda olingan:
 
 | Yorliq | Amal |
 |---|---|
+| `Alt+Space` | Tezkor qidiruv (ilova, fayl, hisob) |
 | `Alt+Tab` / `Alt+Shift+Tab` | Ilova almaştirgiç — Alt qoʻyib yuborilganda tanlangan oyna faollaşadi (yashirilgani ham) |
 | `Alt+W` | Faol oynani yopiş |
 | `Alt+M` | Faol oynani dokka yashiriş |
@@ -582,7 +597,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.16**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.17**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -618,5 +633,7 @@ bosqiç (etap) yakunlanganda kötariladi.
   va **oyna animatsiyalari** (oçiliş, yashiriş, qaytariş, kattalaştiriş).
 - 0.0.16 — **Klaviatura yorliqlari** (Alt+Tab almaştirgiç, Alt+W/M/F) va
   **bildirişnomalar** (toastlar + tarix paneli, `gui::notify` API).
+- 0.0.17 — **Tezkor qidiruv** (Alt+Space): ilovalar, fayllar, kalkulyator, tizim amallari;
+  klaviatura toʻliq US belgilari bilan (Shift+raqam, qavslar va h.k.).
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
