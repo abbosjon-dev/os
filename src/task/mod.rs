@@ -21,7 +21,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 pub type Pid = usize;
 
@@ -555,6 +555,7 @@ fn schedule() {
             })
         };
         let next = pick(true).or_else(|| pick(false)).unwrap_or(cpu);
+        CUR_IDLE[cpu].store(next < MAX_CPUS, Ordering::Relaxed);
 
         let next_task = s.tasks[next].as_mut().expect("vazifa yöq");
         next_task.state = State::Running;
@@ -587,9 +588,34 @@ pub extern "C" fn finish_switch() {
     }
 }
 
+// --- Protsessor yuklanişi (uziliş paytida namuna olinadi) ---
+static CUR_IDLE: [AtomicBool; MAX_CPUS] = [const { AtomicBool::new(true) }; MAX_CPUS];
+static LOAD_SAMPLES: AtomicU64 = AtomicU64::new(0);
+static LOAD_BUSY: AtomicU64 = AtomicU64::new(0);
+static LOAD_LAST: SpinLock<(u64, u64, u32)> = SpinLock::new((0, 0, 0));
+
+/// Oxirgi çaqiruvdan beri barça yadrolar böyiça band vaqt ulushi (0..=100).
+/// Har uzilişda (taymer 100 Hz × yadrolar) joriy vazifa böş (PID 0) yoki
+/// band ekani sanaladi.
+pub fn cpu_load() -> u32 {
+    let (s, b) = (LOAD_SAMPLES.load(Ordering::Relaxed), LOAD_BUSY.load(Ordering::Relaxed));
+    let mut last = LOAD_LAST.lock();
+    let (ds, db) = (s.wrapping_sub(last.0), b.wrapping_sub(last.1));
+    if ds >= 20 {
+        last.2 = (db * 100 / ds).min(100) as u32;
+        last.0 = s;
+        last.1 = b;
+    }
+    last.2
+}
+
 /// Taymer yoki boşqa uziliş tugagaç çaqiriladi (IRQ kontekstida).
 pub fn preempt() {
     if STARTED.load(Ordering::Acquire) {
+        LOAD_SAMPLES.fetch_add(1, Ordering::Relaxed);
+        if !CUR_IDLE[cpu_id()].load(Ordering::Relaxed) {
+            LOAD_BUSY.fetch_add(1, Ordering::Relaxed);
+        }
         schedule();
     }
 }

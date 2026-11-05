@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 mod aiff;
 mod flac;
 mod flac_test;
+mod kuy;
 mod mp3;
 mod mp3_tables;
 mod mp3_test;
@@ -22,6 +23,7 @@ mod wav;
 pub use sample_wav::SAMPLE_WAV;
 pub use mp3_test::MP3 as SAMPLE_MP3;
 pub use vorbis_test::OGG as SAMPLE_OGG;
+pub use kuy::KUY as SAMPLE_KUY;
 
 /// Dekodlangan övoz: namuna chastotasi, kanallar, i16 namunalar (interleaved).
 pub struct Clip {

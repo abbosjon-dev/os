@@ -740,6 +740,14 @@ fn login_screen() {
     let mut shift = false;
     let mut cx = sw / 2;
     let mut cy = sh / 2;
+    // Qulf ekrani foni: ish stoli rasmi, bir marta xiralashtirilgan
+    let bg = crate::image::decode(crate::wallpaper::JPG).map(|mut im| {
+        for p in im.px.iter_mut() {
+            let (r, g, b) = ((*p >> 16) & 0xff, (*p >> 8) & 0xff, *p & 0xff);
+            *p = ((r * 9 / 20) << 16) | ((g * 9 / 20) << 8) | (b * 10 / 20);
+        }
+        im
+    });
 
     loop {
         let g = login_geom(multi);
@@ -789,35 +797,53 @@ fn login_screen() {
             } else {
                 err = true;
                 accounts::forget(core::mem::take(&mut pass));
-                draw_login(&accts, sel, 0, err, cx, cy);
+                draw_login(&accts, sel, 0, err, cx, cy, &bg);
                 gfx::flush();
                 task::sleep_ms(500);
             }
         }
 
-        draw_login(&accts, sel, pass.len(), err, cx, cy);
+        draw_login(&accts, sel, pass.len(), err, cx, cy, &bg);
         gfx::flush();
         task::sleep_ms(16);
     }
 }
 
-fn draw_login(accts: &[accounts::Account], sel: usize, dots: usize, err: bool, cx: usize, cy: usize) {
-    let (sw, _sh) = gfx::size();
+fn draw_login(
+    accts: &[accounts::Account],
+    sel: usize,
+    dots: usize,
+    err: bool,
+    cx: usize,
+    cy: usize,
+    bg: &Option<crate::image::Image>,
+) {
+    let (sw, sh) = gfx::size();
     let u = body();
     let multi = accts.len() > 1;
     let g = login_geom(multi);
-    gradient(DESK_TOP, DESK_BOT);
-    gfx::draw_text_centered(sw / 2, g.cy - u * 3, "Zamin OS", OQ, u * 2);
+    if let Some(img) = bg {
+        gfx::blit_scaled(0, 0, sw, sh, img.w, img.h, &img.px);
+    } else {
+        gradient(DESK_TOP, DESK_BOT);
+    }
+    // Katta soat va sana (qulf ekrani)
+    let t = time::now();
+    let big = (u * 4).min(g.cy / 2);
+    gfx::draw_text_centered(sw / 2, g.cy.saturating_sub(big + u * 3), &alloc::format!("{:02}:{:02}", t.hour, t.minute), OQ, big);
+    let full = ["Duşanba", "Seşanba", "Çorşanba", "Payşanba", "Juma", "Şanba", "Yakşanba"][weekday_index(t.year, t.month, t.day)];
+    gfx::draw_text_centered(sw / 2, g.cy.saturating_sub(u * 5 / 2), &alloc::format!("{}, {}-{}", full, t.day, month_name(t.month)), 0xdbe3ee, small() * 6 / 5);
 
-    // Karta (soya + yumaloq shaffof panel)
+    // Karta (soya + shishasimon panel)
     gfx::shadow(g.cx, g.cy, g.cw, g.ch, radius() * 2, 12);
-    fill_round_rect_a(g.cx, g.cy, g.cw, g.ch, radius() * 2, 0x1a2538, 240);
-    gfx::round_outline(g.cx, g.cy, g.cw, g.ch, radius() * 2, 1, 0x31405c);
+    fill_round_rect_a(g.cx, g.cy, g.cw, g.ch, radius() * 2, 0x0f1622, 200);
+    gfx::round_outline(g.cx, g.cy, g.cw, g.ch, radius() * 2, 1, 0x3a4a66);
 
     // Avatar (doira + bosh harf)
     let acct = &accts[sel];
     let ar = u * 2;
-    gfx::fill_circle(sw / 2, g.avatar, ar, ZAMIN_KOK);
+    gfx::fill_circle(sw / 2, g.avatar, ar + 2, 0x58e06a);
+    gfx::fill_circle(sw / 2, g.avatar, ar, 0x1f8a46);
     let initial = acct.full_name.chars().next().unwrap_or('Z').to_uppercase().collect::<String>();
     gfx::draw_text_centered(sw / 2, g.avatar - ar * 2 / 3, &initial, OQ, ar * 4 / 3);
     gfx::draw_text_centered(sw / 2, g.avatar + ar + u / 2, &acct.full_name, OQ, u);
@@ -827,13 +853,13 @@ fn draw_login(accts: &[accounts::Account], sel: usize, dots: usize, err: bool, c
         for (i, a) in accts.iter().enumerate() {
             let ry = g.rows_y + i * g.row_h;
             let active = i == sel;
-            fill_round_rect(g.cx + u, ry, g.cw - u * 2, g.row_h - u / 4, g.row_h / 4, if active { ZAMIN_KOK } else { 0x263650 });
+            fill_round_rect(g.cx + u, ry, g.cw - u * 2, g.row_h - u / 4, g.row_h / 4, if active { 0x1f8a46 } else { 0x263650 });
             gfx::draw_text(g.cx + u * 2, ry + (g.row_h.saturating_sub(small())) / 2, &a.username, OQ, small());
         }
     } else {
         // Parol maydoni
-        let edge = if err { QIZIL } else { 0x3c5479 };
-        fill_round_rect(g.field_x, g.field_y, g.field_w, g.field_h, g.field_h / 2, 0x0e1a2c);
+        let edge = if err { QIZIL } else { 0x4a5d80 };
+        fill_round_rect_a(g.field_x, g.field_y, g.field_w, g.field_h, g.field_h / 2, 0x0a0f18, 210);
         gfx::round_outline(g.field_x, g.field_y, g.field_w, g.field_h, g.field_h / 2, 2, edge);
         let dotr = (u / 4).max(3);
         let step = dotr * 3;
@@ -850,9 +876,14 @@ fn draw_login(accts: &[accounts::Account], sel: usize, dots: usize, err: bool, c
         gfx::draw_text_centered(sw / 2, g.btn_y - u * 3 / 2, "Parol xato — qayta urining", QIZIL, small());
     }
 
-    // "Kiriş" tugmasi
-    fill_round_rect(g.btn_x, g.btn_y, g.btn_w, g.btn_h, g.btn_h / 2, ZAMIN_KOK);
-    gfx::draw_text_centered(g.btn_x + g.btn_w / 2, g.btn_y + (g.btn_h.saturating_sub(small())) / 2, "Kiriş →", OQ, small());
+    // "Kiriş" tugmasi (yashil + chevron)
+    fill_round_rect(g.btn_x, g.btn_y, g.btn_w, g.btn_h, g.btn_h / 2, 0x2fbf5f);
+    let lw = gfx::text_width("Kiriş", small());
+    let lx = g.btn_x + (g.btn_w.saturating_sub(lw + u)) / 2;
+    gfx::draw_text(lx, g.btn_y + (g.btn_h.saturating_sub(small())) / 2, "Kiriş", 0x06230f, small());
+    let (ax, ay) = ((lx + lw + u / 2) as f32, (g.btn_y + g.btn_h / 2) as f32);
+    let q = u as f32 / 4.0;
+    gfx::fill_poly(&[(ax, ay - q * 1.3), (ax + q * 1.3, ay), (ax, ay + q * 1.3)], 0x06230f);
 
     cursor(cx, cy);
 }
@@ -893,8 +924,10 @@ fn desktop() {
     let mut shift = false;
     let mut opened = 0;
     let mut last_sec = time::now().second;
+    let mut desk = Desk { menu: None, cal_off: 0, clip: None, playing: false, pos: 0, t: 0, cpu: task::cpu_load() };
+    let mut last_play_draw = 0u64;
 
-    draw(&windows, cx, cy, &wp);
+    draw(&windows, cx, cy, &wp, &desk);
     gfx::flush();
 
     loop {
@@ -903,7 +936,24 @@ fn desktop() {
         let sec = time::now().second;
         if sec != last_sec {
             last_sec = sec;
-            if windows.iter().any(|w| w.kind == Kind::Clock) {
+            // menyu soati, CPU halqasi va soat oynasi — har soniyada
+            desk.cpu = task::cpu_load();
+            changed = true;
+        }
+        // Vidjet pleeri
+        if desk.playing {
+            let now = crate::timer::uptime_ms();
+            let dt = now.wrapping_sub(desk.t) as u32;
+            desk.t = now;
+            desk.pos = desk.pos.saturating_add(dt);
+            let dur = desk.clip.as_ref().map(|c| c.duration_ms()).unwrap_or(0);
+            if desk.pos >= dur {
+                desk.pos = dur;
+                desk.playing = false;
+                changed = true;
+            }
+            if now.wrapping_sub(last_play_draw) >= 200 {
+                last_play_draw = now;
                 changed = true;
             }
         }
@@ -946,7 +996,11 @@ fn desktop() {
                 (input::EV_KEY, input::BTN_LEFT) => {
                     if e.value == 1 {
                         pressed = true;
-                        handle_click(&mut windows, cx, cy, sh, &mut drag, &mut opened);
+                        if !menu_click(&mut desk, &mut windows, cx, cy, &mut opened)
+                            && !handle_click(&mut windows, cx, cy, sh, &mut drag, &mut opened)
+                        {
+                            widget_click(&mut desk, sw, cx, cy);
+                        }
                     } else {
                         pressed = false;
                         drag = None;
@@ -954,6 +1008,10 @@ fn desktop() {
                     changed = true;
                 }
                 (input::EV_KEY, 42) | (input::EV_KEY, 54) => shift = e.value != 0,
+                (input::EV_KEY, 1) if e.value == 1 && desk.menu.is_some() => {
+                    desk.menu = None; // Esc — menyuni yopadi
+                    changed = true;
+                }
                 (input::EV_KEY, code) if e.value == 1 => {
                     if let Some(w) = windows.last_mut().filter(|w| w.kind.takes_keys()) {
                         type_key(w, code, shift);
@@ -980,7 +1038,7 @@ fn desktop() {
             changed = true;
         }
         if changed {
-            draw(&windows, cx, cy, &wp);
+            draw(&windows, cx, cy, &wp, &desk);
             gfx::flush();
         }
         task::sleep_ms(16);
@@ -1060,7 +1118,7 @@ fn save_notes(w: &Window) -> String {
     }
 }
 
-fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag: &mut Option<(usize, usize)>, opened: &mut usize) {
+fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag: &mut Option<(usize, usize)>, opened: &mut usize) -> bool {
     // Dok (pastdagi markazlashgan panel)?
     let (sw, _) = gfx::size();
     let (_, dy, _, _, icon, _) = dock_geom(sw, sh);
@@ -1070,28 +1128,28 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
             let _ = icon;
             if cx >= ix && cx < ix + isz && cy >= iy && cy < iy + isz {
                 match l.kind {
-                    Kind::Music => open_file(windows, "~/Musiqa/zamin.mp3", *opened),
+                    Kind::Music => open_file(windows, "~/Musiqa/kuy.mp3", *opened),
                     Kind::Video => open_file(windows, "~/Videolar/zamin.avi", *opened),
                     Kind::Code => windows.push(new_window(Kind::Editor, *opened)),
                     _ => windows.push(new_window(l.kind, *opened)),
                 }
                 *opened += 1;
-                return;
+                return true;
             }
         }
-        return;
+        return true;
     }
     // Yuqoridan (oxirgi = eng tepada) oynalarni tekşiramiz
     for i in (0..windows.len()).rev() {
         if windows[i].close_btn(cx, cy) {
             let mut w = windows.remove(i);
             close_terminal(&mut w);
-            return;
+            return true;
         }
         if windows[i].kind == Kind::Editor && windows[i].in_save_btn(cx, cy) {
             let msg = save_notes(&windows[i]);
             windows[i].cur = msg.into_bytes(); // holat xabari
-            return;
+            return true;
         }
         if windows[i].kind == Kind::Audio && windows[i].clip.is_some() && windows[i].in_play_btn(cx, cy) {
             let w = &mut windows[i];
@@ -1101,14 +1159,14 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
                 w.play_pos = 0; // oxirida — boşidan
             }
             audio_sync(w);
-            return;
+            return true;
         }
         if windows[i].title_bar(cx, cy) {
             let off = (cx - windows[i].x) | ((cy - windows[i].y) << 16);
             let w = windows.remove(i);
             windows.push(w); // old planga
             *drag = Some((windows.len() - 1, off));
-            return;
+            return true;
         }
         // Fayllar oynasida qator bosiş: papka — kiradi; fayl — oçadi
         if windows[i].kind == Kind::Files {
@@ -1121,7 +1179,7 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
                 let mut w = windows.remove(i);
                 load_dir(&mut w, &p);
                 windows.push(w);
-                return;
+                return true;
             }
             if let Some(row) = file_row_at(&windows[i], cx, cy) {
                 // Oynani old planga olib, keyin faollaştiramiz
@@ -1129,18 +1187,19 @@ fn handle_click(windows: &mut Vec<Window>, cx: usize, cy: usize, sh: usize, drag
                 windows.push(w);
                 let wi = windows.len() - 1;
                 files_activate(windows, wi, row, opened);
-                return;
+                return true;
             }
         }
         if windows[i].contains(cx, cy) {
             let w = windows.remove(i);
             windows.push(w); // old planga — fokus
-            return;
+            return true;
         }
     }
+    false
 }
 
-fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Image>) {
+fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Image>, desk: &Desk) {
     let (w, h) = gfx::size();
     gfx::reset_clip();
     // Fon: rasm (wallpaper) yoki gradient
@@ -1152,12 +1211,10 @@ fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Imag
         gradient_rect(0, mid, w, h - mid, 0x172a4a, 0x0a1320);
     }
 
-    // Vidjetlar (faqat oyna oçiq bölmasa — toza ish stoli)
-    if windows.is_empty() {
-        draw_widgets(w, h);
-    }
+    // Vidjetlar — ish stoli qatlamida (oynalar ularning ustida)
+    draw_widgets(w, h, desk);
 
-    draw_menubar(w);
+    draw_menubar(w, desk.menu);
 
     for (i, win) in windows.iter().enumerate() {
         let active = i == windows.len() - 1;
@@ -1166,11 +1223,38 @@ fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Imag
     gfx::reset_clip();
 
     draw_dock(w, h, cx, cy, windows);
+    if let Some(m) = desk.menu {
+        draw_menu(m, cx, cy);
+    }
     cursor(cx, cy);
 }
 
+const MENUS: [&str; 3] = ["Ilovalar", "Joylar", "Tizim"];
+
+/// Menyu sarlavhalarining x oraliqlari (çizilgan joy bilan bir xil).
+fn menubar_titles() -> [(usize, usize); 3] {
+    let mut x = body() + small() + body() / 2;
+    x += gfx::text_width("Zamin OS", small()) + body() * 3 / 2;
+    let mut out = [(0, 0); 3];
+    for (i, m) in MENUS.iter().enumerate() {
+        let w = gfx::text_width(m, small());
+        out[i] = (x, x + w);
+        x += w + body() * 5 / 4;
+    }
+    out
+}
+
+/// Menyu sarlavhasi bosildimi?
+fn menubar_title_at(cx: usize, cy: usize) -> Option<usize> {
+    if cy >= menubar_h() {
+        return None;
+    }
+    let pad = body() / 2;
+    menubar_titles().iter().position(|&(a, b)| cx + pad >= a && cx < b + pad)
+}
+
 /// Yuqori menyu paneli (shaffof): logo, menyular, holat belgilari, sana.
-fn draw_menubar(w: usize) {
+fn draw_menubar(w: usize, open: Option<usize>) {
     let mb = menubar_h();
     fill_round_rect_a(0, 0, w, mb, 0, 0x0b1424, 150);
     fill_rect(0, mb - 1, w, 1, 0x1f2c42);
@@ -1180,11 +1264,12 @@ fn draw_menubar(w: usize) {
     let ls = small();
     menu_logo(x, (mb.saturating_sub(ls)) / 2, ls);
     x += ls + body() / 2;
-    x = gfx::draw_text(x, ty, "Zamin OS", 0xf2f6fc, small());
-    x += body() * 3 / 2;
-    for m in ["Ilovalar", "Joylar", "Tizim"] {
-        x = gfx::draw_text(x, ty, m, 0xcdd7e6, small());
-        x += body() * 5 / 4;
+    gfx::draw_text(x, ty, "Zamin OS", 0xf2f6fc, small());
+    for (i, &(a, b)) in menubar_titles().iter().enumerate() {
+        if open == Some(i) {
+            fill_round_rect_a(a - body() / 2, 3, b - a + body(), mb - 6, body() / 3, 0xffffff, 46);
+        }
+        gfx::draw_text(a, ty, MENUS[i], 0xe1e8f2, small());
     }
     // Öng tomon: holat belgilari + sana
     let t = time::now();
@@ -1280,34 +1365,79 @@ fn status_battery(cx: usize, cy: usize, s: usize) {
     gfx::fill_round_rect(x + s / 10, y + s / 10, bw - s / 5, bh - s / 5, bh / 6, 0x34c759);
 }
 
-/// Öng tomondagi vidjetlar paneli: ob-havo, kalendar, pleer, tizim halqalari.
-fn draw_widgets(w: usize, _h: usize) {
+/// Ish stoli holati: oçiq menyu, kalendar siljişi, vidjet pleeri, CPU.
+struct Desk {
+    menu: Option<usize>,
+    cal_off: i32,
+    clip: Option<crate::audio::Clip>,
+    playing: bool,
+    pos: u32,
+    t: u64,
+    cpu: u32,
+}
+
+/// Vidjetlar geometriyasi: (px, pw, [y, h] × 4: ob-havo, kalendar, pleer, tizim).
+fn widget_geo(w: usize) -> (usize, usize, [(usize, usize); 4]) {
     let u = body();
     let pw = (w / 4).clamp(u * 15, u * 20);
     let px = w.saturating_sub(pw + u);
-    let mut py = menubar_h() + u;
     let gap = u * 3 / 4;
+    let hs = [u * 7, u * 9, u * 5, u * 6];
+    let mut y = menubar_h() + u;
+    let mut out = [(0, 0); 4];
+    for i in 0..4 {
+        out[i] = (y, hs[i]);
+        y += hs[i] + gap;
+    }
+    (px, pw, out)
+}
+
+/// Kalendar siljişidan (yil, oy).
+fn cal_month(off: i32) -> (u64, u64) {
+    let t = time::now();
+    let m0 = t.year as i64 * 12 + (t.month as i64 - 1) + off as i64;
+    ((m0 / 12) as u64, (m0 % 12) as u64 + 1)
+}
+
+/// Pleer vidjeti tugmalari: (oldingi, ijro, keyingi) markazlari, y va radius.
+fn music_buttons(px: usize, my: usize, mh: usize) -> ([usize; 3], usize, usize) {
+    let u = body();
+    let tx = px + u + (mh - u * 2) + u;
+    let by = my + mh - u * 3 / 2;
+    ([tx + u / 2, tx + u * 2, tx + u * 7 / 2], by, u * 3 / 5)
+}
+
+/// Öng tomondagi vidjetlar paneli: ob-havo, kalendar, pleer, tizim halqalari.
+fn draw_widgets(w: usize, _h: usize, desk: &Desk) {
+    let u = body();
+    let (px, pw, g) = widget_geo(w);
 
     // --- Ob-havo ---
-    let wh = u * 7;
+    let (py, wh) = g[0];
     widget_card(px, py, pw, wh);
     gfx::draw_text(px + u, py + u, "Toşkent", 0xeaf0f8, small());
     gfx::fill_circle(px + pw - u * 3 / 2, py + u * 5 / 4, (u / 4).max(2), 0x8ab4ff);
-    // bulut + quyoş
     gfx::fill_circle(px + u * 2, py + u * 3, u * 4 / 5, 0xffd36b);
     gfx::fill_round_rect(px + u * 3 / 2, py + u * 3, u * 2, u, u / 2, 0xe7edf6);
-    // harorat (katta)
     gfx::draw_text(px + u * 9 / 2, py + u * 9 / 5, "16°", 0xffffff, u * 2);
     gfx::draw_text(px + u, py + u * 9 / 2, "Qisman bulutli", 0xaebccf, small());
     gfx::draw_text(px + u, py + u * 11 / 2, "H:19°   L:9°", 0x8ea0b6, small() * 9 / 10);
-    py += wh + gap;
 
-    // --- Kalendar ---
-    let t = time::now();
-    let ch = u * 9;
+    // --- Kalendar (oylar almaşadi) ---
+    let (py, ch) = g[1];
     widget_card(px, py, pw, ch);
-    let title = alloc::format!("{} {}", month_name(t.month), t.year);
+    let (cy_, cm) = cal_month(desk.cal_off);
+    let today = time::now();
+    let title = alloc::format!("{} {}", month_name(cm), cy_);
     gfx::draw_text(px + u, py + u * 2 / 3, &title, 0xeaf0f8, small());
+    // ‹ › tugmalari
+    let ay = py + u;
+    for (k, ax) in [px + pw - u * 3, px + pw - u * 3 / 2].iter().enumerate() {
+        let d = if k == 0 { -1.0f32 } else { 1.0 };
+        let (fx, fy) = (*ax as f32, ay as f32);
+        let q = u as f32 / 4.0;
+        gfx::fill_poly(&[(fx - d * q, fy - q * 1.4), (fx - d * q, fy + q * 1.4), (fx + d * q, fy)], 0xaebccf);
+    }
     let cols = 7;
     let cellw = (pw - u) / cols;
     let hdr = ["Du", "Se", "Ço", "Pa", "Ju", "Şa", "Ya"];
@@ -1315,26 +1445,24 @@ fn draw_widgets(w: usize, _h: usize) {
     for (i, d) in hdr.iter().enumerate() {
         gfx::draw_text_centered(px + u / 2 + i * cellw + cellw / 2, gy0, d, 0x7f8ea3, small() * 4 / 5);
     }
-    let first = weekday_index(t.year, t.month, 1);
-    let dim = days_in_month(t.year, t.month);
+    let first = weekday_index(cy_, cm, 1);
+    let dim = days_in_month(cy_, cm);
     let cellh = (ch - (gy0 - py) - u / 2) / 6;
     for d in 1..=dim {
         let idx = first + (d as usize - 1);
-        let row = idx / 7;
-        let col = idx % 7;
+        let (row, col) = (idx / 7, idx % 7);
         let cxp = px + u / 2 + col * cellw + cellw / 2;
         let cyp = gy0 + small() + u / 2 + row * cellh;
-        let today = d == t.day;
-        if today {
+        let is_today = desk.cal_off == 0 && d == today.day;
+        if is_today {
             gfx::fill_circle(cxp, cyp, (cellh / 2).min(cellw / 2), 0x34c759);
         }
-        let col_txt = if today { 0x06230f } else { 0xd3dcea };
+        let col_txt = if is_today { 0x06230f } else if col >= 5 { 0x8ea0b6 } else { 0xd3dcea };
         gfx::draw_text_centered(cxp, cyp.saturating_sub(small() / 2), &alloc::format!("{}", d), col_txt, small() * 4 / 5);
     }
-    py += ch + gap;
 
     // --- Pleer ---
-    let mh = u * 5;
+    let (py, mh) = g[2];
     widget_card(px, py, pw, mh);
     let asz = mh - u * 2;
     gradient_round_rect(px + u, py + u, asz, asz, u / 3, 0xff8a3d, 0x7a3cff);
@@ -1342,37 +1470,60 @@ fn draw_widgets(w: usize, _h: usize) {
     gfx::fill_circle(nc - asz / 8, ny + asz / 6, asz / 9, OQ);
     fill_rect(nc - asz / 8 + asz / 9 - 2, ny - asz / 4, (asz / 18).max(2), asz * 5 / 12, OQ);
     fill_rect(nc - asz / 8 + asz / 9 - 2, ny - asz / 4, asz / 4, (asz / 14).max(2), OQ);
-    let tx = px + u + (mh - u * 2) + u;
-    gfx::draw_text(tx, py + u * 3 / 2, "Zamin", 0xffffff, small());
-    gfx::draw_text(tx, py + u * 3 / 2 + small() + u / 4, "Anʼanaviy musiqa", 0xaebccf, small() * 9 / 10);
-    // tugmalar
-    let by = py + mh - u * 3 / 2;
-    gfx::fill_circle(tx + small() * 3, by, u * 3 / 5, 0x34c759);
-    let pc = tx + small() * 3;
-    for i in 0..(u * 3 / 5) {
-        let hh = (u * 3 / 5 - i) * 2 / 3;
-        fill_rect(pc - u / 5 + i / 2, by.saturating_sub(hh / 2), 1, hh.max(1), 0x06230f);
+    let tx = px + u + asz + u;
+    gfx::draw_text(tx, py + u * 2 / 3, "Zamin kuyi", 0xffffff, small());
+    gfx::draw_text(tx, py + u * 2 / 3 + small() + u / 4, "Anʼanaviy musiqa", 0xaebccf, small() * 9 / 10);
+    let (bx, by, br) = music_buttons(px, py, mh);
+    // oldingi / keyingi
+    for (k, cxb) in [bx[0], bx[2]].iter().enumerate() {
+        let d = if k == 0 { -1.0f32 } else { 1.0 };
+        let (fx, fy) = (*cxb as f32, by as f32);
+        let q = br as f32 * 0.55;
+        gfx::fill_poly(&[(fx - d * q, fy - q), (fx - d * q, fy + q), (fx + d * q * 0.6, fy)], 0xdbe3ee);
+        fill_rect((fx + d * q * 0.6 - if d > 0.0 { 0.0 } else { 2.0 }) as usize, (fy - q) as usize, 2, (q * 2.0) as usize, 0xdbe3ee);
     }
-    py += mh + gap;
+    gfx::fill_circle(bx[1], by, br, 0x34c759);
+    if desk.playing {
+        fill_rect(bx[1] - br / 3, by - br / 2, br / 4, br, 0x06230f);
+        fill_rect(bx[1] + br / 8, by - br / 2, br / 4, br, 0x06230f);
+    } else {
+        let t = br * 2 / 5;
+        gfx::fill_poly(
+            &[((bx[1] - t / 2) as f32, (by - t) as f32), ((bx[1] + t) as f32, by as f32), ((bx[1] - t / 2) as f32, (by + t) as f32)],
+            0x06230f,
+        );
+    }
+    // progress
+    let dur = desk.clip.as_ref().map(|c| c.duration_ms()).unwrap_or(0);
+    let pbx = bx[2] + br + u;
+    let pbw = (px + pw).saturating_sub(pbx + u);
+    gfx::fill_round_rect(pbx, by - 2, pbw, 4, 2, 0x2a3346);
+    if dur > 0 {
+        let pw2 = (desk.pos.min(dur) as usize * pbw / dur as usize).max(4);
+        gfx::fill_round_rect(pbx, by - 2, pw2, 4, 2, 0x34c759);
+    }
 
-    // --- Tizim halqalari ---
-    let sh2 = u * 6;
+    // --- Tizim halqalari (haqiqiy: CPU — rejalaştiruvçi namunalari, RAM — sahifalar, Disk — ZaminFS bloklari) ---
+    let (py, sh2) = g[3];
     widget_card(px, py, pw, sh2);
     let (free_p, total_p) = crate::memory::frame::stats();
     let used_p = total_p.saturating_sub(free_p);
     let ram_pct = if total_p > 0 { (used_p * 100 / total_p) as u32 } else { 0 };
-    let total_mb = total_p * 4 / 1024;
     let used_mb = used_p * 4 / 1024;
-    let up = crate::timer::uptime_ms();
-    let cpu_pct = (8 + (up / 700) % 11) as u32;
-    let disk_pct = 23u32;
+    let (_, _, dused, dtotal) = crate::fs::zaminfs::state();
+    let (disk_pct, disk_lbl) = if dtotal > 0 {
+        let mb = dused as usize * crate::fs::zaminfs::BLOCK / (1024 * 1024);
+        ((dused as u64 * 100 / dtotal as u64) as u32, alloc::format!("{}MB", mb.max(1)))
+    } else {
+        (0, String::from("—"))
+    };
     let ry = py + sh2 / 2 - u / 3;
     let rr = (pw / 8).min(sh2 / 3);
     let slot = pw / 3;
     let rings = [
-        (slot / 2, cpu_pct, 0x34c759, alloc::format!("{}%", cpu_pct), "CPU"),
+        (slot / 2, desk.cpu, 0x34c759, alloc::format!("{}%", desk.cpu), "CPU"),
         (slot + slot / 2, ram_pct, 0x2f9bff, alloc::format!("{}MB", used_mb), "RAM"),
-        (slot * 2 + slot / 2, disk_pct, 0xb06bff, alloc::format!("{}%", disk_pct), "Disk"),
+        (slot * 2 + slot / 2, disk_pct, 0xb06bff, disk_lbl, "Disk"),
     ];
     for (ox, pct, col, val, lab) in rings {
         let cxp = px + ox;
@@ -1380,7 +1531,238 @@ fn draw_widgets(w: usize, _h: usize) {
         gfx::draw_text_centered(cxp, ry.saturating_sub(small() * 3 / 5), &val, 0xffffff, small() * 4 / 5);
         gfx::draw_text_centered(cxp, py + sh2 - small() - u / 3, lab, 0x9fb0c3, small() * 4 / 5);
     }
-    let _ = (used_mb, total_mb);
+}
+
+/// Vidjetlarga bosiş (kalendar ‹ ›, pleer tugmalari). Bosildi — true.
+fn widget_click(desk: &mut Desk, sw: usize, cx: usize, cy: usize) -> bool {
+    let u = body();
+    let (px, pw, g) = widget_geo(sw);
+    let near = |x: usize, y: usize, r: usize| {
+        let (dx, dy) = (cx as isize - x as isize, cy as isize - y as isize);
+        ((dx * dx + dy * dy) as usize) <= r * r
+    };
+    let (cyy, _) = g[1];
+    if near(px + pw - u * 3, cyy + u, u * 3 / 4) {
+        desk.cal_off -= 1;
+        return true;
+    }
+    if near(px + pw - u * 3 / 2, cyy + u, u * 3 / 4) {
+        desk.cal_off += 1;
+        return true;
+    }
+    if near(px + pw / 2, cyy + u, u) && desk.cal_off != 0 {
+        desk.cal_off = 0; // sarlavhani bosiş — bugungi oyga qaytiş
+        return true;
+    }
+    let (my, mh) = g[2];
+    let (bx, by, br) = music_buttons(px, my, mh);
+    if near(bx[1], by, br + 4) {
+        if desk.clip.is_none() {
+            desk.clip = crate::audio::decode("kuy.mp3", crate::audio::SAMPLE_KUY);
+        }
+        if let Some(c) = &desk.clip {
+            let dur = c.duration_ms();
+            if desk.pos >= dur {
+                desk.pos = 0;
+            }
+            desk.playing = !desk.playing;
+            desk.t = crate::timer::uptime_ms();
+            if desk.playing {
+                crate::audio::sound::play(&c.samples, c.rate, c.channels, desk.pos);
+            } else {
+                crate::audio::sound::stop();
+            }
+        }
+        return true;
+    }
+    if near(bx[0], by, br + 4) || near(bx[2], by, br + 4) {
+        // boşiga (keyingi — yagona kuy bölgani uçun ham boşiga)
+        desk.pos = 0;
+        desk.t = crate::timer::uptime_ms();
+        if let (true, Some(c)) = (desk.playing, &desk.clip) {
+            crate::audio::sound::play(&c.samples, c.rate, c.channels, 0);
+        }
+        return true;
+    }
+    false
+}
+
+// ---------------- Oçiladigan menyular ----------------
+
+#[derive(Clone)]
+enum MAct {
+    Open(Kind),
+    Path(String),
+    Reboot,
+    Shutdown,
+    Sep,
+}
+
+fn menu_items(i: usize) -> Vec<(String, MAct)> {
+    let s = |t: &str| String::from(t);
+    match i {
+        0 => alloc::vec![
+            (s("Terminal"), MAct::Open(Kind::Terminal)),
+            (s("Fayllar"), MAct::Open(Kind::Files)),
+            (s("Matn muharriri"), MAct::Open(Kind::Editor)),
+            (s("Soat"), MAct::Open(Kind::Clock)),
+            (s("Sep"), MAct::Sep),
+            (s("Musiqa"), MAct::Open(Kind::Music)),
+            (s("Video"), MAct::Open(Kind::Video)),
+            (s("Rasmlar"), MAct::Open(Kind::Image)),
+            (s("Brauzer"), MAct::Open(Kind::Browser)),
+            (s("Sep"), MAct::Sep),
+            (s("Sozlamalar"), MAct::Open(Kind::Settings)),
+        ],
+        1 => {
+            let mut v = alloc::vec![(s("Uy"), MAct::Path(s("~"))), (s("Sep"), MAct::Sep)];
+            let mut dirs: Vec<String> =
+                fs::list("~").unwrap_or_default().into_iter().filter(|e| e.is_dir).map(|e| e.name).collect();
+            dirs.sort();
+            for d in dirs {
+                let p = alloc::format!("~/{}", d);
+                v.push((d, MAct::Path(p)));
+            }
+            v.push((s("Sep"), MAct::Sep));
+            v.push((s("Kompyuter (/)"), MAct::Path(s("/"))));
+            v
+        }
+        _ => alloc::vec![
+            (s("Zamin OS haqida"), MAct::Open(Kind::About)),
+            (s("Sozlamalar"), MAct::Open(Kind::Settings)),
+            (s("Sep"), MAct::Sep),
+            (s("Qayta yuklaş…"), MAct::Reboot),
+            (s("Öçiriş…"), MAct::Shutdown),
+        ],
+    }
+}
+
+/// Menyu joylaşuvi: (x, y, kenglik, [(y0, y1, nom, amal)]).
+fn menu_layout(i: usize) -> (usize, usize, usize, Vec<(usize, usize, String, MAct)>) {
+    let u = body();
+    let items = menu_items(i);
+    let w = items
+        .iter()
+        .filter(|(_, a)| !matches!(a, MAct::Sep))
+        .map(|(n, _)| gfx::text_width(n, small()))
+        .max()
+        .unwrap_or(0)
+        .max(u * 7)
+        + u * 3;
+    let x = menubar_titles()[i].0.saturating_sub(u / 2);
+    let y = menubar_h() + 3;
+    let mut yy = y + u / 3;
+    let mut out = Vec::new();
+    for (n, a) in items {
+        let h = if matches!(a, MAct::Sep) { u / 2 } else { u * 3 / 2 };
+        out.push((yy, yy + h, n, a));
+        yy += h;
+    }
+    (x, y, w, out)
+}
+
+fn menu_kind_color(k: Kind) -> Color {
+    match k {
+        Kind::Editor => 0x4aa3df,
+        Kind::Clock => 0xff9f0a,
+        Kind::Terminal => 0x5b6b82,
+        _ => LAUNCHERS.iter().find(|l| l.kind == k).map(|l| l.color).unwrap_or(0x8a93a6),
+    }
+}
+
+/// Oçiq menyuni chizadi (siçqon ostidagi band ajratiladi).
+fn draw_menu(i: usize, cx: usize, cy: usize) {
+    let u = body();
+    let (x, y, w, items) = menu_layout(i);
+    let h = items.last().map(|it| it.1).unwrap_or(y) + u / 3 - y;
+    gfx::shadow(x, y, w, h, u / 2, 10);
+    fill_round_rect_a(x, y, w, h, u / 2, 0x1a2131, 245);
+    gfx::round_outline(x, y, w, h, u / 2, 1, 0x34405a);
+    for (y0, y1, name, act) in &items {
+        if matches!(act, MAct::Sep) {
+            fill_rect(x + u / 2, (y0 + y1) / 2, w - u, 1, 0x34405a);
+            continue;
+        }
+        let hover = cx >= x && cx < x + w && cy >= *y0 && cy < *y1;
+        if hover {
+            fill_round_rect_a(x + u / 4, *y0, w - u / 2, y1 - y0, u / 3, 0x2f88ff, 230);
+        }
+        let ty = y0 + (y1 - y0 - small()) / 2;
+        let isz = small() * 4 / 5;
+        let iy = y0 + (y1 - y0 - isz) / 2;
+        let ix = x + u * 2 / 3;
+        match act {
+            MAct::Open(k) => gfx::fill_round_rect(ix, iy, isz, isz, isz / 4, menu_kind_color(*k)),
+            MAct::Path(_) => {
+                gfx::fill_round_rect(ix, iy + isz / 8, isz * 2 / 5, isz / 4, isz / 10, 0x62adff);
+                gfx::fill_round_rect(ix, iy + isz / 4, isz, isz * 3 / 4, isz / 6, 0x62adff);
+            }
+            MAct::Reboot | MAct::Shutdown => {
+                gfx::fill_circle(ix + isz / 2, iy + isz / 2, isz / 2, if matches!(act, MAct::Shutdown) { 0xff453a } else { 0xff9f0a });
+            }
+            MAct::Sep => {}
+        }
+        gfx::draw_text(ix + isz + u / 2, ty, name, if hover { OQ } else { 0xe1e8f2 }, small());
+    }
+}
+
+/// Menyuga oid bosişni qayta işlaydi. Bosiş menyuga tegişli bölsa — true.
+fn menu_click(desk: &mut Desk, windows: &mut Vec<Window>, cx: usize, cy: usize, opened: &mut usize) -> bool {
+    if let Some(i) = desk.menu {
+        let (x, _, w, items) = menu_layout(i);
+        if cx >= x && cx < x + w {
+            if let Some((_, _, _, act)) = items.iter().find(|it| cy >= it.0 && cy < it.1) {
+                let act = act.clone();
+                if matches!(act, MAct::Sep) {
+                    return true; // ajratgiçni bosiş — menyu oçiq qoladi
+                }
+                desk.menu = None;
+                menu_act(act, windows, opened);
+                return true;
+            }
+        }
+        desk.menu = match menubar_title_at(cx, cy) {
+            Some(t) if t != i => Some(t),
+            _ => None,
+        };
+        return true;
+    }
+    if let Some(t) = menubar_title_at(cx, cy) {
+        desk.menu = Some(t);
+        return true;
+    }
+    false
+}
+
+fn menu_act(act: MAct, windows: &mut Vec<Window>, opened: &mut usize) {
+    match act {
+        MAct::Open(Kind::Music) => open_file(windows, "~/Musiqa/kuy.mp3", *opened),
+        MAct::Open(Kind::Video) => open_file(windows, "~/Videolar/zamin.avi", *opened),
+        MAct::Open(k) => windows.push(new_window(k, *opened)),
+        MAct::Path(p) => {
+            let mut w = new_window(Kind::Files, *opened);
+            load_dir(&mut w, &p);
+            windows.push(w);
+        }
+        MAct::Reboot | MAct::Shutdown => {
+            let off = matches!(act, MAct::Shutdown);
+            let (w, h) = gfx::size();
+            gradient_rect(0, 0, w, h, 0x101826, 0x05080d);
+            zamin_logo(w / 2, h / 2 - body() * 3, body() * 4);
+            let msg = if off { "Öçirilmoqda…" } else { "Qayta yuklanmoqda…" };
+            gfx::draw_text_centered(w / 2, h / 2, msg, 0xdbe3ee, body());
+            gfx::flush();
+            let _ = fs::commit();
+            crate::audio::sound::stop();
+            if off {
+                crate::power::shutdown();
+            } else {
+                crate::power::reboot();
+            }
+        }
+        MAct::Sep => {}
+    }
+    *opened += 1;
 }
 
 /// Vidjet karti foni (shaffof, yumaloq).
@@ -1751,10 +2133,6 @@ fn big_icon(kind: FKind, name: &str, x: usize, y: usize, s: usize) {
     }
 }
 
-/// Fayl turi ikonasi (kiçik).
-fn file_icon(kind: FKind, x: usize, y: usize, s: usize) {
-    big_icon(kind, "", x, y, s);
-}
 
 /// Rasm oynasi: dekodlangan rasmni (yoki harakatli kadrni) nisbat saqlab körsatadi.
 fn draw_image(win: &Window) {

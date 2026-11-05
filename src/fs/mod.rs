@@ -394,13 +394,14 @@ pub fn setup_home(username: &str, uid: u32) -> Result<String, FsError> {
     let pics = v.child(home, Role::Pictures.names()[lang]).ok();
     let music = v.child(home, Role::Music.names()[lang]).ok();
     let videos = v.child(home, Role::Videos.names()[lang]).ok();
-    let seeds: [(Option<NodeId>, &str, &[u8]); 7] = [
+    let seeds: [(Option<NodeId>, &str, &[u8]); 8] = [
         (pics, "zamin.png", crate::image::SAMPLE_PNG),
         (pics, "zamin.svg", crate::image::SAMPLE_SVG),
         (pics, "zamin.gif", crate::image::SAMPLE_GIF),
         (music, "zamin.wav", crate::audio::SAMPLE_WAV),
         (music, "zamin.mp3", &crate::audio::SAMPLE_MP3),
         (music, "zamin.ogg", &crate::audio::SAMPLE_OGG),
+        (music, "kuy.mp3", crate::audio::SAMPLE_KUY),
         (videos, "zamin.avi", &crate::video::SAMPLE_AVI),
     ];
     for (dir, name, bytes) in seeds {

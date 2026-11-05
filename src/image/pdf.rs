@@ -56,14 +56,13 @@ fn scan_objects(d: &[u8]) -> Vec<Obj> {
     while i < d.len() {
         if let Some(p) = find(d, b" obj", i) {
             // raqam G obj — orqaga raqamni öqiymiz
-            let mut j = p;
             // " obj" dan oldin: generation va obj number
             // Oldingi ikki sonni topamiz
             let head_start = line_start_scan(d, p);
             let head = &d[head_start..p];
             let nums: Vec<u32> = core::str::from_utf8(head).unwrap_or("").split_whitespace().filter_map(|t| t.parse().ok()).collect();
             let id = nums.first().copied().unwrap_or(0);
-            j = p + 4;
+            let j = p + 4;
             // endobj ni topamiz
             let end = find(d, b"endobj", j).unwrap_or(d.len());
             let body = d[j..end].to_vec();

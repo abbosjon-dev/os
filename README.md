@@ -18,6 +18,24 @@ tomonda vidjetlar — ob-havo, kalendar, musiqa pleeri va tizim halqalari
 
 ![Bir neçta oyna](docs/showcase.png)
 
+### Menyular va interaktiv vidjetlar
+
+![Menyular va vidjetlar](docs/menus.png)
+
+- **Ilovalar / Joylar / Tizim** — oçiladigan menyular (siçqon ostidagi band ajratiladi,
+  Esc yopadi). *Joylar* uy papkalarini Fayllar oynasida oçadi; *Tizim* — haqida,
+  sozlamalar, **qayta yuklaş** va **öçiriş** (avval diskka saqlanadi).
+- **Kalendar** — ‹ › bilan oylar almaşadi (sarlavhani bosiş — bugungi oyga qaytiş).
+- **Pleer** — haqiqiy kuyni (MP3, öz dekoderimiz) chaladi: ijro/pauza, boşiga, progress.
+- **Tizim halqalari haqiqiy:** CPU — rejalaştiruvçi har uzilişda band/böş vazifani
+  sanaydi; RAM — fizik sahifalar; Disk — ZaminFS band bloklari.
+
+### Qulf ekrani
+
+![Qulf ekrani](docs/lockscreen.png)
+
+Fon rasmi (xiralashtirilgan), katta soat va toʻliq sana, shishasimon kiriş kartasi.
+
 ### Ilovalar
 
 | Fayllar | Terminal |
@@ -519,7 +537,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.12**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.13**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -545,5 +563,9 @@ bosqiç (etap) yakunlanganda kötariladi.
   Terminal (rangli prompt, blok kursor), Matn muharriri (qator raqamlari), Soat
   (analog siferblat), Musiqa pleeri (muqova + toʻlqin), Sozlamalar, Brauzer, Savat,
   Haqida (Zamin logosi). UI matnlari yangi alifboda.
+- 0.0.13 — **Menyular va interaktiv vidjetlar**: Ilovalar/Joylar/Tizim oçiladigan
+  menyulari (qayta yuklaş/öçiriş bilan), kalendarda oylar almaşadi, pleer haqiqiy
+  kuyni chaladi ("Zamin kuyi", Karplus-Strong sintezi), CPU/Disk halqalari haqiqiy
+  oʻlçovlardan; yangi qulf ekrani (fon rasmi + soat).
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

@@ -1139,7 +1139,7 @@ fn decode_full(d: &[u8]) -> Option<Clip> {
             }
         }
         // coupling: bo'sh kanallarni qayta yoqish
-        let mut really_zero = zero_channel.clone();
+        let really_zero = zero_channel.clone();
         for &(mag, ang) in &map.coupling {
             if !zero_channel[mag] || !zero_channel[ang] {
                 zero_channel[mag] = false;
