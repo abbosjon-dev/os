@@ -35,6 +35,7 @@ pub use sample_gif::SAMPLE_GIF;
 pub use sample_svg::SAMPLE_SVG;
 
 /// Dekodlangan rasm.
+#[derive(Clone)]
 pub struct Image {
     pub w: usize,
     pub h: usize,

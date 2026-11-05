@@ -56,6 +56,21 @@ Quyidagi kadrlar animatsiya sekinlaştirilgan holda olingan:
 
 ![Animatsiya kadrlari](docs/animation.jpg)
 
+### Sozlamalar: fon rasmi va asosiy rang
+
+![Aurora fon + binafşa rang: ish stoli va qulf ekrani](docs/themes.jpg)
+
+Sozlamalar → **Ekran**: 4 ta fon (Zamin manzarasi — foto; **Tun**, **Aurora**, **Şafaq** —
+OS içida protsedural chiziladi, istalgan ekran ölçamida) va 6 ta **asosiy rang**
+(menyu, qidiruv, yon panellar, tanlovlar uçun). Tanlov darhol qöllanadi, **diskka
+saqlanadi** (`fon=`, `rang=`) va qayta yuklaşdan keyin ham — qulf ekranida ham — qoladi.
+
+Boşqa bölimlar haqiqiy tizim maʼlumotini körsatadi: **Tarmoq** (virtio-net, DHCP, IP,
+şlyuz, DNS, MAC), **Övoz** (qurilma va dekoderlar), **Foydalanuvçilar**, **Xavfsizlik**
+(W^X, PAN, KASLR, disk şifrlaş…), **Umumiy** (versiya, xotira, ish vaqti).
+
+<img src="docs/settings-network.png" width="480">
+
 ### Tezkor qidiruv (Alt+Space)
 
 <img src="docs/search.png" width="420" align="right">
@@ -597,7 +612,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.17**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.18**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -635,5 +650,7 @@ bosqiç (etap) yakunlanganda kötariladi.
   **bildirişnomalar** (toastlar + tarix paneli, `gui::notify` API).
 - 0.0.17 — **Tezkor qidiruv** (Alt+Space): ilovalar, fayllar, kalkulyator, tizim amallari;
   klaviatura toʻliq US belgilari bilan (Shift+raqam, qavslar va h.k.).
+- 0.0.18 — **Jonli Sozlamalar**: fon rasmi (foto + 3 protsedural) va asosiy rang tanlaş,
+  diskka saqlaş; Tarmoq/Övoz/Foydalanuvçilar/Xavfsizlik bölimlari haqiqiy maʼlumot bilan.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

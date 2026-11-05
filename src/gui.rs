@@ -156,6 +156,7 @@ struct Window {
     side: Vec<String>,  // Fayllar: yon panel papkalari (uy papkasidagi)
     thumbs: Vec<Option<crate::image::Image>>, // Fayllar: rasm eskizlari (rows bilan bir xil tartibda)
     id: usize,          // yagona raqam (animatsiya uçun)
+    tab: usize,         // Sozlamalar: tanlangan bölim
     hidden: bool,       // dokka yashirilgan (sariq tugma)
     saved: Option<(usize, usize, usize, usize)>, // kattalashtirişdan oldingi (x, y, w, h)
 }
@@ -314,6 +315,7 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         side: Vec::new(),
         thumbs: Vec::new(),
         id: NEXT_WIN_ID.fetch_add(1, Ordering::Relaxed),
+        tab: 0,
         hidden: false,
         saved: None,
     }
@@ -406,15 +408,15 @@ fn new_window(kind: Kind, n: usize) -> Window {
             ])
         }
         Kind::Settings => {
-            let (w, h) = (u * 27, u * 18);
+            let (w, h) = (u * 34, u * 27);
             let (x, y) = place(w, h);
-            base(x, y, w, h, kind, String::from("Sozlamalar"), alloc::vec![
-                String::from("Sozlamalar"),
-                String::new(),
-                alloc::format!("Foydalanuvçi: {}", accounts::current().map(|a| a.username).unwrap_or_default()),
-                alloc::format!("Versiya: {}", env!("CARGO_PKG_VERSION")),
-                String::from("Til · Ekran · Övoz · Tarmoq"),
-            ])
+            let mut win = base(x, y, w, h, kind, String::from("Sozlamalar"), Vec::new());
+            // Fon eskizlari (bir marta yasaladi)
+            let (tw, th) = (192, 120);
+            win.thumbs = (0..WALL_NAMES.len())
+                .map(|i| if i == 0 { PHOTO_THUMB.lock().clone() } else { Some(make_wallpaper(i, tw, th)) })
+                .collect();
+            win
         }
         Kind::Trash => {
             let (w, h) = (u * 24, u * 13);
@@ -504,7 +506,7 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
             win.clip = Some(clip);
         } else {
             let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_uppercase()).unwrap_or_default();
-            win.lines = alloc::vec![alloc::format!("{} formati hali qöllanmaydi", ext), String::from("Qöllanadi: WAV, AIFF")];
+            win.lines = alloc::vec![alloc::format!("{} formati hali qöllanmaydi", ext), String::from("Qöllanadi: WAV, AIFF, FLAC, MP3, OGG")];
         }
         windows.push(win);
         return;
@@ -522,7 +524,7 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
             // taniladi, ammo dekod qilinmaydi — metama'lumotni körsatamiz
             win.lines = alloc::vec![
                 alloc::format!("{} video — {}", vi.container, vi.codec),
-                alloc::format!("öl'çam: {}x{}", vi.w, vi.h),
+                alloc::format!("ölçam: {}x{}", vi.w, vi.h),
                 alloc::format!("davomiylik: {}.{} s", vi.duration_ms / 1000, (vi.duration_ms % 1000) / 100),
                 String::new(),
                 String::from("Dekod qilinadi: MJPEG/AVI"),
@@ -792,7 +794,9 @@ fn login_screen() {
     let mut cx = sw / 2;
     let mut cy = sh / 2;
     // Qulf ekrani foni: ish stoli rasmi, bir marta xiralashtirilgan
-    let bg = crate::image::decode(crate::wallpaper::JPG).map(|mut im| {
+    let wsel = crate::config::UI_WALL.load(Ordering::Relaxed) as usize % WALL_NAMES.len();
+    let base_bg = if wsel == 0 { crate::image::decode(crate::wallpaper::JPG) } else { Some(make_wallpaper(wsel, sw, sh)) };
+    let bg = base_bg.map(|mut im| {
         for p in im.px.iter_mut() {
             let (r, g, b) = ((*p >> 16) & 0xff, (*p >> 8) & 0xff, *p & 0xff);
             *p = ((r * 9 / 20) << 16) | ((g * 9 / 20) << 8) | (b * 10 / 20);
@@ -966,7 +970,10 @@ fn cursor(cx: usize, cy: usize) {
 fn desktop() {
     let (sw, sh) = gfx::size();
     // Ish stoli foni (JPEG, ichki dekoder bilan bir marta dekodlanadi)
-    let wp = crate::image::decode(crate::wallpaper::JPG);
+    let photo = crate::image::decode(crate::wallpaper::JPG);
+    *PHOTO_THUMB.lock() = photo.as_ref().map(|p| make_thumb(p, 192));
+    let mut cur_wall = crate::config::UI_WALL.load(Ordering::Relaxed) as usize % WALL_NAMES.len();
+    let mut wp = if cur_wall == 0 { photo.clone() } else { Some(make_wallpaper(cur_wall, sw, sh)) };
     let mut windows: Vec<Window> = Vec::new();
     let mut cx = sw / 2;
     let mut cy = sh / 2;
@@ -1014,6 +1021,13 @@ fn desktop() {
             if sec % 5 == 0 {
                 desk.icons = home_icons();
             }
+            changed = true;
+        }
+        // Fon rasmi özgargan bölsa — yangisini yasaymiz
+        let want = crate::config::UI_WALL.load(Ordering::Relaxed) as usize % WALL_NAMES.len();
+        if want != cur_wall {
+            cur_wall = want;
+            wp = if want == 0 { photo.clone() } else { Some(make_wallpaper(want, sw, sh)) };
             changed = true;
         }
         // Bildirişnomalar navbati → ekran va tarix
@@ -1329,7 +1343,7 @@ fn save_notes(w: &Window) -> String {
     let path = if w.path.is_empty() { NOTES_PATH } else { w.path.as_str() };
     match fs::open(path, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE) {
         Ok(id) => match fs::write(id, Some(0), text.as_bytes()) {
-            Ok(n) => alloc::format!("saqlandi: {} bayt → {}", n, path),
+            Ok(n) => alloc::format!("saqlandi: {} bayt — {}", n, path),
             Err(e) => alloc::format!("xato: {:?}", e),
         },
         Err(e) => alloc::format!("oçib bölmadi: {:?}", e),
@@ -1402,6 +1416,11 @@ fn handle_click(
                 return true;
             }
             None => {}
+        }
+        if windows[i].kind == Kind::Settings && settings_click(&mut windows[i], cx, cy) {
+            let w = windows.remove(i);
+            windows.push(w);
+            return true;
         }
         if windows[i].on_grip(cx, cy) {
             let w = windows.remove(i);
@@ -1890,7 +1909,7 @@ fn draw_search(s: &Search) {
     for (k, (name, sub, act)) in s.res.iter().enumerate() {
         let ry = y + bar + u / 4 + k * row;
         if k == s.sel {
-            fill_round_rect_a(x + u / 3, ry, w - u * 2 / 3, row, u / 2, 0x2f88ff, 220);
+            fill_round_rect_a(x + u / 3, ry, w - u * 2 / 3, row, u / 2, accent(), 220);
         }
         let isz = row * 3 / 4;
         let (ix, iy) = (x + u, ry + (row - isz) / 2);
@@ -2244,7 +2263,7 @@ fn draw_desk_icons(desk: &Desk) {
         let ty = y + isz + u / 2;
         if sel {
             let lw = gfx::text_width(&lbl, px);
-            fill_round_rect(x + cw / 2 - lw / 2 - u / 4, ty - 1, lw + u / 2, px + 4, u / 4, 0x2f6fd6);
+            fill_round_rect(x + cw / 2 - lw / 2 - u / 4, ty - 1, lw + u / 2, px + 4, u / 4, accent());
         } else {
             gfx::draw_text_centered(x + cw / 2 + 1, ty + 1, &lbl, 0x000000, px);
         }
@@ -2629,7 +2648,7 @@ fn draw_menu(i: usize, cx: usize, cy: usize) {
         }
         let hover = cx >= x && cx < x + w && cy >= *y0 && cy < *y1;
         if hover {
-            fill_round_rect_a(x + u / 4, *y0, w - u / 2, y1 - y0, u / 3, 0x2f88ff, 230);
+            fill_round_rect_a(x + u / 4, *y0, w - u / 2, y1 - y0, u / 3, accent(), 230);
         }
         let ty = y0 + (y1 - y0 - small()) / 2;
         let isz = small() * 4 / 5;
@@ -2943,7 +2962,7 @@ fn draw_files(win: &Window) {
             (win.side[i - 1].clone(), alloc::format!("~/{}", win.side[i - 1]))
         };
         if win.path == path {
-            fill_round_rect_a(win.x + u / 3, iy, g.sbw - u * 2 / 3, g.item_h - 2, u / 3, 0x2f88ff, 70);
+            fill_round_rect_a(win.x + u / 3, iy, g.sbw - u * 2 / 3, g.item_h - 2, u / 3, accent(), 80);
         }
         let isz = small();
         let ix = win.x + u * 3 / 4;
@@ -3126,7 +3145,7 @@ fn draw_image(win: &Window) {
     let (ix, iy, iw, ih) = gfx::blit_fit(x, y, w, h, img.w, img.h, &img.px);
     gfx::round_outline(ix.saturating_sub(1), iy.saturating_sub(1), iw + 2, ih + 2, 1, 1, 0x3a4458);
     // Maʼlumot satri (ölçam)
-    let info = alloc::format!("{}×{} · {} piksel", img.w, img.h, img.w * img.h);
+    let info = alloc::format!("{}x{} · {} piksel", img.w, img.h, img.w * img.h);
     gfx::draw_text(x, win.y + win.h - pad - small(), &info, 0x8aa0bc, small());
 }
 
@@ -3272,7 +3291,7 @@ fn draw_editor(win: &Window) {
         n += 1;
     }
     if ty + lh <= win.y + win.h - u / 2 {
-        gfx::blend_rect(win.x + gut, ty.saturating_sub(1), win.w.saturating_sub(gut + 2), lh, 0x2f88ff, 28);
+        gfx::blend_rect(win.x + gut, ty.saturating_sub(1), win.w.saturating_sub(gut + 2), lh, accent(), 28);
         let num = alloc::format!("{:>3}", n);
         gfx::draw_text_mono(win.x + u / 4, ty, &num, 0x9fb0c3, px);
         let w = gfx::text_width_mono(&win.input, px);
@@ -3315,56 +3334,186 @@ fn draw_about(win: &Window) {
     }
 }
 
-/// Sozlamalar oynasi: çapda bölimlar, öngda tizim maʼlumoti.
-fn draw_settings(win: &Window) {
-    let u = body();
-    let top = win.y + title_h();
-    let sbw = u * 9;
-    let r = radius();
-    let bottom = win.y + win.h;
-    fill_rect(win.x, top, sbw, (bottom - top).saturating_sub(r), 0x151b27);
-    gfx::fill_round_rect(win.x, bottom.saturating_sub(2 * r), sbw, 2 * r, r, 0x151b27);
-    fill_rect(win.x + r, bottom.saturating_sub(2 * r), sbw - r, 2 * r, 0x151b27);
-    fill_rect(win.x + sbw, top, 1, bottom - top, 0x2a3346);
-    let cats = [
-        ("Umumiy", 0x8a93a6),
-        ("Ekran", 0x2f88ff),
-        ("Övoz", 0xff375f),
-        ("Tarmoq", 0x34c759),
-        ("Foydalanuvçilar", 0xff9f0a),
-        ("Xavfsizlik", 0xbf5af2),
-    ];
-    let ih = u * 7 / 4;
-    for (i, (name, col)) in cats.iter().enumerate() {
-        let iy = top + u / 2 + i * ih;
-        if iy + ih > bottom - u / 2 {
-            break;
+// ---------------- Mavzu: asosiy rang va fon rasmlari ----------------
+
+const ACCENTS: [Color; 6] = [0x2f88ff, 0x2fbf5f, 0xbf5af2, 0xff9f0a, 0xff375f, 0x14b8c4];
+const ACCENT_NAMES: [&str; 6] = ["Kök", "Yaşil", "Binafşa", "Töq sariq", "Pushti", "Firuza"];
+const WALL_NAMES: [&str; 4] = ["Zamin manzarasi", "Tun", "Aurora", "Şafaq"];
+
+/// Tanlangan asosiy rang (tanlov fonlari, belgilar).
+fn accent() -> Color {
+    ACCENTS[(crate::config::UI_ACCENT.load(Ordering::Relaxed) as usize) % ACCENTS.len()]
+}
+
+/// Foto-fon eskizi (ish stoli fonni dekodlaganda yasaladi).
+static PHOTO_THUMB: crate::sync::SpinLock<Option<crate::image::Image>> = crate::sync::SpinLock::new(None);
+
+fn mix(a: Color, b: Color, t: u32) -> Color {
+    // t: 0..=256
+    let ch = |sh: u32| (((a >> sh) & 0xff) * (256 - t) + ((b >> sh) & 0xff) * t) / 256;
+    (ch(16) << 16) | (ch(8) << 8) | ch(0)
+}
+
+/// Protsedural fon rasmi (1 — Tün, 2 — Aurora, 3 — Şafaq) istalgan ölçamda.
+fn make_wallpaper(idx: usize, w: usize, h: usize) -> crate::image::Image {
+    use crate::image::vector::sin;
+    let mut px = alloc::vec![0u32; w * h];
+    let hash = |x: usize, y: usize| -> u32 {
+        let mut v = (x as u32).wrapping_mul(73856093) ^ (y as u32).wrapping_mul(19349663);
+        v ^= v >> 13;
+        v = v.wrapping_mul(0x5bd1e995);
+        v ^ (v >> 15)
+    };
+    let vgrad = |stops: &[(u32, Color)], t: u32| -> Color {
+        // t: 0..=1000
+        for k in 1..stops.len() {
+            if t <= stops[k].0 {
+                let (t0, c0) = stops[k - 1];
+                let (t1, c1) = stops[k];
+                return mix(c0, c1, ((t - t0) * 256 / (t1 - t0).max(1)).min(256));
+            }
         }
-        if i == 0 {
-            fill_round_rect_a(win.x + u / 3, iy, sbw - u * 2 / 3, ih - 2, u / 3, 0x2f88ff, 70);
+        stops[stops.len() - 1].1
+    };
+    match idx {
+        1 => {
+            // Tun: chuqur kök osmon, yulduzlar, oy
+            let stops = [(0, 0x0d1b3d), (600, 0x081127), (1000, 0x03060e)];
+            for y in 0..h {
+                let c = vgrad(&stops, (y * 1000 / h.max(1)) as u32);
+                for x in 0..w {
+                    let hv = hash(x, y);
+                    px[y * w + x] = if hv % 1400 == 0 { mix(c, 0xffffff, 120 + (hv >> 24) % 136) } else { c };
+                }
+            }
+            let (mx, my, mr) = (w * 4 / 5, h / 4, (h / 14).max(3));
+            for y in my.saturating_sub(mr * 3)..(my + mr * 3).min(h) {
+                for x in mx.saturating_sub(mr * 3)..(mx + mr * 3).min(w) {
+                    let (dx, dy) = (x as isize - mx as isize, y as isize - my as isize);
+                    let d2 = (dx * dx + dy * dy) as usize;
+                    let (cx2, cy2) = (dx + mr as isize / 2, dy - mr as isize / 3);
+                    let cut = ((cx2 * cx2 + cy2 * cy2) as usize) < mr * mr;
+                    if d2 < mr * mr && !cut {
+                        px[y * w + x] = 0xf3eed2;
+                    } else if d2 < mr * mr * 9 {
+                        let t = (256 - (d2 * 256 / (mr * mr * 9)) as u32) / 6;
+                        px[y * w + x] = mix(px[y * w + x], 0x8fa6e8, t);
+                    }
+                }
+            }
         }
-        let isz = small();
-        gfx::fill_round_rect(win.x + u * 2 / 3, iy + (ih - isz) / 2, isz, isz, isz / 4, *col);
-        let lbl = fit_text(name, sbw - u * 3, small() * 9 / 10);
-        gfx::draw_text(win.x + u * 2 / 3 + isz + u / 2, iy + (ih - small()) / 2, &lbl, 0xdbe3ee, small() * 9 / 10);
+        2 => {
+            // Aurora: toʻq fon va yashil-firuza yogʻdu tasmalari
+            let stops = [(0, 0x061a24), (1000, 0x020608)];
+            for y in 0..h {
+                let c = vgrad(&stops, (y * 1000 / h.max(1)) as u32);
+                for x in 0..w {
+                    px[y * w + x] = c;
+                }
+            }
+            for band in 0..3 {
+                let (col, base, amp, wid) = match band {
+                    0 => (0x3cf08a, 0.36, 0.08, 0.06),
+                    1 => (0x18c9c4, 0.46, 0.06, 0.05),
+                    _ => (0x8a5cff, 0.26, 0.05, 0.04),
+                };
+                for x in 0..w {
+                    let fx = x as f32 / w as f32;
+                    let cy = h as f32 * (base + amp * sin(fx * 7.0 + band as f32 * 1.7) + 0.02 * sin(fx * 23.0));
+                    let sig = h as f32 * wid;
+                    let y0 = (cy - sig * 3.0).max(0.0) as usize;
+                    let y1 = ((cy + sig * 1.2) as usize).min(h);
+                    for y in y0..y1 {
+                        let d = (y as f32 - cy) / sig;
+                        let k = if d < 0.0 { 1.0 / (1.0 + d * d * 0.35) } else { 1.0 / (1.0 + d * d * 4.0) };
+                        let t = (k * 200.0) as u32;
+                        px[y * w + x] = mix(px[y * w + x], col, t.min(256));
+                    }
+                }
+            }
+            for y in 0..h {
+                for x in 0..w {
+                    if hash(x, y) % 2500 == 0 && y < h * 2 / 3 {
+                        px[y * w + x] = mix(px[y * w + x], 0xffffff, 160);
+                    }
+                }
+            }
+        }
+        _ => {
+            // Şafaq: quyosh botişi, quyoş va ikki qavat togʻ
+            let stops = [(0, 0x241a52), (380, 0x7d3a7a), (620, 0xff7a59), (760, 0xffc46b), (1000, 0xffc46b)];
+            for y in 0..h {
+                let c = vgrad(&stops, (y * 1000 / h.max(1)) as u32);
+                for x in 0..w {
+                    px[y * w + x] = c;
+                }
+            }
+            let (sx, sy, sr) = (w / 2, h * 66 / 100, (h / 9).max(3));
+            for y in sy.saturating_sub(sr)..(sy + sr).min(h) {
+                for x in sx.saturating_sub(sr)..(sx + sr).min(w) {
+                    let (dx, dy) = (x as isize - sx as isize, y as isize - sy as isize);
+                    if ((dx * dx + dy * dy) as usize) < sr * sr {
+                        px[y * w + x] = mix(px[y * w + x], 0xfff1c9, 220);
+                    }
+                }
+            }
+            for (layer, col) in [(0, 0x5a2e6b), (1, 0x2a1838)] {
+                for x in 0..w {
+                    let fx = x as f32 / w as f32;
+                    let top = if layer == 0 {
+                        h as f32 * (0.62 + 0.07 * sin(fx * 9.0 + 1.0) + 0.03 * sin(fx * 27.0))
+                    } else {
+                        h as f32 * (0.74 + 0.06 * sin(fx * 6.0 + 2.5) + 0.025 * sin(fx * 31.0))
+                    };
+                    for y in (top.max(0.0) as usize)..h {
+                        px[y * w + x] = col;
+                    }
+                }
+            }
+        }
     }
-    // Öng panel
-    let x = win.x + sbw + u;
-    let mut y = top + u * 2 / 3;
-    gfx::draw_text(x, y, "Umumiy", 0xffffff, u * 6 / 5);
-    y += u * 2;
-    let (sw, sh) = gfx::size();
-    let (free_p, total_p) = crate::memory::frame::stats();
-    let user = accounts::current().map(|a| a.username).unwrap_or_default();
-    let rows = [
-        ("Tizim", String::from("Zamin OS")),
-        ("Versiya", String::from(env!("CARGO_PKG_VERSION"))),
-        ("Foydalanuvçi", user),
-        ("Protsessor", String::from("AArch64 · 4 yadro")),
-        ("Xotira", alloc::format!("{} / {} MB", (total_p - free_p) * 4 / 1024, total_p * 4 / 1024)),
-        ("Ekran", alloc::format!("{} x {}", sw, sh)),
-    ];
+    crate::image::Image { w, h, px }
+}
+
+const SETTINGS_TABS: [(&str, Color); 6] = [
+    ("Umumiy", 0x8a93a6),
+    ("Ekran", 0x2f88ff),
+    ("Övoz", 0xff375f),
+    ("Tarmoq", 0x34c759),
+    ("Foydalanuvçilar", 0xff9f0a),
+    ("Xavfsizlik", 0xbf5af2),
+];
+
+/// Sozlamalar geometriyasi: (yon panel eni, mazmun x, mazmun y, qator balandligi).
+fn settings_geo(win: &Window) -> (usize, usize, usize, usize) {
+    let u = body();
+    let sbw = u * 9;
+    (sbw, win.x + sbw + u, win.y + title_h() + u * 2 / 3, u * 7 / 4)
+}
+
+/// Ekran bölimidagi fon eskizi joyi (2×2 grid).
+fn wall_thumb_rect(win: &Window, i: usize) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (_, x, y, _) = settings_geo(win);
     let rw = (win.x + win.w).saturating_sub(x + u);
+    let tw = (rw - u) / 2;
+    let th = tw * 9 / 16;
+    let y0 = y + u * 2 + small() + u / 2;
+    (x + (i % 2) * (tw + u), y0 + (i / 2) * (th + u * 3 / 2), tw, th)
+}
+
+/// Asosiy rang namunasi markazi va radiusi.
+fn accent_swatch(win: &Window, i: usize) -> (usize, usize, usize) {
+    let u = body();
+    let (_, x, _, _) = settings_geo(win);
+    let (_, ty, _, th) = wall_thumb_rect(win, 2);
+    let y = ty + th + u * 2 + small() + u / 2;
+    (x + u * 3 / 4 + i * (u * 2), y, u * 3 / 4)
+}
+
+/// Kalit–qiymat qatorlari jadvali.
+fn kv_table(x: usize, y: usize, rw: usize, rows: &[(&str, String)]) {
+    let u = body();
     let rh = u * 3 / 2;
     fill_round_rect_a(x, y, rw, rh * rows.len(), u / 2, 0xffffff, 12);
     for (i, (k, v)) in rows.iter().enumerate() {
@@ -3374,9 +3523,202 @@ fn draw_settings(win: &Window) {
         }
         let ty = ry + (rh - small()) / 2;
         gfx::draw_text(x + u / 2, ty, k, 0xdbe3ee, small() * 9 / 10);
-        let vw = gfx::text_width(v, small() * 9 / 10);
-        gfx::draw_text((x + rw).saturating_sub(vw + u / 2), ty, v, 0x8a9ab0, small() * 9 / 10);
+        let v = fit_text(v, rw / 2, small() * 9 / 10);
+        let vw = gfx::text_width(&v, small() * 9 / 10);
+        gfx::draw_text((x + rw).saturating_sub(vw + u / 2), ty, &v, 0x8a9ab0, small() * 9 / 10);
     }
+}
+
+fn ip_str(ip: [u8; 4]) -> String {
+    alloc::format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
+}
+
+/// Sozlamalar oynasi: çapda bölimlar, öngda tanlangan bölim.
+fn draw_settings(win: &Window) {
+    let u = body();
+    let top = win.y + title_h();
+    let (sbw, x, y0, ih) = settings_geo(win);
+    let r = radius();
+    let bottom = win.y + win.h;
+    fill_rect(win.x, top, sbw, (bottom - top).saturating_sub(r), 0x151b27);
+    gfx::fill_round_rect(win.x, bottom.saturating_sub(2 * r), sbw, 2 * r, r, 0x151b27);
+    fill_rect(win.x + r, bottom.saturating_sub(2 * r), sbw - r, 2 * r, 0x151b27);
+    fill_rect(win.x + sbw, top, 1, bottom - top, 0x2a3346);
+    for (i, (name, col)) in SETTINGS_TABS.iter().enumerate() {
+        let iy = top + u / 2 + i * ih;
+        if i == win.tab {
+            fill_round_rect_a(win.x + u / 3, iy, sbw - u * 2 / 3, ih - 2, u / 3, accent(), 90);
+        }
+        let isz = small();
+        gfx::fill_round_rect(win.x + u * 2 / 3, iy + (ih - isz) / 2, isz, isz, isz / 4, *col);
+        let lbl = fit_text(name, sbw - u * 3, small() * 9 / 10);
+        gfx::draw_text(win.x + u * 2 / 3 + isz + u / 2, iy + (ih - small()) / 2, &lbl, 0xdbe3ee, small() * 9 / 10);
+    }
+    let rw = (win.x + win.w).saturating_sub(x + u);
+    gfx::draw_text(x, y0, SETTINGS_TABS[win.tab].0, OQ, u * 6 / 5);
+    let y = y0 + u * 2;
+    match win.tab {
+        1 => {
+            // Ekran: fon rasmi + asosiy rang
+            gfx::draw_text(x, y, "Fon rasmi", 0x9fb0c3, small() * 9 / 10);
+            let cur = crate::config::UI_WALL.load(Ordering::Relaxed) as usize;
+            for i in 0..WALL_NAMES.len() {
+                let (tx, ty, tw, th) = wall_thumb_rect(win, i);
+                if let Some(Some(t)) = win.thumbs.get(i) {
+                    gfx::blit_scaled(tx, ty, tw, th, t.w, t.h, &t.px);
+                } else {
+                    fill_rect(tx, ty, tw, th, 0x222a3a);
+                }
+                if i == cur {
+                    gfx::round_outline(tx.saturating_sub(3), ty.saturating_sub(3), tw + 6, th + 6, u / 3, 3, accent());
+                } else {
+                    gfx::round_outline(tx, ty, tw, th, 2, 1, 0x3a4458);
+                }
+                gfx::draw_text_centered(tx + tw / 2, ty + th + u / 4, WALL_NAMES[i], if i == cur { OQ } else { 0xaebccf }, small() * 4 / 5);
+            }
+            let (_, sy, sr) = accent_swatch(win, 0);
+            gfx::draw_text(x, sy - sr - small() - u / 3, "Asosiy rang", 0x9fb0c3, small() * 9 / 10);
+            let ca = crate::config::UI_ACCENT.load(Ordering::Relaxed) as usize % ACCENTS.len();
+            for (i, c) in ACCENTS.iter().enumerate() {
+                let (cx2, cy2, rr) = accent_swatch(win, i);
+                if i == ca {
+                    gfx::fill_circle(cx2, cy2, rr + 4, OQ);
+                }
+                gfx::fill_circle(cx2, cy2, rr, *c);
+            }
+            let (lx, ly, _) = accent_swatch(win, ACCENTS.len());
+            gfx::draw_text(lx, ly.saturating_sub(small() / 2), ACCENT_NAMES[ca], 0xdbe3ee, small() * 9 / 10);
+        }
+        2 => {
+            let present = crate::audio::sound::present();
+            kv_table(x, y, rw, &[
+                ("Qurilma", String::from(if present { "virtio-sound (faol)" } else { "Topilmadi" })),
+                ("Çiqiş", String::from("PCM S16LE, 2 kanal")),
+                ("Dekoderlar", String::from("WAV · AIFF · FLAC · MP3 · OGG")),
+                ("Kodeklar", String::from("PCM · mu-law · A-law · ADPCM")),
+            ]);
+            if !present {
+                gfx::draw_text(x, y + u * 7, "QEMU: -device virtio-sound-device bilan övoz eşitiladi", 0x6f7f95, small() * 4 / 5);
+            }
+        }
+        3 => {
+            let up = crate::net::present();
+            let m = crate::net::our_mac();
+            let mac = alloc::format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", m[0], m[1], m[2], m[3], m[4], m[5]);
+            let cfg = crate::net::is_configured();
+            kv_table(x, y, rw, &[
+                ("Qurilma", String::from(if up { "virtio-net" } else { "Topilmadi" })),
+                ("Holat", String::from(if cfg { "Ulangan (DHCP)" } else if up { "Sozlanmagan" } else { "—" })),
+                ("IP manzil", if cfg { ip_str(crate::net::our_ip()) } else { String::from("—") }),
+                ("Şlyuz", if cfg { ip_str(crate::net::gateway()) } else { String::from("—") }),
+                ("DNS", if cfg { ip_str(crate::net::dns_server()) } else { String::from("—") }),
+                ("MAC", if up { mac } else { String::from("—") }),
+            ]);
+        }
+        4 => {
+            let me = accounts::current().map(|a| a.username).unwrap_or_default();
+            let list = accounts::all();
+            let rh = u * 5 / 2;
+            fill_round_rect_a(x, y, rw, rh * list.len().max(1), u / 2, 0xffffff, 12);
+            for (i, a) in list.iter().enumerate() {
+                let ry = y + i * rh;
+                if i > 0 {
+                    fill_rect(x + u / 2, ry, rw - u, 1, 0x2a3346);
+                }
+                let ar = u * 3 / 4;
+                gfx::fill_circle(x + u + ar / 2, ry + rh / 2, ar, 0x1f8a46);
+                let ini = a.full_name.chars().next().unwrap_or('?').to_uppercase().collect::<String>();
+                gfx::draw_text_centered(x + u + ar / 2, ry + rh / 2 - small() / 2, &ini, OQ, small());
+                let tx = x + u * 3;
+                gfx::draw_text(tx, ry + u / 3, &a.full_name, OQ, small());
+                gfx::draw_text(tx, ry + u / 3 + small() + 2, &alloc::format!("@{} · uid {}", a.username, a.uid), 0x8a9ab0, small() * 4 / 5);
+                let mut badge = String::new();
+                if a.admin {
+                    badge.push_str("Administrator");
+                }
+                if a.username == me {
+                    if !badge.is_empty() {
+                        badge.push_str(" · ");
+                    }
+                    badge.push_str("Siz");
+                }
+                let bw = gfx::text_width(&badge, small() * 4 / 5);
+                gfx::draw_text((x + rw).saturating_sub(bw + u / 2), ry + (rh - small()) / 2, &badge, accent(), small() * 4 / 5);
+            }
+        }
+        5 => {
+            let items = [
+                ("W^X", "Kod — faqat öqiş, maʼlumot — bajarilmaydi"),
+                ("PAN", "Yadro foydalanuvçi xotirasiga faqat nusxa orqali"),
+                ("KASLR", "Yadro steklari har yuklanişda tasodifiy joyda"),
+                ("Stek qörğoni", "Töliş aniqlanadi — faqat aybdor oqim töxtaydi"),
+                ("Disk şifrlaş", "ZaminFS: ChaCha20-Poly1305"),
+                ("Parollar", "PBKDF2-SHA256, kalit örab saqlanadi"),
+                ("TLS", "X.509: muddat va host nomi tekşiruvi"),
+            ];
+            let rh = u * 2;
+            fill_round_rect_a(x, y, rw, rh * items.len(), u / 2, 0xffffff, 12);
+            for (i, (k, v)) in items.iter().enumerate() {
+                let ry = y + i * rh;
+                if i > 0 {
+                    fill_rect(x + u / 2, ry, rw - u, 1, 0x2a3346);
+                }
+                gfx::fill_circle(x + u, ry + rh / 2, u / 3, 0x2fbf5f);
+                gfx::draw_text(x + u * 2, ry + u / 5, k, OQ, small() * 9 / 10);
+                gfx::draw_text(x + u * 2, ry + u / 5 + small(), &fit_text(v, rw - u * 3, small() * 4 / 5), 0x8a9ab0, small() * 4 / 5);
+            }
+        }
+        _ => {
+            let (sw, sh) = gfx::size();
+            let (free_p, total_p) = crate::memory::frame::stats();
+            let user = accounts::current().map(|a| a.username).unwrap_or_default();
+            kv_table(x, y, rw, &[
+                ("Tizim", String::from("Zamin OS")),
+                ("Versiya", String::from(env!("CARGO_PKG_VERSION"))),
+                ("Foydalanuvçi", user),
+                ("Protsessor", String::from("AArch64 · 4 yadro")),
+                ("Xotira", alloc::format!("{} / {} MB", (total_p - free_p) * 4 / 1024, total_p * 4 / 1024)),
+                ("Ekran", alloc::format!("{} x {}", sw, sh)),
+                ("Ish vaqti", { let s = crate::timer::uptime_ms() / 1000; alloc::format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) }),
+            ]);
+        }
+    }
+}
+
+/// Sozlamalar oynasiga bosiş (bölim, fon, rang). Bosildi — true.
+fn settings_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    let u = body();
+    let (sbw, _, _, ih) = settings_geo(win);
+    let top = win.y + title_h();
+    if cx >= win.x && cx < win.x + sbw && cy >= top + u / 2 {
+        let i = (cy - top - u / 2) / ih;
+        if i < SETTINGS_TABS.len() {
+            win.tab = i;
+            return true;
+        }
+    }
+    if win.tab == 1 {
+        for i in 0..WALL_NAMES.len() {
+            let (tx, ty, tw, th) = wall_thumb_rect(win, i);
+            if cx >= tx && cx < tx + tw && cy >= ty && cy < ty + th {
+                crate::config::UI_WALL.store(i as u8, Ordering::Relaxed);
+                let _ = crate::config::save_current();
+                notify("Sozlamalar", &alloc::format!("Fon: {}", WALL_NAMES[i]), 0x8a93a6);
+                return true;
+            }
+        }
+        for i in 0..ACCENTS.len() {
+            let (sx, sy, sr) = accent_swatch(win, i);
+            let (dx, dy) = (cx as isize - sx as isize, cy as isize - sy as isize);
+            if ((dx * dx + dy * dy) as usize) <= (sr + 3) * (sr + 3) {
+                crate::config::UI_ACCENT.store(i as u8, Ordering::Relaxed);
+                let _ = crate::config::save_current();
+                notify("Sozlamalar", &alloc::format!("Asosiy rang: {}", ACCENT_NAMES[i]), ACCENTS[i]);
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Brauzer oynasi: manzil qatori + boşlang'iç sahifa.
