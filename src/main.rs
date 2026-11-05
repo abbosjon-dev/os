@@ -20,6 +20,7 @@ mod gfx;
 mod gfx_font;
 mod gic;
 mod gui;
+mod html;
 mod i18n;
 mod image;
 mod ipc;

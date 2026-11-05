@@ -5,6 +5,7 @@ use crate::drivers::virtio_input as input;
 use crate::gfx::{self, Font, *};
 use crate::task::{Handle, SpawnOptions};
 use crate::{accounts, fs, pipe, task, time};
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -68,6 +69,7 @@ enum Kind {
     Monitor,
     Info,
     Puzzle,
+    Paint,
 }
 
 impl Kind {
@@ -172,6 +174,8 @@ struct Window {
     scroll: usize,      // Muharrir: birinçi körinadigan qator
     dirty: bool,        // Muharrir: saqlanmagan özgarişlar
     tiles: Vec<u8>,     // Boşqotirma: 16 ta katak (0 — böş)
+    web: Option<Box<Web>>, // Brauzer holati
+    pen: Option<(usize, usize)>, // Chizma: oxirgi nuqta (tuvalda)
 }
 
 impl Window {
@@ -253,7 +257,7 @@ struct Launcher {
     color: Color,
 }
 
-const LAUNCHERS: [Launcher; 13] = [
+const LAUNCHERS: [Launcher; 14] = [
     Launcher { label: "Zamin", kind: Kind::About, color: 0x34c759 },
     Launcher { label: "Brauzer", kind: Kind::Browser, color: 0x1e88e5 },
     Launcher { label: "Fayllar", kind: Kind::Files, color: 0x2f88ff },
@@ -262,6 +266,7 @@ const LAUNCHERS: [Launcher; 13] = [
     Launcher { label: "Kalkulyator", kind: Kind::Calc, color: 0xff9f0a },
     Launcher { label: "Tizim monitori", kind: Kind::Monitor, color: 0x1f9d55 },
     Launcher { label: "Boşqotirma", kind: Kind::Puzzle, color: 0xe0457b },
+    Launcher { label: "Chizma", kind: Kind::Paint, color: 0x2bb3a8 },
     Launcher { label: "Video", kind: Kind::Video, color: 0x8257ff },
     Launcher { label: "Musiqa", kind: Kind::Music, color: 0xff7a2f },
     Launcher { label: "Rasmlar", kind: Kind::Image, color: 0x3a9bff },
@@ -343,6 +348,8 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         scroll: 0,
         dirty: false,
         tiles: Vec::new(),
+        web: None,
+        pen: None,
     }
 }
 
@@ -398,9 +405,11 @@ fn new_window(kind: Kind, n: usize) -> Window {
             win
         }
         Kind::Clock => {
-            let (w, h) = (u * 20, u * 11);
+            let (w, h) = (u * 24, u * 15);
             let (x, y) = place(w, h);
-            base(x, y, w, h, kind, String::from("Soat"), Vec::new())
+            let mut win = base(x, y, w, h, kind, String::from("Soat"), Vec::new());
+            win.frame = 300; // taymer: 5 daqiqa
+            win
         }
         Kind::Image => {
             let (w, h) = (u * 27, u * 20);
@@ -426,14 +435,18 @@ fn new_window(kind: Kind, n: usize) -> Window {
             base(x, y, w, h, kind, String::from("Övoz"), Vec::new())
         }
         Kind::Browser => {
-            let (w, h) = (u * 30, u * 22);
+            let (w, h) = (u * 40, u * 30);
             let (x, y) = place(w, h);
-            base(x, y, w, h, kind, String::from("Zamin Brauzer"), alloc::vec![
-                String::from("Zamin Brauzer"),
-                String::new(),
-                String::from("Veb brauzer tez orada qöşiladi."),
-                String::from("Tarmoq: virtio-net + TLS tayyor."),
-            ])
+            let mut win = base(x, y, w, h, kind, String::from("Zamin Brauzer"), Vec::new());
+            web_go(&mut win, "zamin://bosh", false);
+            win
+        }
+        Kind::Paint => {
+            let (w, h) = (u * 38, u * 29);
+            let (x, y) = place(w, h);
+            let mut win = base(x, y, w, h, kind, String::from("Chizma"), Vec::new());
+            paint_new(&mut win);
+            win
         }
         Kind::Settings => {
             let (w, h) = (u * 34, u * 24);
@@ -606,6 +619,15 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
         let (w, h) = (u * 28, u * 22);
         let mut win = base(x.min(sw - w), y, w, h, Kind::Image, String::new(), Vec::new());
         image_load(&mut win, path, &data);
+        windows.push(win);
+        return;
+    }
+    // HTML — brauzerda
+    let low = name.to_ascii_lowercase();
+    if low.ends_with(".html") || low.ends_with(".htm") {
+        let (w, h) = (u * 40, u * 30);
+        let mut win = base(x.min(sw - w), y, w, h, Kind::Browser, String::from("Zamin Brauzer"), Vec::new());
+        web_go(&mut win, path, false);
         windows.push(win);
         return;
     }
@@ -1326,6 +1348,9 @@ fn desktop() {
                             drop_file(&mut windows, &mut desk, d, cx, cy, shift);
                         }
                         *FDRAG_PENDING.lock() = None;
+                        for w in windows.iter_mut() {
+                            w.pen = None;
+                        }
                         if let (Some((idx, off)), Some(r)) = (drag, desk.snap.take()) {
                             if off != RESIZE && idx < windows.len() {
                                 let w = &mut windows[idx];
@@ -1396,6 +1421,20 @@ fn desktop() {
                     windows.last_mut().unwrap().rename = None; // nomini özgartirişni bekor qiliş
                     changed = true;
                 }
+                (input::EV_KEY, 1) if e.value == 1 && windows.last().is_some_and(|w| w.web.as_ref().is_some_and(|b| b.editing)) => {
+                    windows.last_mut().unwrap().web.as_mut().unwrap().editing = false;
+                    changed = true;
+                }
+                (2, 8) => {
+                    // Siçqon ğildiragi: ostidagi brauzer sahifasini aylantiradi
+                    let v = e.value as i32;
+                    if let Some(w) = windows.iter_mut().rev().find(|w| !w.hidden && w.contains(cx, cy)) {
+                        if w.kind == Kind::Browser {
+                            web_scroll(w, -(v as isize) * body() as isize * 3);
+                            changed = true;
+                        }
+                    }
+                }
                 (input::EV_KEY, 1) if e.value == 1 => {
                     // Esc — menyu, panel va almaştirgiçni yopadi
                     desk.menu = None;
@@ -1429,6 +1468,7 @@ fn desktop() {
                         Some(Kind::Image) => image_key(windows.last_mut().unwrap(), code),
                         Some(Kind::Monitor) => monitor_key(windows.last_mut().unwrap(), code),
                         Some(Kind::Puzzle) => puzzle_key(windows.last_mut().unwrap(), code),
+                        Some(Kind::Browser) => web_key(windows.last_mut().unwrap(), code, shift),
                         Some(Kind::Trash) if code == 111 => {
                             let w = windows.last_mut().unwrap();
                             if let Some(name) = w.fsel.and_then(|s| w.rows.get(s)).map(|r| r.0.clone()) {
@@ -1461,6 +1501,10 @@ fn desktop() {
                 }
             }
             if desk.fdrag.is_some() {
+                changed = true;
+            }
+            if let Some(w) = windows.last_mut().filter(|w| w.kind == Kind::Paint && w.pen.is_some()) {
+                paint_drag(w, cx, cy);
                 changed = true;
             }
             // Yopiştirilgan / kattalaştirilgan oyna sudralsa — oldingi ölçamiga qaytadi
@@ -1504,6 +1548,25 @@ fn desktop() {
         // Terminal jarayonlari çiqişini öqiymiz
         if pump(&mut windows) {
             changed = true;
+        }
+        // Soat: sekundomer / taymer
+        {
+            let now = crate::timer::uptime_ms();
+            let mut tick = false;
+            for w in windows.iter_mut().filter(|w| w.kind == Kind::Clock) {
+                if w.frame_ms != 0 && now >= w.frame_ms {
+                    w.frame_ms = 0;
+                    notify("Taymer tugadi", &alloc::format!("{} vaqt ötdi", fmt_ms(w.frame as u64 * 1000, false)), 0xff9f0a);
+                    changed = true;
+                }
+                if (w.playing && w.tab == 1) || (w.frame_ms != 0 && w.tab == 2) {
+                    tick = true;
+                }
+            }
+            if tick && now.wrapping_sub(last_play_draw) >= 50 {
+                last_play_draw = now;
+                changed = true;
+            }
         }
         if SHOT_REQ.swap(false, Ordering::Relaxed) {
             desk.menu = None;
@@ -1654,6 +1717,9 @@ fn handle_click(
             Kind::Monitor => monitor_click(&mut windows[i], cx, cy),
             Kind::Image => viewer_click(&mut windows[i], cx, cy),
             Kind::Puzzle => puzzle_click(&mut windows[i], cx, cy),
+            Kind::Browser => web_click(&mut windows[i], cx, cy),
+            Kind::Paint => paint_click(&mut windows[i], cx, cy),
+            Kind::Clock => clock_click(&mut windows[i], cx, cy),
             Kind::Editor => editor_click(&mut windows[i], cx, cy),
             Kind::Trash => match trash_click(&mut windows[i], cx, cy) {
                 2 => {
@@ -2017,6 +2083,8 @@ enum CAct {
     Restore(String),         // savatdan tiklaş
     Purge(String),           // savatdan butunlay öçiriş
     EmptyTrash,
+    Focus(Kind),             // dok: ilova oynasini old planga
+    CloseApp(Kind),          // dok: ilovaning barça oynalarini yopiş
     NewFolder(String, usize),
     Refresh(usize),
     App(Kind),
@@ -2034,7 +2102,10 @@ struct Ctx {
 fn build_ctx(windows: &[Window], desk: &Desk, cx: usize, cy: usize) -> Option<Ctx> {
     let (sw, sh) = gfx::size();
     let (_, dy, _, _, _, _) = dock_geom(sw, sh);
-    if cy < menubar_h() || cy >= dy {
+    if cy >= dy {
+        return dock_ctx(windows, cx, cy);
+    }
+    if cy < menubar_h() {
         return None;
     }
     let s = |t: &str| String::from(t);
@@ -2113,8 +2184,14 @@ fn ctx_layout(c: &Ctx) -> (usize, usize, usize, Vec<(usize, usize)>) {
     let u = body();
     let w = c.items.iter().map(|(n, _)| gfx::text_width(n, small())).max().unwrap_or(0).max(u * 6) + u * 2;
     let h: usize = c.items.iter().map(|(_, a)| if matches!(a, CAct::Sep) { u / 2 } else { u * 3 / 2 }).sum::<usize>() + u / 2;
-    let x = c.x.min(sw.saturating_sub(w + 2));
-    let y = c.y.min(sh.saturating_sub(h + 2));
+    let x = if c.y == usize::MAX { c.x.saturating_sub(w / 2) } else { c.x }.min(sw.saturating_sub(w + 2));
+    let y = if c.y == usize::MAX {
+        // dok ustida
+        let (_, dy, _, _, _, _) = dock_geom(sw, sh);
+        dy.saturating_sub(h + u / 2)
+    } else {
+        c.y.min(sh.saturating_sub(h + 2))
+    };
     let mut yy = y + u / 4;
     let mut rows = Vec::new();
     for (_, a) in &c.items {
@@ -2255,6 +2332,24 @@ fn ctx_exec(act: CAct, desk: &mut Desk, windows: &mut Vec<Window>, opened: &mut 
             desk.icons = home_icons();
         }
         CAct::Refresh(id) => reload_files(windows, id),
+        CAct::Focus(k) => {
+            if let Some(j) = windows.iter().rposition(|w| win_of_launcher(w, k)) {
+                let mut w = windows.remove(j);
+                w.hidden = false;
+                windows.push(w);
+            }
+        }
+        CAct::CloseApp(k) => {
+            let mut i = 0;
+            while i < windows.len() {
+                if win_of_launcher(&windows[i], k) {
+                    let mut w = windows.remove(i);
+                    close_terminal(&mut w);
+                } else {
+                    i += 1;
+                }
+            }
+        }
         CAct::App(k) => menu_act(MAct::Open(k), windows, opened),
         CAct::WallSettings => {
             let mut w = new_window(Kind::Settings, *opened);
@@ -2284,7 +2379,7 @@ struct Search {
     res: Vec<(String, String, SAct)>, // (nom, izoh, amal)
 }
 
-const SEARCH_APPS: [(&str, Kind); 14] = [
+const SEARCH_APPS: [(&str, Kind); 15] = [
     ("Terminal", Kind::Terminal),
     ("Fayllar", Kind::Files),
     ("Matn muharriri", Kind::Editor),
@@ -2299,6 +2394,7 @@ const SEARCH_APPS: [(&str, Kind); 14] = [
     ("Kalkulyator", Kind::Calc),
     ("Tizim monitori", Kind::Monitor),
     ("Boşqotirma", Kind::Puzzle),
+    ("Chizma", Kind::Paint),
 ];
 
 /// Uy papkasidagi fayl va papkalar (çuqurlik ≤ 3).
@@ -3150,6 +3246,7 @@ fn menu_items(i: usize) -> Vec<(String, MAct)> {
             (s("Kalkulyator"), MAct::Open(Kind::Calc)),
             (s("Tizim monitori"), MAct::Open(Kind::Monitor)),
             (s("Boşqotirma"), MAct::Open(Kind::Puzzle)),
+            (s("Chizma"), MAct::Open(Kind::Paint)),
             (s("Sep"), MAct::Sep),
             (s("Musiqa"), MAct::Open(Kind::Music)),
             (s("Video"), MAct::Open(Kind::Video)),
@@ -3428,6 +3525,7 @@ fn draw_window(win: &Window, active: bool, mx: usize, my: usize) {
         Kind::Calc => draw_calc(win),
         Kind::Monitor => draw_monitor(win),
         Kind::Puzzle => draw_puzzle(win),
+        Kind::Paint => draw_paint(win),
         _ => draw_text_window(win),
     }
     gfx::reset_clip();
@@ -3809,7 +3907,12 @@ fn draw_terminal(win: &Window) {
 fn draw_clock(win: &Window) {
     use crate::image::vector::{cos, sin};
     let t = time::now();
-    let top = win.y + title_h();
+    draw_clock_tabs(win);
+    if win.tab != 0 {
+        draw_clock_extra(win);
+        return;
+    }
+    let top = clock_tabs(win)[0].1 + body() * 2;
     let avail = (win.y + win.h).saturating_sub(top);
     let rr = (avail * 2 / 5).min(win.w / 5);
     let cx = win.x + body() + rr + body() / 2;
@@ -4328,58 +4431,6 @@ fn settings_click(win: &mut Window, cx: usize, cy: usize) -> bool {
 }
 
 /// Brauzer oynasi: manzil qatori + boşlang'iç sahifa.
-fn draw_browser(win: &Window) {
-    let u = body();
-    let top = win.y + title_h();
-    // asboblar
-    let by = top + u / 3;
-    let bh = u * 3 / 2;
-    for k in 0..2 {
-        let bx = win.x + u / 2 + k * (bh + u / 4);
-        let c = bx + bh / 2;
-        let m = by + bh / 2;
-        let d = if k == 0 { -1.0f32 } else { 1.0 };
-        gfx::fill_poly(
-            &[
-                ((c as f32) - d * (u as f32) / 5.0, (m - u / 3) as f32),
-                ((c as f32) - d * (u as f32) / 5.0, (m + u / 3) as f32),
-                ((c as f32) + d * (u as f32) / 4.0, m as f32),
-            ],
-            0x6f7f95,
-        );
-    }
-    let ax = win.x + u / 2 + 2 * (bh + u / 4) + u / 2;
-    let aw = (win.x + win.w).saturating_sub(ax + u);
-    gfx::fill_round_rect(ax, by, aw, bh, bh / 2, 0x10151f);
-    gfx::round_outline(ax, by, aw, bh, bh / 2, 1, 0x2a3346);
-    gfx::fill_circle(ax + u * 3 / 4, by + bh / 2, (u / 5).max(2), 0x34c759);
-    gfx::draw_text(ax + u * 3 / 2, by + (bh - small()) / 2, "zamin.app", 0xdbe3ee, small());
-    let ptop = by + bh + u / 3;
-    fill_rect(win.x + 1, ptop, win.w.saturating_sub(2), 1, 0x2a3346);
-    // sahifa
-    let cx = win.x + win.w / 2;
-    let ls = u * 3;
-    zamin_logo(cx, ptop + u * 3 / 2 + ls / 2, ls);
-    let mut y = ptop + u * 2 + ls;
-    gfx::draw_text_centered(cx, y, "Zamin Brauzer", 0xffffff, u * 6 / 5);
-    y += u * 2;
-    let sw2 = (win.w * 3 / 5).max(u * 10);
-    gfx::fill_round_rect(cx - sw2 / 2, y, sw2, bh, bh / 2, 0x10151f);
-    gfx::round_outline(cx - sw2 / 2, y, sw2, bh, bh / 2, 1, 0x34405a);
-    gfx::draw_text(cx - sw2 / 2 + u, y + (bh - small()) / 2, "Qidiriş yoki manzil…", 0x6f7f95, small());
-    y += bh + u * 3 / 2;
-    let tiles = [("zamin.app", 0x34c759), ("GitHub", 0x8a93a6), ("Hujjatlar", 0x2f88ff), ("Yangiliklar", 0xff9f0a)];
-    let ts = u * 5 / 2;
-    let tg = u * 9 / 2;
-    let total = tiles.len() * ts + (tiles.len() - 1) * (tg - ts);
-    let mut tx = cx.saturating_sub(total / 2);
-    for (name, col) in tiles {
-        gfx::fill_round_rect(tx, y, ts, ts, ts / 4, col);
-        gfx::draw_text_centered(tx + ts / 2, y + ts / 4, &name[..1], OQ, ts / 2);
-        gfx::draw_text_centered(tx + ts / 2, y + ts + u / 4, name, 0xaebccf, small() * 4 / 5);
-        tx += tg;
-    }
-}
 
 
 /// Rasm köruvçi: namunaviy "Zamin" manzarasi (osmon, quyoş, togʻlar).
@@ -4687,6 +4738,18 @@ fn draw_icon(kind: Kind, color: Color, x: usize, y: usize, s: usize) {
         }
         Kind::Info => {
             gfx::draw_text_centered(c, y + s / 6, "i", OQ, s * 3 / 5);
+        }
+        Kind::Paint => {
+            // palitra
+            let r = s * 3 / 10;
+            gfx::fill_circle(c, y + m, r, OQ);
+            gfx::fill_circle(c + r / 2, y + m + r / 3, r / 4, color);
+            for (k, col) in [0xff3b30u32, 0xffcc00, 0x007aff, 0x34c759].iter().enumerate() {
+                let a = -2.6 + k as f32 * 0.75;
+                let px = c as f32 + crate::image::vector::cos(a) * r as f32 * 0.55;
+                let py = (y + m) as f32 + crate::image::vector::sin(a) * r as f32 * 0.55;
+                gfx::fill_circle(px as usize, py as usize, (r / 6).max(2), *col);
+            }
         }
         Kind::Puzzle => {
             let q = s * 9 / 40;
@@ -6292,4 +6355,802 @@ fn draw_puzzle(win: &Window) {
         gfx::draw_text_centered(bx + bs / 2, by + bs / 2 - u * 2, "Barakalla!", 0x5cf08e, u * 2);
         gfx::draw_text_centered(bx + bs / 2, by + bs / 2 + u / 2, &alloc::format!("{} ta yurişda yeçildi", win.play_pos), OQ, small());
     }
+}
+
+// ---------------- Brauzer (HTTP/HTTPS + HTML) ----------------
+
+struct Web {
+    url: String,
+    doc: crate::html::Doc,
+    scroll: usize,
+    hist: Vec<String>,
+    status: String,
+    editing: bool,
+    edit: String,
+}
+
+struct WItem {
+    x: usize,
+    y: usize,
+    w: usize,
+    text: String,
+    col: Color,
+    px: usize,
+    mono: bool,
+    link: Option<String>,
+}
+
+const LINK_COL: Color = 0x5aa9ff;
+
+fn builtin_page(url: &str) -> Option<&'static str> {
+    Some(match url.trim_end_matches('/') {
+        "zamin://bosh" => r#"<title>Bosh sahifa</title>
+<h1>Zamin Brauzer</h1>
+<p>Xuş kelibsiz! Bu brauzer <b>HTTP/1.1</b> (TCP) va <b>HTTPS</b> (TLS 1.3, ChaCha20-Poly1305) orqali
+sahifalarni yuklaydi va HTML ni öz tahlilçimiz bilan körsatadi. Manzil qatorini bosib, manzil yozing.</p>
+<h2>Tez havolalar</h2>
+<ul>
+<li><a href="~/Hujjatlar/zamin.html">Zamin OS qöllanmasi</a> — mahalliy HTML fayl</li>
+<li><a href="zamin://haqida">Brauzer haqida</a></li>
+<li><a href="http://example.com/">example.com</a> (HTTP)</li>
+<li><a href="https://example.com/">example.com</a> (HTTPS)</li>
+</ul>
+<h2>Klaviatura</h2>
+<ul>
+<li><b>Strelkalar, PgUp/PgDn, Home/End</b>, siçqon ğildiragi — aylantiriş</li>
+<li><b>Backspace</b> — orqaga, <b>F5</b> — yangilaş</li>
+</ul>"#,
+        "zamin://haqida" => r#"<title>Brauzer haqida</title>
+<h1>Brauzer haqida</h1>
+<p>Hamma qatlam noldan yozilgan:</p>
+<ol>
+<li><b>Tarmoq</b>: virtio-net, ARP, IPv4, TCP, UDP, DHCP, DNS</li>
+<li><b>Xavfsizlik</b>: TLS 1.3 — X25519, ChaCha20-Poly1305, SHA-256, X.509</li>
+<li><b>HTTP/1.1</b>: yönaltiriş, chunked, Content-Length</li>
+<li><b>HTML</b>: sarlavhalar, xatboşilar, ro'yxatlar, havolalar, <code>kod</code>, iqtiboslar, belgilar (&amp;amp; &amp;#NN;)</li>
+</ol>
+<blockquote>Hozircha CSS, JavaScript va rasmlar körsatilmaydi.</blockquote>
+<p><a href="zamin://bosh">Bosh sahifaga qaytiş</a></p>"#,
+        _ => return None,
+    })
+}
+
+fn error_doc(title: &str, msg: &str) -> crate::html::Doc {
+    let src = alloc::format!(
+        "<title>{}</title><h1>{}</h1><p>{}</p><p><a href=\"zamin://bosh\">Bosh sahifa</a></p>",
+        title,
+        title,
+        crate::html::decode_entities(msg).replace('<', "&lt;")
+    );
+    crate::html::parse(&src)
+}
+
+/// Manzilni yuklaydi: zamin://, mahalliy fayl yoki http(s)://.
+fn web_fetch(url: &str) -> (crate::html::Doc, String, String) {
+    if let Some(src) = builtin_page(url) {
+        return (crate::html::parse(src), String::from(url), String::from("Ichki sahifa"));
+    }
+    if !url.contains("://") {
+        let p = url.strip_prefix("file:").unwrap_or(url);
+        return match fs::read_all(p) {
+            Ok(d) => {
+                let t = String::from_utf8_lossy(&d);
+                let low = p.to_ascii_lowercase();
+                let doc = if low.ends_with(".html") || low.ends_with(".htm") { crate::html::parse(&t) } else { crate::html::plain(&t) };
+                (doc, String::from(p), alloc::format!("Fayl · {} bayt", d.len()))
+            }
+            Err(e) => (error_doc("Fayl topilmadi", &alloc::format!("{}: {:?}", p, e)), String::from(p), String::from("Xato")),
+        };
+    }
+    let t0 = crate::timer::uptime_ms();
+    match crate::net::http::get(url) {
+        Ok(r) => {
+            let ms = crate::timer::uptime_ms().saturating_sub(t0);
+            let ct = String::from(r.header("content-type").unwrap_or("text/html"));
+            let text = String::from_utf8_lossy(&r.body);
+            let doc = if ct.contains("html") {
+                crate::html::parse(&text)
+            } else if ct.starts_with("text/") || ct.contains("json") {
+                crate::html::plain(&text)
+            } else {
+                error_doc("Körsatib bölmaydi", &alloc::format!("Turi: {} · {} bayt", ct, r.body.len()))
+            };
+            let st = alloc::format!("HTTP {} · {} KB · {} ms{}", r.status, r.body.len() / 1024, ms, if r.url.starts_with("https") { " · TLS 1.3" } else { "" });
+            (doc, r.url, st)
+        }
+        Err(e) => (error_doc("Sahifani oçib bölmadi", &e), String::from(url), String::from("Xato")),
+    }
+}
+
+fn web_go(win: &mut Window, url: &str, push: bool) {
+    let mut url = String::from(url.trim());
+    if !url.contains("://") && !url.starts_with('~') && !url.starts_with('/') && !url.starts_with("file:") {
+        url = alloc::format!("http://{}", url);
+    }
+    // "Yuklanmoqda…" ni darhol körsatamiz (yuklaş GUI ni band qiladi)
+    if let Some(w) = win.web.as_mut() {
+        w.status = alloc::format!("Yuklanmoqda… {}", url);
+        w.editing = false;
+        if url.contains("://") && builtin_page(&url).is_none() {
+            draw_window(win, true, 0, 0);
+            gfx::reset_clip();
+            gfx::flush();
+        }
+    }
+    let (doc, final_url, status) = web_fetch(&url);
+    let title = if doc.title.is_empty() { final_url.clone() } else { doc.title.clone() };
+    win.title = alloc::format!("{} — Zamin Brauzer", title);
+    let w = win.web.get_or_insert_with(|| {
+        Box::new(Web {
+            url: String::new(),
+            doc: crate::html::Doc { title: String::new(), blocks: Vec::new() },
+            scroll: 0,
+            hist: Vec::new(),
+            status: String::new(),
+            editing: false,
+            edit: String::new(),
+        })
+    });
+    if push && !w.url.is_empty() && w.url != final_url {
+        w.hist.push(w.url.clone());
+    }
+    w.url = final_url;
+    w.doc = doc;
+    w.scroll = 0;
+    w.status = status;
+}
+
+/// Brauzer geometriyasi: (asboblar y, balandligi, tugmalar x[3], manzil (x,y,w,h), sahifa (x,y,w,h)).
+fn web_geo(win: &Window) -> (usize, usize, [usize; 3], (usize, usize, usize, usize), (usize, usize, usize, usize)) {
+    let u = body();
+    let top = win.y + title_h();
+    let bh = u * 3 / 2;
+    let by = top + u / 3;
+    let b0 = win.x + u / 2;
+    let step = bh + u / 4;
+    let btns = [b0, b0 + step, b0 + step * 2];
+    let ax = b0 + step * 3 + u / 4;
+    let addr = (ax, by, (win.x + win.w).saturating_sub(ax + u / 2), bh);
+    let ptop = by + bh + u / 3 + 1;
+    let foot = small() + u / 2;
+    let page = (win.x + 1, ptop, win.w.saturating_sub(2), (win.y + win.h).saturating_sub(ptop + foot));
+    (by, bh, btns, addr, page)
+}
+
+/// Sahifa joylaşuvi: elementlar, bezaklar (x, y, w, h, rang) va toʻliq balandlik.
+fn web_layout(doc: &crate::html::Doc, width: usize) -> (Vec<WItem>, Vec<(usize, usize, usize, usize, Color)>, usize) {
+    use crate::html::Kind as K;
+    let u = body();
+    let pad = u;
+    let mut items = Vec::new();
+    let mut deco = Vec::new();
+    let mut y = u / 2;
+    let maxw = width.saturating_sub(pad * 2);
+    for b in &doc.blocks {
+        let (px, col, indent, gap_top, gap_bot) = match b.kind {
+            K::H(1) => (u * 2, OQ, 0, u, u / 2),
+            K::H(2) => (u * 3 / 2, 0xf0f4fa, 0, u * 3 / 4, u / 3),
+            K::H(_) => (u * 6 / 5, 0xe4eaf3, 0, u / 2, u / 4),
+            K::Li(d, _) => (small() * 11 / 10, 0xd3dbe6, d as usize * u * 3 / 2, u / 6, u / 6),
+            K::Pre => (small(), 0xd7e3c8, u / 2, u / 2, u / 2),
+            K::Quote => (small() * 11 / 10, 0xaab6c8, u * 3 / 2, u / 2, u / 2),
+            K::Hr => (small(), 0, 0, u / 2, u / 2),
+            K::P => (small() * 11 / 10, 0xd3dbe6, 0, u / 3, u / 2),
+        };
+        y += gap_top;
+        let lh = px * 14 / 10;
+        if b.kind == K::Hr {
+            deco.push((pad, y, maxw, 1, 0x34405a));
+            y += 1 + gap_bot;
+            continue;
+        }
+        let x0 = pad + indent;
+        let y_start = y;
+        if let K::Li(_, n) = b.kind {
+            if n == 0 {
+                deco.push((x0 - u * 3 / 4, y + px / 2 - 2, 5, 5, 0x8ea0b6));
+            } else {
+                let t = alloc::format!("{}.", n);
+                let tw = gfx::text_width(&t, px);
+                items.push(WItem { x: x0.saturating_sub(tw + u / 3), y, w: tw, text: t, col: 0x8ea0b6, px, mono: false, link: None });
+            }
+        }
+        if b.kind == K::Pre {
+            let lines: Vec<String> = b.spans.iter().map(|s| s.text.clone()).collect::<Vec<_>>().join("").lines().map(String::from).collect();
+            let lhm = gfx::line_height(px, Font::Mono).max(px + 3);
+            let h = lines.len() * lhm + u;
+            deco.push((pad, y, maxw, h, 0x10151f));
+            let mut yy = y + u / 2;
+            for l in lines {
+                let w = gfx::text_width_mono(&l, px);
+                items.push(WItem { x: x0, y: yy, w, text: l, col, px, mono: true, link: None });
+                yy += lhm;
+            }
+            y += h + gap_bot;
+            continue;
+        }
+        let mut x = x0;
+        for s in &b.spans {
+            if s.br {
+                x = x0;
+                y += lh;
+                continue;
+            }
+            let c = if s.link.is_some() { LINK_COL } else if s.code { 0xffc777 } else if s.bold { OQ } else { col };
+            let mut rest = s.text.as_str();
+            while !rest.is_empty() {
+                // bitta söz (keyingi boşliq bilan)
+                let cut = rest.find(' ').map(|i| i + 1).unwrap_or(rest.len());
+                let word = &rest[..cut];
+                rest = &rest[cut..];
+                let ww = if s.code { gfx::text_width_mono(word, px) } else { gfx::text_width(word, px) };
+                if x + ww > pad + maxw && x > x0 {
+                    x = x0;
+                    y += lh;
+                    if word == " " {
+                        continue;
+                    }
+                }
+                items.push(WItem { x, y, w: ww, text: String::from(word), col: c, px, mono: s.code, link: s.link.clone() });
+                x += ww;
+            }
+        }
+        y += lh;
+        if b.kind == K::Quote {
+            deco.push((pad + u / 2, y_start, 3, y - y_start, accent()));
+        }
+        if b.kind == K::H(1) {
+            deco.push((pad, y + u / 6, maxw, 1, 0x2a3346));
+            y += u / 3;
+        }
+        y += gap_bot;
+    }
+    (items, deco, y + u)
+}
+
+fn draw_browser(win: &Window) {
+    let u = body();
+    let Some(web) = &win.web else { return };
+    let (by, bh, btns, (ax, ay, aw, ah), (px0, py0, pw, ph)) = web_geo(win);
+    // Tugmalar: orqaga, yangilaş, bosh sahifa
+    for (k, bx) in btns.iter().enumerate() {
+        let (c, m) = ((*bx + bh / 2) as f32, (by + bh / 2) as f32);
+        let on = k != 0 || !web.hist.is_empty();
+        fill_round_rect_a(*bx, by, bh, bh, bh / 3, 0xffffff, if on { 18 } else { 8 });
+        let col = if on { 0xdbe3ee } else { 0x4a5568 };
+        let d = u as f32 / 3.5;
+        let t = (u as f32 / 12.0).max(1.2);
+        match k {
+            0 => {
+                seg(c + d * 0.4, m - d, c - d * 0.5, m, t, col);
+                seg(c - d * 0.5, m, c + d * 0.4, m + d, t, col);
+            }
+            1 => {
+                use crate::image::vector::{cos, sin};
+                for i in 0..18 {
+                    let a0 = 0.6 + i as f32 * 0.29;
+                    let a1 = a0 + 0.29;
+                    seg(c + cos(a0) * d, m + sin(a0) * d, c + cos(a1) * d, m + sin(a1) * d, t, col);
+                }
+                seg(c + cos(0.6) * d, m + sin(0.6) * d, c + cos(0.6) * d + d * 0.5, m + sin(0.6) * d - d * 0.1, t, col);
+            }
+            _ => {
+                gfx::fill_poly(&[(c, m - d), (c + d, m), (c - d, m)], col);
+                fill_rect((c - d * 0.65) as usize, m as usize, (d * 1.3) as usize, (d * 0.85) as usize, col);
+            }
+        }
+    }
+    // Manzil qatori
+    gfx::fill_round_rect(ax, ay, aw, ah, ah / 2, 0x10151f);
+    gfx::round_outline(ax, ay, aw, ah, ah / 2, if web.editing { 2 } else { 1 }, if web.editing { accent() } else { 0x2a3346 });
+    let secure = web.url.starts_with("https://");
+    let local = !web.url.contains("://") || web.url.starts_with("zamin:");
+    gfx::fill_circle(ax + u * 3 / 4, ay + ah / 2, (u / 5).max(2), if secure { 0x34c759 } else if local { 0x64d2ff } else { 0xff9f0a });
+    let shown = if web.editing { &web.edit } else { &web.url };
+    let maxw = aw.saturating_sub(u * 2);
+    let t = if web.editing {
+        let v: Vec<char> = shown.chars().collect();
+        let mut k = v.len();
+        while k > 0 && gfx::text_width(&v[k - 1..].iter().collect::<String>(), small()) < maxw {
+            k -= 1;
+        }
+        v[k..].iter().collect::<String>()
+    } else {
+        fit_text(shown, maxw, small())
+    };
+    let ex = gfx::draw_text(ax + u * 3 / 2, ay + (ah - small()) / 2, &t, 0xdbe3ee, small());
+    if web.editing {
+        fill_rect(ex + 1, ay + 4, 2, ah - 8, 0x63a8ff);
+    }
+    fill_rect(win.x + 1, py0 - 1, win.w.saturating_sub(2), 1, 0x2a3346);
+    // Sahifa
+    fill_rect(px0, py0, pw, ph, 0x161b26);
+    gfx::set_clip(px0, py0, pw, ph);
+    let (items, deco, total) = web_layout(&web.doc, pw.saturating_sub(u));
+    let sc = web.scroll.min(total.saturating_sub(ph));
+    for (x, y, w, h, c) in deco {
+        if y + h >= sc && y < sc + ph {
+            fill_rect(px0 + x, (py0 + y).saturating_sub(sc), w, h - (sc.saturating_sub(y)).min(h), c);
+        }
+    }
+    for it in &items {
+        if it.y + it.px < sc || it.y > sc + ph {
+            continue;
+        }
+        let (x, y) = (px0 + it.x, py0 + it.y - sc);
+        if it.mono {
+            gfx::draw_text_mono(x, y, &it.text, it.col, it.px);
+        } else {
+            gfx::draw_text(x, y, &it.text, it.col, it.px);
+        }
+        if it.link.is_some() {
+            let tw = it.w.saturating_sub(if it.text.ends_with(' ') { gfx::text_width(" ", it.px) } else { 0 });
+            fill_rect(x, y + it.px + 1, tw, 1, 0x2f6fb8);
+        }
+    }
+    // Aylantiriş çizig'i
+    if total > ph {
+        let th = (ph * ph / total).max(u);
+        let ty = py0 + sc * (ph - th) / (total - ph).max(1);
+        fill_round_rect_a(px0 + pw - 7, ty, 4, th, 2, 0xffffff, 60);
+    }
+    gfx::set_clip(win.x + 1, win.y + title_h(), win.w.saturating_sub(2), win.h.saturating_sub(title_h() + 1));
+    gfx::draw_text(win.x + u / 2, py0 + ph + (small() + u / 2 - small() * 4 / 5) / 2, &fit_text(&web.status, win.w - u, small() * 4 / 5), 0x7d8ca3, small() * 4 / 5);
+}
+
+fn web_max_scroll(win: &Window) -> usize {
+    let Some(web) = &win.web else { return 0 };
+    let (_, _, _, _, (_, _, pw, ph)) = web_geo(win);
+    let (_, _, total) = web_layout(&web.doc, pw.saturating_sub(body()));
+    total.saturating_sub(ph)
+}
+
+fn web_scroll(win: &mut Window, d: isize) {
+    let max = web_max_scroll(win);
+    if let Some(w) = win.web.as_mut() {
+        w.scroll = (w.scroll.min(max) as isize + d).clamp(0, max as isize) as usize;
+    }
+}
+
+fn web_back(win: &mut Window) {
+    if let Some(prev) = win.web.as_mut().and_then(|w| w.hist.pop()) {
+        web_go(win, &prev, false);
+    }
+}
+
+fn web_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    let Some(web) = &win.web else { return false };
+    let (by, bh, btns, addr, (px0, py0, pw, ph)) = web_geo(win);
+    if cy >= by && cy < by + bh {
+        if let Some(k) = btns.iter().position(|&bx| cx >= bx && cx < bx + bh) {
+            match k {
+                0 => web_back(win),
+                1 => {
+                    let u = web.url.clone();
+                    web_go(win, &u, false);
+                }
+                _ => web_go(win, "zamin://bosh", true),
+            }
+            return true;
+        }
+    }
+    if in_rect(addr, cx, cy) {
+        let w = win.web.as_mut().unwrap();
+        w.editing = true;
+        w.edit = w.url.clone();
+        return true;
+    }
+    if in_rect((px0, py0, pw, ph), cx, cy) {
+        let (items, _, total) = web_layout(&web.doc, pw.saturating_sub(body()));
+        let sc = web.scroll.min(total.saturating_sub(ph));
+        let (lx, ly) = (cx - px0, cy - py0 + sc);
+        let hit = items.iter().find(|it| lx >= it.x && lx < it.x + it.w && ly >= it.y && ly < it.y + it.px * 14 / 10).and_then(|it| it.link.clone());
+        let base = web.url.clone();
+        win.web.as_mut().unwrap().editing = false;
+        if let Some(href) = hit {
+            let target = crate::net::http::join(&base, &href);
+            web_go(win, &target, true);
+        }
+        return true;
+    }
+    false
+}
+
+fn web_key(win: &mut Window, code: u16, shift: bool) {
+    let Some(web) = win.web.as_mut() else { return };
+    if web.editing {
+        match code {
+            28 => {
+                let u = web.edit.clone();
+                web_go(win, &u, true);
+            }
+            14 => {
+                web.edit.pop();
+            }
+            _ => {
+                if let Some(c) = keycode_char(code, shift) {
+                    if web.edit.len() < 300 {
+                        web.edit.push(c);
+                    }
+                }
+            }
+        }
+        return;
+    }
+    let (_, _, _, _, (_, _, _, ph)) = web_geo(win);
+    let step = (body() * 2) as isize;
+    match code {
+        103 => web_scroll(win, -step),
+        108 => web_scroll(win, step),
+        104 => web_scroll(win, -(ph as isize - step)),
+        109 | 57 => web_scroll(win, ph as isize - step),
+        102 => web_scroll(win, -(1 << 30)),
+        107 => web_scroll(win, 1 << 30),
+        14 => web_back(win),
+        63 => {
+            let u = win.web.as_ref().map(|w| w.url.clone()).unwrap_or_default();
+            web_go(win, &u, false);
+        }
+        _ => {}
+    }
+}
+
+// ---------------- Chizma (rasm chiziş) ----------------
+
+const PAINT_COLORS: [Color; 10] = [0x111111, 0xffffff, 0xff3b30, 0xff9500, 0xffcc00, 0x34c759, 0x00c7be, 0x007aff, 0xaf52de, 0x8e5a35];
+const PAINT_SIZES: [usize; 3] = [2, 5, 11];
+
+fn paint_new(win: &mut Window) {
+    let (w, h) = (720, 450);
+    win.img = Some(crate::image::Image { w, h, px: alloc::vec![0xffffff; w * h] });
+    win.frame = 0;
+    win.play_pos = 1;
+    win.tab = 0;
+    win.dirty = false;
+}
+
+/// Chizma geometriyasi: asboblar qatori y, balandligi; tuval ekrandagi töğriburçagi.
+fn paint_geo(win: &Window) -> (usize, usize, (usize, usize, usize, usize)) {
+    let u = body();
+    let ty = win.y + title_h();
+    let th = u * 5 / 2;
+    let (cw, ch) = win.img.as_ref().map(|i| (i.w, i.h)).unwrap_or((1, 1));
+    let ax = win.x + u / 2;
+    let ay = ty + th + u / 3;
+    let aw = win.w.saturating_sub(u);
+    let ah = (win.y + win.h).saturating_sub(ay + u / 2);
+    let (w, h) = if aw * ch <= ah * cw { (aw, aw * ch / cw) } else { (ah * cw / ch, ah) };
+    (ty, th, (ax + (aw - w) / 2, ay + (ah - h) / 2, w.max(1), h.max(1)))
+}
+
+/// Asboblar: 0..2 — qalam/öçirgiç/…, ranglar, ölçamlar, tugmalar (x, y, w, h, amal).
+fn paint_tools(win: &Window) -> Vec<((usize, usize, usize, usize), u8, usize)> {
+    let u = body();
+    let (ty, th, _) = paint_geo(win);
+    let s = u * 3 / 2;
+    let y = ty + (th - s) / 2;
+    let mut v = Vec::new();
+    let mut x = win.x + u / 2;
+    for k in 0..2 {
+        v.push(((x, y, s, s), 0u8, k));
+        x += s + u / 4;
+    }
+    x += u / 2;
+    for k in 0..PAINT_SIZES.len() {
+        v.push(((x, y, s, s), 1, k));
+        x += s + u / 6;
+    }
+    x += u / 2;
+    let cs = s * 3 / 4;
+    for k in 0..PAINT_COLORS.len() {
+        v.push(((x, y + (s - cs) / 2, cs, cs), 2, k));
+        x += cs + u / 5;
+    }
+    let bw = gfx::text_width("Saqlaş", small()) + u;
+    let xs = (win.x + win.w).saturating_sub(u / 2 + bw);
+    v.push(((xs, y, bw, s), 3, 1));
+    let bw0 = gfx::text_width("Tozalaş", small()) + u;
+    v.push(((xs.saturating_sub(bw0 + u / 3), y, bw0, s), 3, 0));
+    v
+}
+
+fn paint_stamp(win: &mut Window, x: isize, y: isize) {
+    let r = PAINT_SIZES[win.play_pos as usize % PAINT_SIZES.len()] as isize;
+    let col = if win.tab == 1 { 0xffffff } else { PAINT_COLORS[win.frame % PAINT_COLORS.len()] };
+    let Some(img) = win.img.as_mut() else { return };
+    for dy in -r..=r {
+        for dx in -r..=r {
+            if dx * dx + dy * dy <= r * r {
+                let (px, py) = (x + dx, y + dy);
+                if px >= 0 && py >= 0 && (px as usize) < img.w && (py as usize) < img.h {
+                    img.px[py as usize * img.w + px as usize] = col;
+                }
+            }
+        }
+    }
+    win.dirty = true;
+}
+
+fn paint_map(win: &Window, cx: usize, cy: usize) -> (isize, isize) {
+    let (_, _, (x, y, w, h)) = paint_geo(win);
+    let (cw, ch) = win.img.as_ref().map(|i| (i.w, i.h)).unwrap_or((1, 1));
+    (((cx as isize - x as isize) * cw as isize / w as isize), ((cy as isize - y as isize) * ch as isize / h as isize))
+}
+
+/// Oxirgi nuqtadan joriy nuqtagaça chiziq.
+fn paint_drag(win: &mut Window, cx: usize, cy: usize) {
+    let Some((lx, ly)) = win.pen else { return };
+    let (x, y) = paint_map(win, cx, cy);
+    let (lx, ly) = (lx as isize, ly as isize);
+    let r = PAINT_SIZES[win.play_pos as usize % PAINT_SIZES.len()] as isize;
+    let d = ((x - lx).abs().max((y - ly).abs())).max(1);
+    let step = (r / 2).max(1);
+    let n = d / step + 1;
+    for k in 1..=n {
+        paint_stamp(win, lx + (x - lx) * k / n, ly + (y - ly) * k / n);
+    }
+    win.pen = Some((x.max(0) as usize, y.max(0) as usize));
+}
+
+fn paint_save(win: &mut Window) {
+    use crate::abi::{OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
+    let Some(img) = win.img.as_ref() else { return };
+    let png = crate::image::png_enc::encode(img.w, img.h, &img.px);
+    let t = time::now();
+    let dir = if fs::list("~/Rasmlar").is_ok() { "~/Rasmlar" } else { "~" };
+    let path = unique_dest(&path_join(dir, &alloc::format!("chizma-{:02}{:02}{:02}.png", t.hour, t.minute, t.second)));
+    match fs::open(&path, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE).and_then(|id| fs::write(id, Some(0), &png)) {
+        Ok(_) => {
+            let _ = fs::commit();
+            win.dirty = false;
+            notify("Chizma saqlandi", &alloc::format!("{} · {} KB", path.rsplit('/').next().unwrap_or(""), png.len() / 1024), 0x2fbf5f);
+        }
+        Err(e) => notify("Saqlab bölmadi", &alloc::format!("{:?}", e), 0xff453a),
+    }
+}
+
+fn paint_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    for (r, kind, k) in paint_tools(win) {
+        if in_rect(r, cx, cy) {
+            match kind {
+                0 => win.tab = k,
+                1 => win.play_pos = k as u32,
+                2 => {
+                    win.frame = k;
+                    win.tab = 0;
+                }
+                _ => {
+                    if k == 0 {
+                        let (w, h) = win.img.as_ref().map(|i| (i.w, i.h)).unwrap_or((720, 450));
+                        win.img = Some(crate::image::Image { w, h, px: alloc::vec![0xffffff; w * h] });
+                        win.dirty = false;
+                    } else {
+                        paint_save(win);
+                    }
+                }
+            }
+            return true;
+        }
+    }
+    let (_, _, cr) = paint_geo(win);
+    if in_rect(cr, cx, cy) {
+        let (x, y) = paint_map(win, cx, cy);
+        paint_stamp(win, x, y);
+        win.pen = Some((x.max(0) as usize, y.max(0) as usize));
+        return true;
+    }
+    false
+}
+
+fn draw_paint(win: &Window) {
+    let u = body();
+    let (ty, th, (x, y, w, h)) = paint_geo(win);
+    fill_rect(win.x + 1, ty, win.w.saturating_sub(2), th, 0x1f2636);
+    fill_rect(win.x + 1, ty + th, win.w.saturating_sub(2), 1, 0x2a3346);
+    for (r, kind, k) in paint_tools(win) {
+        let (bx, by, bw, bh) = r;
+        match kind {
+            0 => {
+                let on = win.tab == k;
+                fill_round_rect_a(bx, by, bw, bh, bh / 4, if on { accent() } else { 0xffffff }, if on { 230 } else { 16 });
+                let (c, m) = ((bx + bw / 2) as f32, (by + bh / 2) as f32);
+                let d = bw as f32 * 0.28;
+                if k == 0 {
+                    seg(c - d, m + d, c + d, m - d, (bw as f32 / 9.0).max(1.5), OQ);
+                    gfx::fill_circle((c - d) as usize, (m + d) as usize, (bw / 10).max(2), PAINT_COLORS[win.frame % 10]);
+                } else {
+                    gfx::fill_round_rect((c - d) as usize, (m - d * 0.6) as usize, (d * 2.0) as usize, (d * 1.2) as usize, 3, 0xff9fb4);
+                    fill_rect((c - d) as usize, (m + d * 0.2) as usize, (d * 2.0) as usize, (d * 0.4) as usize, 0xe0e6ee);
+                }
+            }
+            1 => {
+                let on = win.play_pos as usize == k;
+                fill_round_rect_a(bx, by, bw, bh, bh / 4, 0xffffff, if on { 60 } else { 12 });
+                gfx::fill_circle(bx + bw / 2, by + bh / 2, (PAINT_SIZES[k] * bw / 30).clamp(2, bw / 2 - 2), 0xe7edf6);
+            }
+            2 => {
+                let on = win.frame == k && win.tab == 0;
+                if on {
+                    gfx::fill_circle(bx + bw / 2, by + bh / 2, bw / 2 + 3, OQ);
+                }
+                gfx::fill_circle(bx + bw / 2, by + bh / 2, bw / 2, PAINT_COLORS[k]);
+                gfx::fill_circle(bx + bw / 2, by + bh / 2, bw / 2, PAINT_COLORS[k]);
+            }
+            _ => {
+                let (lbl, col) = if k == 0 { ("Tozalaş", 0x3a4458) } else { ("Saqlaş", if win.dirty { 0x30c85a } else { 0x2a6b3d }) };
+                gfx::fill_round_rect(bx, by, bw, bh, bh / 3, col);
+                gfx::draw_text_centered(bx + bw / 2, by + (bh - small()) / 2, lbl, OQ, small());
+            }
+        }
+    }
+    gfx::shadow(x, y, w, h, 2, 6);
+    if let Some(img) = &win.img {
+        gfx::blit_scaled(x, y, w, h, img.w, img.h, &img.px);
+    }
+    let _ = u;
+}
+
+// ---------------- Soat: sekundomer va taymer ----------------
+
+const CLOCK_TABS: [&str; 3] = ["Soat", "Sekundomer", "Taymer"];
+
+fn clock_tabs(win: &Window) -> Vec<(usize, usize, usize, usize)> {
+    let u = body();
+    let tw = (win.w.saturating_sub(u * 2)).min(u * 18);
+    let x0 = win.x + (win.w - tw) / 2;
+    let y = win.y + title_h() + u / 2;
+    let h = u * 3 / 2;
+    (0..3).map(|k| (x0 + k * tw / 3, y, tw / 3, h)).collect()
+}
+
+/// Sekundomer/taymer tugmalari: [chap, öng] (x, y, w, h).
+fn clock_btns(win: &Window) -> [(usize, usize, usize, usize); 2] {
+    let u = body();
+    let bw = u * 6;
+    let bh = u * 2;
+    let y = (win.y + win.h).saturating_sub(u + bh);
+    let cx = win.x + win.w / 2;
+    [(cx - bw - u / 2, y, bw, bh), (cx + u / 2, y, bw, bh)]
+}
+
+fn sw_elapsed(win: &Window) -> u64 {
+    win.play_pos as u64 + if win.playing { crate::timer::uptime_ms().saturating_sub(win.play_t) } else { 0 }
+}
+
+fn clock_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    if let Some(k) = clock_tabs(win).iter().position(|&r| in_rect(r, cx, cy)) {
+        win.tab = k;
+        return true;
+    }
+    let [l, r] = clock_btns(win);
+    let now = crate::timer::uptime_ms();
+    match win.tab {
+        1 => {
+            if in_rect(l, cx, cy) {
+                win.playing = false;
+                win.play_pos = 0;
+                win.lines.clear();
+                return true;
+            }
+            if in_rect(r, cx, cy) {
+                if win.playing {
+                    win.play_pos = sw_elapsed(win) as u32;
+                    win.playing = false;
+                } else {
+                    win.play_t = now;
+                    win.playing = true;
+                }
+                return true;
+            }
+        }
+        2 => {
+            if in_rect(l, cx, cy) {
+                if win.frame_ms != 0 {
+                    win.frame_ms = 0; // bekor
+                } else {
+                    win.frame = match win.frame {
+                        60 => 180,
+                        180 => 300,
+                        300 => 600,
+                        600 => 30,
+                        _ => 60,
+                    };
+                }
+                return true;
+            }
+            if in_rect(r, cx, cy) {
+                if win.frame_ms == 0 {
+                    win.frame_ms = now + win.frame as u64 * 1000;
+                }
+                return true;
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
+fn fmt_ms(ms: u64, cs: bool) -> String {
+    let (m, s) = (ms / 60000, (ms / 1000) % 60);
+    if cs { alloc::format!("{:02}:{:02}.{:02}", m, s, (ms / 10) % 100) } else { alloc::format!("{:02}:{:02}", m, s) }
+}
+
+fn draw_clock_tabs(win: &Window) {
+    let u = body();
+    let tabs = clock_tabs(win);
+    let (x0, y, _, h) = tabs[0];
+    let tw: usize = tabs.iter().map(|t| t.2).sum();
+    gfx::fill_round_rect(x0, y, tw, h, h / 2, 0x10151f);
+    for (k, &(x, y, w, h)) in tabs.iter().enumerate() {
+        if k == win.tab {
+            gfx::fill_round_rect(x + 2, y + 2, w - 4, h - 4, (h - 4) / 2, 0x3a4458);
+        }
+        gfx::draw_text_centered(x + w / 2, y + (h - small() * 9 / 10) / 2, CLOCK_TABS[k], if k == win.tab { OQ } else { 0x8ea0b6 }, small() * 9 / 10);
+    }
+    let _ = u;
+}
+
+fn draw_clock_extra(win: &Window) {
+    let u = body();
+    let top = clock_tabs(win)[0].1 + u * 2;
+    let [l, r] = clock_btns(win);
+    let mid = (top + l.1) / 2;
+    let big = (u * 3).min(win.w / 6);
+    let btn = |rc: (usize, usize, usize, usize), lbl: &str, col: Color| {
+        gfx::fill_round_rect(rc.0, rc.1, rc.2, rc.3, rc.3 / 2, col);
+        gfx::draw_text_centered(rc.0 + rc.2 / 2, rc.1 + (rc.3 - small()) / 2, lbl, OQ, small());
+    };
+    if win.tab == 1 {
+        let t = fmt_ms(sw_elapsed(win), true);
+        gfx::draw_text_centered(win.x + win.w / 2, mid.saturating_sub(big / 2), &t, OQ, big);
+        btn(l, "Qayta", 0x3a4458);
+        if win.playing { btn(r, "Töxtatiş", 0xd83b33) } else { btn(r, "Boşlaş", 0x2fbf5f) }
+    } else {
+        let now = crate::timer::uptime_ms();
+        let left = if win.frame_ms != 0 { win.frame_ms.saturating_sub(now) } else { win.frame as u64 * 1000 };
+        let total = (win.frame as u64 * 1000).max(1);
+        let cx = win.x + win.w / 2;
+        let rr = ((l.1 - top) / 2).saturating_sub(u / 2).max(u * 2);
+        let pct = if win.frame_ms != 0 { (left * 100 / total) as u32 } else { 100 };
+        ring(cx, top + (l.1 - top) / 2, rr, (u / 2).max(6), pct, 0x262f40, 0xff9f0a);
+        let t = fmt_ms(left + 999, false);
+        let tb = big * 3 / 4;
+        gfx::draw_text_centered(cx, top + (l.1 - top) / 2 - tb / 2, &t, OQ, tb);
+        if win.frame_ms != 0 {
+            btn(l, "Bekor", 0x3a4458);
+            btn(r, "Ketyapti…", 0x7a5200);
+        } else {
+            btn(l, "Vaqtni almaşt.", 0x3a4458);
+            btn(r, "Boşlaş", 0xff9f0a);
+        }
+    }
+}
+
+// ---------------- Dok kontekst menyusi ----------------
+
+fn dock_ctx(windows: &[Window], cx: usize, cy: usize) -> Option<Ctx> {
+    let (sw, sh) = gfx::size();
+    let i = (0..LAUNCHERS.len()).find(|&i| {
+        let (ix, iy, isz) = dock_icon_rect(sw, sh, i);
+        in_rect((ix, iy, isz, isz), cx, cy)
+    })?;
+    let l = &LAUNCHERS[i];
+    let s = |t: &str| String::from(t);
+    let open = windows.iter().filter(|w| win_of_launcher(w, l.kind)).count();
+    let mut items: Vec<(String, CAct)> = alloc::vec![(String::from(l.label), CAct::Sep), (s("Sep"), CAct::Sep)];
+    items.clear();
+    if open > 0 {
+        items.push((s("Körsatiş"), CAct::Focus(l.kind)));
+    }
+    items.push((s(if open > 0 { "Yangi oyna" } else { "Oçiş" }), CAct::App(l.kind)));
+    if l.kind == Kind::Trash && trash_count() > 0 {
+        items.push((s("Sep"), CAct::Sep));
+        items.push((s("Savatni böşatiş"), CAct::EmptyTrash));
+    }
+    if open > 0 {
+        items.push((s("Sep"), CAct::Sep));
+        items.push((alloc::format!("Yopiş ({})", open), CAct::CloseApp(l.kind)));
+    }
+    let (ix, _, isz) = dock_icon_rect(sw, sh, i);
+    Some(Ctx { x: ix + isz / 2, y: usize::MAX, items })
 }

@@ -102,6 +102,38 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   papka yöq bölsa — uyga) va **Böşatiş**; dokdagi savat töla bölsa — qogʻozlar körinadi.
   Nuqta bilan boşlanadigan yaşirin fayllar körsatilmaydi.
 
+### Brauzer: HTTP, HTTPS va HTML — noldan
+
+| HTTP (mahalliy server) | HTTPS — haqiqiy internet (example.com, TLS 1.3) |
+|---|---|
+| ![HTTP sahifa](docs/browser-http.png) | ![HTTPS sahifa](docs/browser-https.png) |
+
+- **`net::http`** — HTTP/1.1 GET mijozi: `http://` (TCP) va `https://` (öz TLS 1.3 stekimiz:
+  X25519 + ChaCha20-Poly1305 + X.509), yönaltirişlar, `chunked`, Content-Length bilan
+  erta tugatiş, vaqt çeklovlari, nisbiy havolalarni yeçiş.
+- **`html`** — HTML tahlilçisi: sarlavhalar, xatboşilar, tartibli/tartibsiz ro'yxatlar,
+  havolalar, qalin, `kod`, `<pre>`, iqtiboslar, `<hr>`, belgilar (`&amp;` `&#NN;`),
+  `<script>`/`<style>` taşlanadi.
+- Manzil qatori, orqaga / yangilaş / bosh sahifa, havolani bosib ötiş, aylantiriş
+  (gʻildirak, strelkalar, PgUp/PgDn, Space), holat qatori (HTTP kodi, hajm, vaqt).
+- Ichki sahifalar `zamin://bosh`, `zamin://haqida`; mahalliy `.html` fayllar Fayllardan
+  brauzerda oçiladi (namuna: `~/Hujjatlar/zamin.html`).
+
+### Chizma, Soat (sekundomer, taymer) va dok menyusi
+
+| Chizma + Taymer | Sekundomer |
+|---|---|
+| ![Chizma va taymer](docs/paint-clock.png) | ![Sekundomer](docs/stopwatch.png) |
+
+- **Chizma** — qalam va öçirgiç, 3 ölçam, 10 rang, tuval 720×450; **Saqlaş** —
+  PNG (öz kodlovçimiz) `~/Rasmlar/chizma-HHMMSS.png` ga.
+- **Soat** — 3 bölim: analog soat, **sekundomer** (yuzdan bir soniya aniqligida, töxtatiş/
+  qayta), **taymer** (30 s … 10 daq, halqa körsatkiç, tugaganda bildirişnoma).
+- **Dok kontekst menyusi** (öng tugma): Körsatiş, Yangi oyna / Oçiş, Yopiş (N),
+  savat uçun — Savatni böşatiş.
+
+<img src="docs/dock-menu.png" width="420">
+
 ### Oyna yopiştiriş, sudrab tashlaş va ekran rasmi
 
 | Yopiştiriş (çap/öng yarim) + matn muharriri | Faylni sudrab tashlaş |
@@ -690,7 +722,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.21**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.22**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -739,5 +771,8 @@ bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.21 — **Ish unumdorligi**: oyna yopiştiriş (yarim/toʻliq ekran), sarlavhani ikki marta
   bosiş, fayllarni sudrab tashlaş (papka, yon panel, savat), ekran rasmi (PNG kodlovçi noldan),
   haqiqiy kursorli matn muharriri, AltGr bilan oʻzbekça harflar, Boşqotirma öyini.
+- 0.0.22 — **Haqiqiy brauzer**: HTTP/1.1 + HTTPS (öz TLS 1.3) va HTML tahlilçi/joylaşuv —
+  haqiqiy internet sahifalari oçiladi; **Chizma** (PNG saqlaş), Soatda **sekundomer** va
+  **taymer**, dok kontekst menyusi.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
