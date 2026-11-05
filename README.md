@@ -86,6 +86,43 @@ saqlanadi (`fon_yol=`) va Sozlamalarda 5-variant — **"Sizning rasmingiz"** bö
 (Qulf ekranida — foydalanuvçi fayllari hali şifrlangan bölgani uçun — asosiy foto
 körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlanmaydi.
 
+### Fayl boshqaruvi va Savat
+
+![Fayllar va Savat](docs/file-manager.png)
+
+- **Bir marta bosiş — tanlaş, ikki marta — oçiş**; strelkalar bilan yuriş, `Enter` — oçiş,
+  `Backspace` — ota papka.
+- **`F2` (yoki öng tugma → Nomini özgartiriş)** — joyida tahrirlanadigan nom maydoni
+  (`Enter` — saqlaş, `Esc` — bekor). Fayl tizimida yangi `fs::rename` — maʼlumot
+  nusxalanmaydi, tugun yangi joyga ulanadi.
+- **Nusxa olish / Kesiş / Joylaş** — `Alt+C`, `Alt+X`, `Alt+V` yoki kontekst menyusi;
+  papkalar içidagilari bilan nusxalanadi, band nom bölsa `nom (2).txt`.
+- **Haqiqiy Savat** — `Delete` yoki "Savatga tashlaş": fayl `~/.Savat` ga köçadi, asl
+  joyi `~/.Savat/.joylar` indeksida saqlanadi. Savat oynasida **Tiklaş** (asl joyiga,
+  papka yöq bölsa — uyga) va **Böşatiş**; dokdagi savat töla bölsa — qogʻozlar körinadi.
+  Nuqta bilan boşlanadigan yaşirin fayllar körsatilmaydi.
+
+### Kalkulyator va Tizim monitori
+
+![Kalkulyator va Tizim monitori](docs/calc-monitor.png)
+
+- **Kalkulyator** — siçqon yoki klaviatura (raqamlar, `+ - * / ( ) %`, `Enter`/`=`,
+  `Backspace`, `C`); ifoda qavslar va ustuvorlik bilan hisoblanadi, oldingi ifoda
+  displey tepasida körinadi.
+- **Tizim monitori** — oxirgi 60 soniyalik CPU grafigi (rejalaştiruvçi namunalari),
+  RAM/uyum/disk, barça vazifalar jadvali (PID, nomi, holati, turi, yadro raqami);
+  dastur jarayonini tanlab **Tugatiş** (`task::kill`, ruxsat tekşiruvi bilan).
+
+### Rasm va video köruvçi
+
+| Rasm: oldingi / keyingi | Video: ijro / pauza va progress |
+|---|---|
+| ![Rasm köruvçi](docs/image-viewer.png) | ![Video pleer](docs/video-player.png) |
+
+Papkada bir nechta rasm bölsa — çap/öng **strelkalar** (yoki `←`/`→`) bilan almaşadi,
+pastda "2 / 4". Video oynasida **ijro/pauza** tugmasi (`Space`), kadrlar böyiça
+**progress chizig'i** (bosib kerakli joyga ötiladi) va vaqt.
+
 ### Tezkor qidiruv (Alt+Space)
 
 <img src="docs/search.png" width="420" align="right">
@@ -113,6 +150,8 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
 | `Alt+W` | Faol oynani yopiş |
 | `Alt+M` | Faol oynani dokka yashiriş |
 | `Alt+F` | Kattalaştiriş / oldingi ölçam |
+| `Alt+C` / `Alt+X` / `Alt+V` | Fayllarda: nusxa olish / kesiş / joylaş |
+| `F2`, `Delete` | Fayllarda: nomini özgartiriş, savatga tashlaş |
 | `Esc` | Menyu, bildirişnomalar paneli va almaştirgiçni yopiş |
 
 **Bildirişnomalar** öng yuqoridan sirpanib çiqadi (4.5 s, bosilsa yopiladi), menyu
@@ -627,7 +666,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.19**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.20**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -669,5 +708,9 @@ bosqiç (etap) yakunlanganda kötariladi.
   diskka saqlaş; Tarmoq/Övoz/Foydalanuvçilar/Xavfsizlik bölimlari haqiqiy maʼlumot bilan.
 - 0.0.19 — **Kontekst menyulari** (öng tugma: Fayllar, ish stoli), **öz rasmini fon qilish**,
   yangi papka va öçiriş, eskizlar keşi, Rasmlar'da yangi namuna foto (saroy.jpg).
+- 0.0.20 — **Fayl boshqaruvi va yangi ilovalar**: haqiqiy Savat (tiklaş/böşatiş),
+  nomini özgartiriş (`fs::rename`), nusxa/kesiş/joylaş, klaviatura bilan tanlaş;
+  **Kalkulyator**, **Tizim monitori** (CPU grafigi, jarayonlar, tugatiş); rasm
+  köruvçida oldingi/keyingi, video pleerda ijro/pauza va progress; 12 ta dok ikonasi.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

@@ -64,6 +64,9 @@ enum Kind {
     Music,
     Settings,
     Trash,
+    Calc,
+    Monitor,
+    Info,
 }
 
 impl Kind {
@@ -159,6 +162,10 @@ struct Window {
     tab: usize,         // Sozlamalar: tanlangan bölim
     hidden: bool,       // dokka yashirilgan (sariq tugma)
     saved: Option<(usize, usize, usize, usize)>, // kattalashtirişdan oldingi (x, y, w, h)
+    fsel: Option<usize>, // Fayllar/Savat: tanlangan element; Monitor: tanlangan PID
+    lclick: (u64, usize), // ikki marta bosiş: (vaqt, element)
+    rename: Option<String>, // Fayllar: nomini özgartiriş maydoni
+    video: bool,        // Rasm oynasi video ijro qilyaptimi
 }
 
 impl Window {
@@ -240,12 +247,14 @@ struct Launcher {
     color: Color,
 }
 
-const LAUNCHERS: [Launcher; 10] = [
+const LAUNCHERS: [Launcher; 12] = [
     Launcher { label: "Zamin", kind: Kind::About, color: 0x34c759 },
     Launcher { label: "Brauzer", kind: Kind::Browser, color: 0x1e88e5 },
     Launcher { label: "Fayllar", kind: Kind::Files, color: 0x2f88ff },
     Launcher { label: "Terminal", kind: Kind::Terminal, color: 0x2b3440 },
     Launcher { label: "Kod", kind: Kind::Code, color: 0x7c5cff },
+    Launcher { label: "Kalkulyator", kind: Kind::Calc, color: 0xff9f0a },
+    Launcher { label: "Tizim monitori", kind: Kind::Monitor, color: 0x1f9d55 },
     Launcher { label: "Video", kind: Kind::Video, color: 0x8257ff },
     Launcher { label: "Musiqa", kind: Kind::Music, color: 0xff7a2f },
     Launcher { label: "Rasmlar", kind: Kind::Image, color: 0x3a9bff },
@@ -318,6 +327,10 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         tab: 0,
         hidden: false,
         saved: None,
+        fsel: None,
+        lclick: (0, usize::MAX),
+        rename: None,
+        video: false,
     }
 }
 
@@ -350,7 +363,7 @@ fn new_window(kind: Kind, n: usize) -> Window {
             let mut win = base(x, y, w, h, kind, String::from("Fayllar"), Vec::new());
             // Yon panel: uy papkasidagi papkalar
             let mut dirs: Vec<String> =
-                fs::list("~").unwrap_or_default().into_iter().filter(|e| e.is_dir).map(|e| e.name).collect();
+                fs::list("~").unwrap_or_default().into_iter().filter(|e| e.is_dir && !e.name.starts_with('.')).map(|e| e.name).collect();
             dirs.sort();
             win.side = dirs;
             load_dir(&mut win, "~");
@@ -418,11 +431,23 @@ fn new_window(kind: Kind, n: usize) -> Window {
             win
         }
         Kind::Trash => {
-            let (w, h) = (u * 24, u * 13);
+            let (w, h) = (u * 30, u * 18);
             let (x, y) = place(w, h);
-            base(x, y, w, h, kind, String::from("Savat"), alloc::vec![
-                String::from("Savat böş"),
-            ])
+            let mut win = base(x, y, w, h, kind, String::from("Savat"), Vec::new());
+            load_trash(&mut win);
+            win
+        }
+        Kind::Calc => {
+            let (w, h) = (u * 15, u * 22);
+            let (x, y) = place(w, h);
+            let mut win = base(x, y, w, h, kind, String::from("Kalkulyator"), Vec::new());
+            win.input = String::from("0");
+            win
+        }
+        Kind::Monitor => {
+            let (w, h) = (u * 34, u * 25);
+            let (x, y) = place(w, h);
+            base(x, y, w, h, kind, String::from("Tizim monitori"), Vec::new())
         }
         _ => {
             let (w, h) = (u * 25, u * 15);
@@ -437,6 +462,9 @@ fn load_dir(win: &mut Window, path: &str) {
     win.path = String::from(path);
     win.rows.clear();
     let mut entries = fs::list(path).unwrap_or_default();
+    entries.retain(|e| !e.name.starts_with('.')); // yaşirin fayllar (.Savat va h.k.)
+    win.fsel = None;
+    win.rename = None;
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
     win.thumbs.clear();
     for e in entries {
@@ -532,6 +560,8 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
             win.title = alloc::format!("Video — {} ({} kadr)", name, frames.len());
             win.frames = frames;
             win.frame_ms = crate::timer::uptime_ms();
+            win.video = true;
+            win.playing = true;
         } else if let Some(vi) = crate::video::info(&data) {
             // taniladi, ammo dekod qilinmaydi — metama'lumotni körsatamiz
             win.lines = alloc::vec![
@@ -552,32 +582,15 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
     let is_img = FKind::of(name, false) == FKind::Image || crate::image::format_name(&data).is_some();
     if is_img {
         let (w, h) = (u * 28, u * 22);
-        let mut win = base(x.min(sw - w), y, w, h, Kind::Image, alloc::format!("Rasm — {}", name), Vec::new());
-        win.path = String::from(path);
-        // Harakatli rasm (GIF/APNG)?
-        if let Some(frames) = crate::image::decode_frames(name, &data).filter(|f| f.len() > 1) {
-            win.title = alloc::format!("Rasm — {} ({} kadr)", name, frames.len());
-            win.frames = frames;
-            win.frame_ms = crate::timer::uptime_ms();
-        } else {
-            win.img = crate::image::decode_file(name, &data);
-        }
-        if win.img.is_none() && win.frames.is_empty() {
-            let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_uppercase()).unwrap_or_default();
-            win.lines = alloc::vec![
-                alloc::format!("{} formati hali qöllanmaydi", ext),
-                String::new(),
-                String::from("Qöllanadi: PNG, JPEG, GIF, BMP, TGA,"),
-                String::from("PCX, ICO, QOI, PNM (PBM/PGM/PPM)"),
-            ];
-        }
+        let mut win = base(x.min(sw - w), y, w, h, Kind::Image, String::new(), Vec::new());
+        image_load(&mut win, path, &data);
         windows.push(win);
         return;
     }
     // ELF dastur?
     if data.starts_with(b"\x7fELF") {
         let (w, h) = (u * 24, u * 10);
-        let mut win = base(x.min(sw - w), y, w, h, Kind::About, alloc::format!("Dastur — {}", name), Vec::new());
+        let mut win = base(x.min(sw - w), y, w, h, Kind::Info, alloc::format!("Dastur — {}", name), Vec::new());
         win.lines = alloc::vec![
             alloc::format!("{}", name),
             alloc::format!("ELF dasturi · {} bayt", data.len()),
@@ -595,6 +608,74 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
     win.path = String::from(path);
     win.input = input;
     windows.push(win);
+}
+
+/// Rasm oynasiga faylni yuklaydi (oldingi/keyingi rasmga ötişda ham).
+fn image_load(win: &mut Window, path: &str, data: &[u8]) {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    win.path = String::from(path);
+    win.title = alloc::format!("Rasm — {}", name);
+    win.img = None;
+    win.frames.clear();
+    win.frame = 0;
+    win.lines.clear();
+    // Harakatli rasm (GIF/APNG)?
+    if let Some(frames) = crate::image::decode_frames(name, data).filter(|f| f.len() > 1) {
+        win.title = alloc::format!("Rasm — {} ({} kadr)", name, frames.len());
+        win.frames = frames;
+        win.frame_ms = crate::timer::uptime_ms();
+    } else {
+        win.img = crate::image::decode_file(name, data);
+    }
+    if win.img.is_none() && win.frames.is_empty() {
+        let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_uppercase()).unwrap_or_default();
+        win.lines = alloc::vec![
+            alloc::format!("{} formati hali qöllanmaydi", ext),
+            String::new(),
+            String::from("Qöllanadi: PNG, APNG, JPEG, GIF, BMP, TGA,"),
+            String::from("PCX, ICO, QOI, PNM, SVG, PDF, EPS, DXF, WMF"),
+        ];
+    }
+}
+
+/// "Rasmlar" ilovasi: ~/Rasmlar dagi birinçi rasm (yöq bölsa — namuna manzara).
+fn open_pictures(windows: &mut Vec<Window>, n: usize) {
+    let dir = String::from("~/Rasmlar");
+    let first = image_siblings(&path_join(&dir, "_")).into_iter().next();
+    match first {
+        Some(p) => open_file(windows, &p, n),
+        None => windows.push(new_window(Kind::Image, n)),
+    }
+}
+
+/// Şu papkadagi rasmlar (video emas), alifbo tartibida.
+fn image_siblings(path: &str) -> Vec<String> {
+    let dir = match path.rsplit_once('/') {
+        Some((d, _)) if !d.is_empty() => d,
+        _ => "/",
+    };
+    let mut v: Vec<String> = fs::list(dir)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|e| !e.is_dir && !e.name.starts_with('.') && FKind::of(&e.name, false) == FKind::Image && !crate::video::is_video_ext(&e.name))
+        .map(|e| path_join(dir, &e.name))
+        .collect();
+    v.sort();
+    v
+}
+
+/// Oldingi (-1) yoki keyingi (+1) rasmga ötadi.
+fn image_step(win: &mut Window, d: isize) {
+    let sib = image_siblings(&win.path);
+    if sib.len() < 2 {
+        return;
+    }
+    let cur = sib.iter().position(|p| *p == win.path).unwrap_or(0) as isize;
+    let n = sib.len() as isize;
+    let next = &sib[((cur + d) % n + n) as usize % n as usize];
+    let data = fs::read_all(next).unwrap_or_default();
+    let next = next.clone();
+    image_load(win, &next, &data);
 }
 
 /// Oynaga haqiqiy `/dasturlar/terminal` (EL0) jarayonini quvurlar bilan ulaydi.
@@ -1014,7 +1095,10 @@ fn desktop() {
         notif_open: false,
         search: None,
         ctx: None,
+        fclip: None,
     };
+    TRASH_N.store(usize::MAX, Ordering::Relaxed); // yangi foydalanuvçi — qayta hisoblanadi
+    CPU_HIST.lock().clear();
     let mut alt = false;
     {
         let name = accounts::current().map(|a| if a.full_name.is_empty() { a.username } else { a.full_name }).unwrap_or_default();
@@ -1033,6 +1117,13 @@ fn desktop() {
             last_sec = sec;
             // menyu soati, CPU halqasi va soat oynasi — har soniyada
             desk.cpu = task::cpu_load();
+            {
+                let mut h = CPU_HIST.lock();
+                h.push(desk.cpu);
+                if h.len() > 60 {
+                    h.remove(0);
+                }
+            }
             if sec % 5 == 0 {
                 desk.icons = home_icons();
             }
@@ -1105,16 +1196,16 @@ fn desktop() {
         // Harakatli rasm (GIF) kadrlarini vaqtiga qarab almaştiramiz
         let now_ms = crate::timer::uptime_ms();
         for win in windows.iter_mut() {
-            if win.frames.len() > 1 {
-                let delay = win.frames[win.frame].1.max(20) as u64;
+            if win.frames.len() > 1 && (!win.video || win.playing) {
+                let delay = win.frames[win.frame.min(win.frames.len() - 1)].1.max(20) as u64;
                 if now_ms.wrapping_sub(win.frame_ms) >= delay {
-                    win.frame = (win.frame + 1) % win.frames.len();
+                    win.frame = (win.frame + 1) % win.frames.len(); // video ham takrorlanadi
                     win.frame_ms = now_ms;
                     changed = true;
                 }
             }
             // Övoz ijrosi bosh (playhead) vaqtga qarab oldinga suriladi
-            if win.playing {
+            if win.playing && !win.video {
                 if let Some(dur) = win.clip.as_ref().map(|c| c.duration_ms()) {
                     let dt = now_ms.wrapping_sub(win.play_t) as u32;
                     win.play_t = now_ms;
@@ -1254,6 +1345,10 @@ fn desktop() {
                         changed = true;
                     }
                 }
+                (input::EV_KEY, 1) if e.value == 1 && windows.last().is_some_and(|w| w.rename.is_some()) => {
+                    windows.last_mut().unwrap().rename = None; // nomini özgartirişni bekor qiliş
+                    changed = true;
+                }
                 (input::EV_KEY, 1) if e.value == 1 => {
                     // Esc — menyu, panel va almaştirgiçni yopadi
                     desk.menu = None;
@@ -1262,12 +1357,35 @@ fn desktop() {
                     desk.ctx = None;
                     changed = true;
                 }
-                (input::EV_KEY, _) if alt => {}
-                (input::EV_KEY, code) if e.value == 1 => {
-                    if let Some(w) = windows.last_mut().filter(|w| !w.hidden && w.kind.takes_keys()) {
-                        type_key(w, code, shift);
+                (input::EV_KEY, 46) | (input::EV_KEY, 45) | (input::EV_KEY, 47) if e.value == 1 && alt => {
+                    // Alt+C — nusxa, Alt+X — kesiş, Alt+V — joylaş (Fayllar)
+                    if files_clip_key(&mut windows, &mut desk, e.code) {
                         changed = true;
                     }
+                }
+                (input::EV_KEY, _) if alt => {}
+                (input::EV_KEY, code) if e.value == 1 => {
+                    let top = windows.last().filter(|w| !w.hidden).map(|w| w.kind);
+                    match top {
+                        Some(Kind::Files) => files_key(&mut windows, &mut desk, code, shift, &mut opened),
+                        Some(Kind::Calc) => calc_key(windows.last_mut().unwrap(), code, shift),
+                        Some(Kind::Image) => image_key(windows.last_mut().unwrap(), code),
+                        Some(Kind::Monitor) => monitor_key(windows.last_mut().unwrap(), code),
+                        Some(Kind::Trash) if code == 111 => {
+                            let w = windows.last_mut().unwrap();
+                            if let Some(name) = w.fsel.and_then(|s| w.rows.get(s)).map(|r| r.0.clone()) {
+                                match trash_purge(&name) {
+                                    Ok(()) => notify("Butunlay öçirildi", &name, 0xff453a),
+                                    Err(e) => notify("Öçirib bölmadi", &e, 0xff453a),
+                                }
+                                w.fsel = None;
+                                reload_all_files(&mut windows);
+                            }
+                        }
+                        Some(k) if k.takes_keys() => type_key(windows.last_mut().unwrap(), code, shift),
+                        _ => {}
+                    }
+                    changed = true;
                 }
                 _ => {}
             }
@@ -1408,6 +1526,7 @@ fn handle_click(
                 match l.kind {
                     Kind::Music => open_file(windows, "~/Musiqa/kuy.mp3", *opened),
                     Kind::Video => open_file(windows, "~/Videolar/zamin.avi", *opened),
+                    Kind::Image => open_pictures(windows, *opened),
                     Kind::Code => windows.push(new_window(Kind::Editor, *opened)),
                     _ => windows.push(new_window(l.kind, *opened)),
                 }
@@ -1445,6 +1564,25 @@ fn handle_click(
             None => {}
         }
         if windows[i].kind == Kind::Settings && settings_click(&mut windows[i], cx, cy) {
+            let w = windows.remove(i);
+            windows.push(w);
+            return true;
+        }
+        let hit = match windows[i].kind {
+            Kind::Calc => calc_click(&mut windows[i], cx, cy),
+            Kind::Monitor => monitor_click(&mut windows[i], cx, cy),
+            Kind::Image => viewer_click(&mut windows[i], cx, cy),
+            Kind::Trash => match trash_click(&mut windows[i], cx, cy) {
+                2 => {
+                    reload_all_files(windows);
+                    true
+                }
+                1 => true,
+                _ => false,
+            },
+            _ => false,
+        };
+        if hit {
             let w = windows.remove(i);
             windows.push(w);
             return true;
@@ -1492,11 +1630,33 @@ fn handle_click(
                 return true;
             }
             if let Some(row) = file_row_at(&windows[i], cx, cy) {
-                // Oynani old planga olib, keyin faollaştiramiz
+                // Bir marta — tanlaş, ikki marta — oçiş
                 let w = windows.remove(i);
                 windows.push(w);
                 let wi = windows.len() - 1;
-                files_activate(windows, wi, row, opened);
+                let w = &mut windows[wi];
+                if w.rename.is_some() {
+                    if w.fsel != Some(row) {
+                        files_rename_commit(w);
+                    }
+                    return true;
+                }
+                let dbl = w.lclick.1 == row && now.saturating_sub(w.lclick.0) < 500;
+                w.fsel = Some(row);
+                w.lclick = (now, row);
+                if dbl {
+                    w.lclick = (0, usize::MAX);
+                    files_activate(windows, wi, row, opened);
+                }
+                return true;
+            }
+            let g = files_geo(&windows[i]);
+            if cx >= g.gx && cy >= g.gy && windows[i].contains(cx, cy) {
+                // böş joy — tanlov bekor, nom saqlanadi
+                files_rename_commit(&mut windows[i]);
+                windows[i].fsel = None;
+                let w = windows.remove(i);
+                windows.push(w);
                 return true;
             }
         }
@@ -1724,6 +1884,7 @@ struct Desk {
     notif_open: bool,           // bildirişnomalar paneli oçiqmi
     search: Option<Search>,     // tezkor qidiruv (Alt+Space)
     ctx: Option<Ctx>,           // öng tugma menyusi
+    fclip: Option<(String, bool)>, // fayl buferi: (yöl, kesilganmi)
 }
 
 // ---------------- Kontekst menyusi (öng tugma) ----------------
@@ -1735,7 +1896,13 @@ enum CAct {
     Open(String),            // fayl — mos ilovada, papka — Fayllarda
     Nav(String, usize),      // papkaga şu Fayllar oynasida kiriş
     SetWall(String),         // rasmni fon qilib qöyiş
-    Delete(String, usize),   // öçiriş (+ oynani yangilaş)
+    Delete(String),          // savatga tashlaş
+    Rename(usize, usize),    // (oyna, element) — nomini özgartiriş
+    Copy(String, bool),      // buferga: (yöl, kesiş)
+    Paste(String),           // buferdagini papkaga joylaş
+    Restore(String),         // savatdan tiklaş
+    Purge(String),           // savatdan butunlay öçiriş
+    EmptyTrash,
     NewFolder(String, usize),
     Refresh(usize),
     App(Kind),
@@ -1760,6 +1927,19 @@ fn build_ctx(windows: &[Window], desk: &Desk, cx: usize, cy: usize) -> Option<Ct
     let mut items: Vec<(String, CAct)> = Vec::new();
     if let Some(i) = windows.iter().rposition(|w| !w.hidden && w.contains(cx, cy)) {
         let w = &windows[i];
+        if w.kind == Kind::Trash {
+            if let Some(r) = trash_row_at(w, cx, cy) {
+                let n = w.rows[r].0.clone();
+                items.push((s("Tiklaş"), CAct::Restore(n.clone())));
+                items.push((s("Sep"), CAct::Sep));
+                items.push((s("Butunlay öçiriş"), CAct::Purge(n)));
+            } else if !w.rows.is_empty() {
+                items.push((s("Savatni böşatiş"), CAct::EmptyTrash));
+            } else {
+                return None;
+            }
+            return Some(Ctx { x: cx, y: cy, items });
+        }
         if w.kind != Kind::Files {
             return None;
         }
@@ -1779,19 +1959,33 @@ fn build_ctx(windows: &[Window], desk: &Desk, cx: usize, cy: usize) -> Option<Ct
                 }
             }
             items.push((s("Sep"), CAct::Sep));
-            items.push((s("Öçiriş"), CAct::Delete(p, w.id)));
+            items.push((s("Nomini özgartiriş"), CAct::Rename(w.id, r)));
+            items.push((s("Nusxa olish"), CAct::Copy(p.clone(), false)));
+            items.push((s("Kesiş"), CAct::Copy(p.clone(), true)));
+            items.push((s("Sep"), CAct::Sep));
+            items.push((s("Savatga tashlaş"), CAct::Delete(p)));
         } else {
             items.push((s("Yangi papka"), CAct::NewFolder(w.path.clone(), w.id)));
+            if desk.fclip.is_some() {
+                items.push((s("Joylaş"), CAct::Paste(w.path.clone())));
+            }
             items.push((s("Yangilaş"), CAct::Refresh(w.id)));
         }
     } else if let Some(k) = (0..desk.icons.len()).find(|&k| {
         let (x, y, cw, ch) = desk_icon_rect(k);
         cx >= x && cx < x + cw && cy >= y && cy < y + ch
     }) {
-        items.push((s("Oçiş"), CAct::Open(alloc::format!("~/{}", desk.icons[k]))));
+        let p = alloc::format!("~/{}", desk.icons[k]);
+        items.push((s("Oçiş"), CAct::Open(p.clone())));
+        items.push((s("Nusxa olish"), CAct::Copy(p.clone(), false)));
+        items.push((s("Sep"), CAct::Sep));
+        items.push((s("Savatga tashlaş"), CAct::Delete(p)));
     } else {
         items.push((s("Fon rasmini almaştiriş…"), CAct::WallSettings));
         items.push((s("Yangi papka"), CAct::NewFolder(s("~"), 0)));
+        if desk.fclip.is_some() {
+            items.push((s("Joylaş"), CAct::Paste(s("~"))));
+        }
         items.push((s("Sep"), CAct::Sep));
         items.push((s("Terminal"), CAct::App(Kind::Terminal)));
         items.push((s("Sozlamalar"), CAct::App(Kind::Settings)));
@@ -1833,7 +2027,7 @@ fn draw_ctx(c: &Ctx, mx: usize, my: usize) {
         if hover {
             fill_round_rect_a(x + u / 4, *y0, w - u / 2, y1 - y0, u / 3, accent(), 230);
         }
-        let col = if matches!(act, CAct::Delete(..)) && !hover { 0xff6b61 } else if hover { OQ } else { 0xe1e8f2 };
+        let col = if matches!(act, CAct::Delete(_) | CAct::Purge(_) | CAct::EmptyTrash) && !hover { 0xff6b61 } else if hover { OQ } else { 0xe1e8f2 };
         gfx::draw_text(x + u, y0 + (y1 - y0 - small()) / 2, name, col, small());
     }
 }
@@ -1885,17 +2079,43 @@ fn ctx_exec(act: CAct, desk: &mut Desk, windows: &mut Vec<Window>, opened: &mut 
             let _ = crate::config::save_current();
             notify("Fon özgartirildi", &name, 0x2fbf5f);
         }
-        CAct::Delete(p, id) => {
-            let name = String::from(p.rsplit('/').next().unwrap_or(""));
-            match fs::remove(&p) {
-                Ok(()) => {
-                    let _ = fs::commit();
-                    notify("Öçirildi", &name, 0xff453a);
-                }
-                Err(e) => notify("Öçirib bölmadi", &alloc::format!("{}: {:?}", name, e), 0xff9f0a),
+        CAct::Delete(p) => {
+            match to_trash(&p) {
+                Ok(n) => notify("Savatga tashlandi", &n, 0xff9f0a),
+                Err(e) => notify("Savatga tashlab bölmadi", &e, 0xff453a),
             }
-            reload_files(windows, id);
+            reload_all_files(windows);
             desk.icons = home_icons();
+        }
+        CAct::Rename(id, row) => {
+            if let Some(w) = windows.iter_mut().find(|w| w.id == id) {
+                if let Some(r) = w.rows.get(row) {
+                    w.fsel = Some(row);
+                    w.rename = Some(r.0.clone());
+                }
+            }
+        }
+        CAct::Copy(p, cut) => clip_set(desk, p, cut),
+        CAct::Paste(dir) => paste_into(windows, desk, &dir),
+        CAct::Restore(n) => {
+            match trash_restore(&n) {
+                Ok(dest) => notify("Tiklandi", &dest, 0x2fbf5f),
+                Err(e) => notify("Tiklab bölmadi", &e, 0xff453a),
+            }
+            reload_all_files(windows);
+            desk.icons = home_icons();
+        }
+        CAct::Purge(n) => {
+            match trash_purge(&n) {
+                Ok(()) => notify("Butunlay öçirildi", &n, 0xff453a),
+                Err(e) => notify("Öçirib bölmadi", &e, 0xff453a),
+            }
+            reload_all_files(windows);
+        }
+        CAct::EmptyTrash => {
+            let n = empty_trash();
+            notify("Savat böşatildi", &alloc::format!("{} ta element butunlay öçirildi", n), 0xff453a);
+            reload_all_files(windows);
         }
         CAct::NewFolder(dir, id) => {
             let mut n = 1;
@@ -1950,7 +2170,7 @@ struct Search {
     res: Vec<(String, String, SAct)>, // (nom, izoh, amal)
 }
 
-const SEARCH_APPS: [(&str, Kind); 11] = [
+const SEARCH_APPS: [(&str, Kind); 13] = [
     ("Terminal", Kind::Terminal),
     ("Fayllar", Kind::Files),
     ("Matn muharriri", Kind::Editor),
@@ -1962,6 +2182,8 @@ const SEARCH_APPS: [(&str, Kind); 11] = [
     ("Sozlamalar", Kind::Settings),
     ("Zamin OS haqida", Kind::About),
     ("Savat", Kind::Trash),
+    ("Kalkulyator", Kind::Calc),
+    ("Tizim monitori", Kind::Monitor),
 ];
 
 /// Uy papkasidagi fayl va papkalar (çuqurlik ≤ 3).
@@ -1970,6 +2192,9 @@ fn collect_files(path: &str, depth: usize, out: &mut Vec<(String, String, bool)>
         return;
     }
     for e in fs::list(path).unwrap_or_default() {
+        if e.name.starts_with('.') {
+            continue;
+        }
         let p = path_join(path, &e.name);
         out.push((e.name.clone(), p.clone(), e.is_dir));
         if e.is_dir {
@@ -2472,7 +2697,7 @@ const ANIM_MS: u64 = 230;
 
 fn home_icons() -> Vec<String> {
     let mut v: Vec<String> =
-        fs::list("~").unwrap_or_default().into_iter().filter(|e| e.is_dir).map(|e| e.name).collect();
+        fs::list("~").unwrap_or_default().into_iter().filter(|e| e.is_dir && !e.name.starts_with('.')).map(|e| e.name).collect();
     v.sort();
     v
 }
@@ -2806,6 +3031,8 @@ fn menu_items(i: usize) -> Vec<(String, MAct)> {
             (s("Fayllar"), MAct::Open(Kind::Files)),
             (s("Matn muharriri"), MAct::Open(Kind::Editor)),
             (s("Soat"), MAct::Open(Kind::Clock)),
+            (s("Kalkulyator"), MAct::Open(Kind::Calc)),
+            (s("Tizim monitori"), MAct::Open(Kind::Monitor)),
             (s("Sep"), MAct::Sep),
             (s("Musiqa"), MAct::Open(Kind::Music)),
             (s("Video"), MAct::Open(Kind::Video)),
@@ -2817,13 +3044,14 @@ fn menu_items(i: usize) -> Vec<(String, MAct)> {
         1 => {
             let mut v = alloc::vec![(s("Uy"), MAct::Path(s("~"))), (s("Sep"), MAct::Sep)];
             let mut dirs: Vec<String> =
-                fs::list("~").unwrap_or_default().into_iter().filter(|e| e.is_dir).map(|e| e.name).collect();
+                fs::list("~").unwrap_or_default().into_iter().filter(|e| e.is_dir && !e.name.starts_with('.')).map(|e| e.name).collect();
             dirs.sort();
             for d in dirs {
                 let p = alloc::format!("~/{}", d);
                 v.push((d, MAct::Path(p)));
             }
             v.push((s("Sep"), MAct::Sep));
+            v.push((s("Savat"), MAct::Open(Kind::Trash)));
             v.push((s("Kompyuter (/)"), MAct::Path(s("/"))));
             v
         }
@@ -2939,6 +3167,7 @@ fn menu_act(act: MAct, windows: &mut Vec<Window>, opened: &mut usize) {
     match act {
         MAct::Open(Kind::Music) => open_file(windows, "~/Musiqa/kuy.mp3", *opened),
         MAct::Open(Kind::Video) => open_file(windows, "~/Videolar/zamin.avi", *opened),
+        MAct::Open(Kind::Image) => open_pictures(windows, *opened),
         MAct::Open(k) => windows.push(new_window(k, *opened)),
         MAct::Path(p) => {
             let mut w = new_window(Kind::Files, *opened);
@@ -3072,6 +3301,8 @@ fn draw_window(win: &Window, active: bool, mx: usize, my: usize) {
         Kind::Settings => draw_settings(win),
         Kind::Browser => draw_browser(win),
         Kind::Trash => draw_trash(win),
+        Kind::Calc => draw_calc(win),
+        Kind::Monitor => draw_monitor(win),
         _ => draw_text_window(win),
     }
     gfx::reset_clip();
@@ -3263,6 +3494,10 @@ fn draw_files(win: &Window) {
             break;
         }
         let (ix, iy) = (x0 + (g.cw - isz) / 2, y0 + u / 4);
+        let selected = win.fsel == Some(i);
+        if selected {
+            fill_round_rect_a(x0 + 2, y0, g.cw - 4, g.ch - 2, u / 2, accent(), 70);
+        }
         if let Some(Some(t)) = win.thumbs.get(i) {
             fill_round_rect_a(ix, iy, isz, isz, u / 3, 0xffffff, 14);
             let (tx, ty, tw, th) = gfx::blit_fit(ix + 2, iy + 2, isz - 4, isz - 4, t.w, t.h, &t.px);
@@ -3270,8 +3505,28 @@ fn draw_files(win: &Window) {
         } else {
             big_icon(*kind, name, ix, iy, isz);
         }
-        let lbl = fit_text(name, g.cw - u / 3, npx);
-        gfx::draw_text_centered(x0 + g.cw / 2, y0 + isz + u / 2, &lbl, 0xe7edf6, npx);
+        if let (true, Some(r)) = (selected, &win.rename) {
+            // Nomini özgartiriş maydoni (oxiri körinadi)
+            let (bx, by, bw, bh) = (x0 + 1, y0 + isz + u / 3, g.cw - 2, npx + u / 2);
+            gfx::fill_round_rect(bx, by, bw, bh, u / 4, 0x0d1220);
+            gfx::round_outline(bx, by, bw, bh, u / 4, 1, accent());
+            let v: Vec<char> = r.chars().collect();
+            let mut k = v.len();
+            while k > 0 {
+                let t: String = v[k - 1..].iter().collect();
+                if gfx::text_width(&t, npx) > bw - u / 2 {
+                    break;
+                }
+                k -= 1;
+            }
+            let t: String = v[k..].iter().collect();
+            let ex = gfx::draw_text(bx + u / 4, by + (bh - npx) / 2, &t, OQ, npx);
+            fill_rect(ex + 1, by + 3, 2, bh - 6, 0x63a8ff);
+        } else {
+            let lbl = fit_text(name, g.cw - u / 3, npx);
+            let col = if selected { OQ } else { 0xe7edf6 };
+            gfx::draw_text_centered(x0 + g.cw / 2, y0 + isz + u / 2, &lbl, col, npx);
+        }
     }
 }
 
@@ -3367,27 +3622,6 @@ fn big_icon(kind: FKind, name: &str, x: usize, y: usize, s: usize) {
 
 
 /// Rasm oynasi: dekodlangan rasmni (yoki harakatli kadrni) nisbat saqlab körsatadi.
-fn draw_image(win: &Window) {
-    let img = if !win.frames.is_empty() {
-        &win.frames[win.frame.min(win.frames.len() - 1)].0
-    } else if let Some(img) = &win.img {
-        img
-    } else {
-        return;
-    };
-    let pad = body() / 2;
-    let x = win.x + pad;
-    let y = win.content_top();
-    let w = win.w.saturating_sub(pad * 2);
-    let h = (win.y + win.h).saturating_sub(y + pad + small() + pad);
-    // Şaxmat fon (shaffoflik hissi)
-    gfx::fill_rect(x, y, w, h, 0x11151d);
-    let (ix, iy, iw, ih) = gfx::blit_fit(x, y, w, h, img.w, img.h, &img.px);
-    gfx::round_outline(ix.saturating_sub(1), iy.saturating_sub(1), iw + 2, ih + 2, 1, 1, 0x3a4458);
-    // Maʼlumot satri (ölçam)
-    let info = alloc::format!("{}x{} · {} piksel", img.w, img.h, img.w * img.h);
-    gfx::draw_text(x, win.y + win.h - pad - small(), &info, 0x8aa0bc, small());
-}
 
 /// Oddiy matnli oyna (xabarlar).
 fn draw_text_window(win: &Window) {
@@ -4063,24 +4297,6 @@ fn draw_browser(win: &Window) {
     }
 }
 
-/// Savat oynasi (böş holat).
-fn draw_trash(win: &Window) {
-    let u = body();
-    let cx = win.x + win.w / 2;
-    let top = win.y + title_h();
-    let s = u * 4;
-    let tw = s * 3 / 5;
-    let th = s * 2 / 3;
-    let x = cx - tw / 2;
-    let y = top + u * 3 / 2;
-    gfx::fill_round_rect(x - tw / 8, y, tw * 5 / 4, s / 10, s / 30, 0x8a93a6);
-    gfx::fill_round_rect(x, y + s / 8, tw, th, tw / 8, 0x5a6476);
-    for k in 0..3 {
-        fill_rect(x + tw / 4 + k * tw / 4 - 1, y + s / 8 + th / 6, (s / 30).max(2), th * 2 / 3, 0x3a4252);
-    }
-    gfx::draw_text_centered(cx, y + s / 8 + th + u, "Savat böş", 0xe7edf6, body());
-    gfx::draw_text_centered(cx, y + s / 8 + th + u * 5 / 2, "Öçirilgan fayllar şu yerda turadi", 0x6f7f95, small() * 9 / 10);
-}
 
 /// Rasm köruvçi: namunaviy "Zamin" manzarasi (osmon, quyoş, togʻlar).
 fn draw_scene(win: &Window) {
@@ -4226,6 +4442,12 @@ fn draw_dock(sw: usize, sh: usize, cx: usize, cy: usize, windows: &[Window]) {
             gfx::draw_text_centered(ix + isz / 2, tipy + body() / 4, l.label, OQ, small());
         }
         draw_icon(l.kind, l.color, ix, iy, isz);
+        if l.kind == Kind::Trash && trash_count() > 0 {
+            // Tola savat: ustida qogʻozlar
+            gfx::fill_circle(ix + isz * 2 / 5, iy + isz * 3 / 10, isz / 10, 0xf4f6fa);
+            gfx::fill_circle(ix + isz * 3 / 5, iy + isz / 4, isz / 11, 0xdfe6f0);
+            gfx::fill_circle(ix + isz / 2, iy + isz / 5, isz / 12, 0xffffff);
+        }
         if open {
             // Ishlayotgan ilova belgisi (nuqta)
             let d = (isz / 12).max(2);
@@ -4356,6 +4578,32 @@ fn draw_icon(kind: Kind, color: Color, x: usize, y: usize, s: usize) {
             gfx::fill_circle(c, y + m, rr, 0xe7edf6);
             gfx::fill_circle(c, y + m, rr / 2, color);
         }
+        Kind::Calc => {
+            fill_round_rect(x + s / 4, y + s / 5, s / 2, s / 6, s / 24, 0x3a2400);
+            let q = s / 9;
+            let g = s / 18;
+            let gx = c - (q * 3 + g * 2) / 2;
+            for row in 0..2 {
+                for col in 0..3 {
+                    let cc = if row == 1 && col == 2 { 0x3a2400 } else { OQ };
+                    gfx::fill_round_rect(gx + col * (q + g), y + s * 9 / 20 + row * (q + g), q, q, q / 3, cc);
+                }
+            }
+        }
+        Kind::Monitor => {
+            fill_round_rect(x + s / 6, y + s / 4, s * 2 / 3, s / 2, s / 12, 0x0b2a18);
+            let t = (s as f32 / 26.0).max(1.0);
+            let (bx, by) = ((x + s / 6) as f32, (y + s / 2) as f32);
+            let w = (s * 2 / 3) as f32;
+            let pts = [(0.08, 0.0), (0.3, 0.0), (0.4, -0.16), (0.52, 0.14), (0.62, -0.06), (0.7, 0.0), (0.92, 0.0)];
+            for k in 0..pts.len() - 1 {
+                let (a, b) = (pts[k], pts[k + 1]);
+                seg(bx + a.0 * w, by + a.1 * s as f32, bx + b.0 * w, by + b.1 * s as f32, t, 0x5cf08e);
+            }
+        }
+        Kind::Info => {
+            gfx::draw_text_centered(c, y + s / 6, "i", OQ, s * 3 / 5);
+        }
         Kind::Trash => {
             let tw = s * 2 / 5;
             let th = s * 9 / 20;
@@ -4411,4 +4659,1065 @@ fn keycode_char(code: u16, shift: bool) -> Option<char> {
         _ => return None,
     };
     Some(if shift { c.to_ascii_uppercase() } else { c })
+}
+
+// ---------------- Yordamçi chiziq va belgilar ----------------
+
+/// Qalin kesma (to'rtburçak poligon).
+fn seg(x0: f32, y0: f32, x1: f32, y1: f32, t: f32, c: Color) {
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let l = crate::image::vector::fsqrt(dx * dx + dy * dy).max(0.001);
+    let (nx, ny) = (-dy / l * t, dx / l * t);
+    gfx::fill_poly(&[(x0 + nx, y0 + ny), (x1 + nx, y1 + ny), (x1 - nx, y1 - ny), (x0 - nx, y0 - ny)], c);
+}
+
+/// Arifmetik amal belgisi (+ − × ÷ =) — shriftda yöq belgilar uçun chiziladi.
+fn op_glyph(cx: usize, cy: usize, s: usize, op: &str, c: Color) {
+    let (x, y, h) = (cx as f32, cy as f32, s as f32 / 2.0);
+    let t = (s as f32 / 14.0).max(1.0);
+    match op {
+        "+" => {
+            seg(x - h, y, x + h, y, t, c);
+            seg(x, y - h, x, y + h, t, c);
+        }
+        "-" => seg(x - h, y, x + h, y, t, c),
+        "*" => {
+            let d = h * 0.75;
+            seg(x - d, y - d, x + d, y + d, t, c);
+            seg(x - d, y + d, x + d, y - d, t, c);
+        }
+        "/" => {
+            seg(x - h, y, x + h, y, t, c);
+            let r = (t * 1.4) as usize + 1;
+            gfx::fill_circle(cx, (y - h * 0.6) as usize, r, c);
+            gfx::fill_circle(cx, (y + h * 0.6) as usize, r, c);
+        }
+        "=" => {
+            seg(x - h, y - h * 0.35, x + h, y - h * 0.35, t, c);
+            seg(x - h, y + h * 0.35, x + h, y + h * 0.35, t, c);
+        }
+        _ => gfx::draw_text_centered(cx, cy.saturating_sub(s / 2), op, c, s),
+    }
+}
+
+// ---------------- Savat (haqiqiy: ~/.Savat) ----------------
+
+const TRASH_DIR: &str = "~/.Savat";
+const TRASH_INDEX: &str = "~/.Savat/.joylar";
+/// Savatdagi elementlar soni (dok ikonasi uçun keş); MAX — hali hisoblanmagan.
+static TRASH_N: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+/// Savat tarkibi: (savatdagi nom, asl yöl).
+fn trash_entries() -> Vec<(String, String)> {
+    let text = fs::read_all(TRASH_INDEX).map(|b| String::from(String::from_utf8_lossy(&b))).unwrap_or_default();
+    let mut v: Vec<(String, String)> =
+        text.lines().filter_map(|l| l.split_once('\t')).map(|(a, b)| (String::from(a), String::from(b))).collect();
+    let present: Vec<String> =
+        fs::list(TRASH_DIR).unwrap_or_default().into_iter().filter(|e| !e.name.starts_with('.')).map(|e| e.name).collect();
+    v.retain(|(n, _)| present.contains(n));
+    for n in present {
+        if !v.iter().any(|(a, _)| *a == n) {
+            let orig = path_join("~", &n);
+            v.push((n, orig));
+        }
+    }
+    v
+}
+
+fn write_trash_index(v: &[(String, String)]) {
+    use crate::abi::{OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
+    let mut text = String::new();
+    for (a, b) in v {
+        text.push_str(a);
+        text.push('\t');
+        text.push_str(b);
+        text.push('\n');
+    }
+    if let Ok(id) = fs::open(TRASH_INDEX, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE) {
+        let _ = fs::write(id, Some(0), text.as_bytes());
+    }
+    TRASH_N.store(v.len(), Ordering::Relaxed);
+}
+
+fn trash_count() -> usize {
+    let n = TRASH_N.load(Ordering::Relaxed);
+    if n != usize::MAX {
+        return n;
+    }
+    let n = trash_entries().len();
+    TRASH_N.store(n, Ordering::Relaxed);
+    n
+}
+
+/// Band bölmagan yöl: "nom.txt" → "nom (2).txt" va h.k.
+fn unique_dest(p: &str) -> String {
+    if fs::node_of(p).is_err() {
+        return String::from(p);
+    }
+    let (dir, name) = p.rsplit_once('/').unwrap_or(("", p));
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s, alloc::format!(".{}", e)),
+        _ => (name, String::new()),
+    };
+    for n in 2..1000 {
+        let c = alloc::format!("{}/{} ({}){}", dir, stem, n, ext);
+        if fs::node_of(&c).is_err() {
+            return c;
+        }
+    }
+    String::from(p)
+}
+
+/// Papkani içidagilari bilan birga öçiradi.
+fn remove_path(p: &str) -> Result<(), fs::FsError> {
+    if let Ok(list) = fs::list(p) {
+        for e in list {
+            remove_path(&path_join(p, &e.name))?;
+        }
+    }
+    fs::remove(p)
+}
+
+/// Fayl yoki papkani (içidagilari bilan) nusxalaydi.
+fn copy_path(src: &str, dst: &str, depth: usize) -> Result<(), String> {
+    use crate::abi::{OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
+    if depth > 16 {
+        return Err(String::from("juda çuqur papka"));
+    }
+    match fs::list(src) {
+        Ok(list) => {
+            fs::mkdir(dst).map_err(|e| alloc::format!("{:?}", e))?;
+            for e in list {
+                copy_path(&path_join(src, &e.name), &path_join(dst, &e.name), depth + 1)?;
+            }
+            Ok(())
+        }
+        Err(_) => {
+            let data = fs::read_all(src).map_err(|e| alloc::format!("{:?}", e))?;
+            let id = fs::open(dst, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE).map_err(|e| alloc::format!("{:?}", e))?;
+            fs::write(id, Some(0), &data).map_err(|e| alloc::format!("{:?}", e))?;
+            Ok(())
+        }
+    }
+}
+
+/// Faylni savatga köçiradi (savatning özidagisi — butunlay öçiriladi).
+fn to_trash(p: &str) -> Result<String, String> {
+    let name = String::from(p.rsplit('/').next().unwrap_or(p));
+    if p.starts_with("~/.Savat/") {
+        remove_path(p).map_err(|e| alloc::format!("{}: {:?}", name, e))?;
+        TRASH_N.store(usize::MAX, Ordering::Relaxed);
+        let _ = fs::commit();
+        return Ok(name);
+    }
+    let _ = fs::mkdir(TRASH_DIR);
+    let dest = unique_dest(&path_join(TRASH_DIR, &name));
+    fs::rename(p, &dest).map_err(|e| alloc::format!("{}: {:?}", name, e))?;
+    let tname = String::from(dest.rsplit('/').next().unwrap_or(""));
+    let mut v = trash_entries();
+    v.retain(|(a, _)| *a != tname);
+    v.push((tname, String::from(p)));
+    write_trash_index(&v);
+    let _ = fs::commit();
+    Ok(name)
+}
+
+/// Savatdan asl joyiga qaytaradi (asl papka yöq bölsa — uy papkasiga).
+fn trash_restore(tname: &str) -> Result<String, String> {
+    let mut v = trash_entries();
+    let orig = v.iter().find(|(a, _)| a == tname).map(|(_, b)| b.clone()).unwrap_or_else(|| path_join("~", tname));
+    let parent_ok = orig.rsplit_once('/').is_some_and(|(d, _)| fs::list(if d.is_empty() { "/" } else { d }).is_ok());
+    let base_name = String::from(orig.rsplit('/').next().unwrap_or(tname));
+    let target = if parent_ok { orig.clone() } else { path_join("~", &base_name) };
+    let dest = unique_dest(&target);
+    fs::rename(&path_join(TRASH_DIR, tname), &dest).map_err(|e| alloc::format!("{:?}", e))?;
+    v.retain(|(a, _)| a != tname);
+    write_trash_index(&v);
+    let _ = fs::commit();
+    Ok(dest)
+}
+
+/// Bitta elementni savatdan butunlay öçiradi.
+fn trash_purge(tname: &str) -> Result<(), String> {
+    remove_path(&path_join(TRASH_DIR, tname)).map_err(|e| alloc::format!("{:?}", e))?;
+    let mut v = trash_entries();
+    v.retain(|(a, _)| a != tname);
+    write_trash_index(&v);
+    let _ = fs::commit();
+    Ok(())
+}
+
+/// Savatni böşatadi. Natija — öçirilganlar soni.
+fn empty_trash() -> usize {
+    let v = trash_entries();
+    let n = v.iter().filter(|(a, _)| remove_path(&path_join(TRASH_DIR, a)).is_ok()).count();
+    let rest = trash_entries();
+    write_trash_index(&rest);
+    let _ = fs::commit();
+    n
+}
+
+fn load_trash(win: &mut Window) {
+    let v = trash_entries();
+    TRASH_N.store(v.len(), Ordering::Relaxed);
+    win.rows = v
+        .iter()
+        .map(|(n, _)| (n.clone(), FKind::of(n, fs::list(&path_join(TRASH_DIR, n)).is_ok())))
+        .collect();
+    win.side = v.into_iter().map(|(_, o)| o).collect();
+    win.fsel = win.fsel.filter(|&s| s < win.rows.len());
+    win.title = if win.rows.is_empty() {
+        String::from("Savat")
+    } else {
+        alloc::format!("Savat — {} ta element", win.rows.len())
+    };
+}
+
+/// Barça Fayllar va Savat oynalarini yangilaydi (fayl tizimi özgarganda).
+fn reload_all_files(windows: &mut [Window]) {
+    for w in windows.iter_mut() {
+        match w.kind {
+            Kind::Files => {
+                let p = w.path.clone();
+                let sel = w.fsel;
+                load_dir(w, &p);
+                w.fsel = sel.filter(|&s| s < w.rows.len());
+            }
+            Kind::Trash => load_trash(w),
+            _ => {}
+        }
+    }
+}
+
+/// Savat oynasi: (ro'yxat x, y, eni, qator balandligi, sigʻadigan qatorlar).
+fn trash_list_geo(win: &Window) -> (usize, usize, usize, usize, usize) {
+    let u = body();
+    let ly = win.y + title_h() + u * 5 / 2 + u / 4;
+    let rh = u * 2;
+    let max = (win.y + win.h).saturating_sub(ly + u / 2) / rh;
+    (win.x + u / 2, ly, win.w.saturating_sub(u), rh, max)
+}
+
+fn trash_row_at(win: &Window, cx: usize, cy: usize) -> Option<usize> {
+    let (lx, ly, lw, rh, max) = trash_list_geo(win);
+    if cx < lx || cx >= lx + lw || cy < ly {
+        return None;
+    }
+    let i = (cy - ly) / rh;
+    if i < max && i < win.rows.len() { Some(i) } else { None }
+}
+
+/// Savat tugmalari: [Tiklaş, Böşatiş] — (x, y, w, h).
+fn trash_btns(win: &Window) -> [(usize, usize, usize, usize); 2] {
+    let u = body();
+    let bar = u * 5 / 2;
+    let bh = u * 3 / 2;
+    let by = win.y + title_h() + (bar - bh) / 2;
+    let w1 = gfx::text_width("Böşatiş", small()) + u * 2;
+    let x1 = (win.x + win.w).saturating_sub(u / 2 + w1);
+    let w0 = gfx::text_width("Tiklaş", small()) + u * 2;
+    let x0 = x1.saturating_sub(u / 2 + w0);
+    [(x0, by, w0, bh), (x1, by, w1, bh)]
+}
+
+fn in_rect(r: (usize, usize, usize, usize), cx: usize, cy: usize) -> bool {
+    cx >= r.0 && cx < r.0 + r.2 && cy >= r.1 && cy < r.1 + r.3
+}
+
+/// Savat oynasiga bosiş: 0 — tegişli emas, 1 — işlandi, 2 — fayl tizimi özgardi.
+fn trash_click(win: &mut Window, cx: usize, cy: usize) -> u8 {
+    if win.rows.is_empty() {
+        return 0;
+    }
+    let [rb, eb] = trash_btns(win);
+    if in_rect(rb, cx, cy) {
+        if let Some(name) = win.fsel.and_then(|s| win.rows.get(s)).map(|r| r.0.clone()) {
+            match trash_restore(&name) {
+                Ok(dest) => notify("Tiklandi", &dest, 0x2fbf5f),
+                Err(e) => notify("Tiklab bölmadi", &e, 0xff453a),
+            }
+            win.fsel = None;
+            return 2;
+        }
+        return 1;
+    }
+    if in_rect(eb, cx, cy) {
+        let n = empty_trash();
+        notify("Savat böşatildi", &alloc::format!("{} ta element butunlay öçirildi", n), 0xff453a);
+        win.fsel = None;
+        return 2;
+    }
+    if let Some(r) = trash_row_at(win, cx, cy) {
+        win.fsel = Some(r);
+        return 1;
+    }
+    0
+}
+
+/// Savat oynasi: böş holat yoki elementlar ro'yxati.
+fn draw_trash(win: &Window) {
+    let u = body();
+    if win.rows.is_empty() {
+        let cx = win.x + win.w / 2;
+        let top = win.y + title_h();
+        let s = u * 4;
+        let tw = s * 3 / 5;
+        let th = s * 2 / 3;
+        let x = cx - tw / 2;
+        let y = top + (win.h.saturating_sub(title_h() + s + u * 4)) / 2;
+        gfx::fill_round_rect(x - tw / 8, y, tw * 5 / 4, s / 10, s / 30, 0x8a93a6);
+        gfx::fill_round_rect(x, y + s / 8, tw, th, tw / 8, 0x5a6476);
+        for k in 0..3 {
+            fill_rect(x + tw / 4 + k * tw / 4 - 1, y + s / 8 + th / 6, (s / 30).max(2), th * 2 / 3, 0x3a4252);
+        }
+        gfx::draw_text_centered(cx, y + s / 8 + th + u, "Savat böş", 0xe7edf6, body());
+        gfx::draw_text_centered(cx, y + s / 8 + th + u * 5 / 2, "Öçirilgan fayllar şu yerda turadi", 0x6f7f95, small() * 9 / 10);
+        return;
+    }
+    // Asboblar qatori
+    let top = win.y + title_h();
+    let bar = u * 5 / 2;
+    fill_rect(win.x + 1, top, win.w - 2, bar, 0x1f2636);
+    fill_rect(win.x + 1, top + bar, win.w - 2, 1, 0x2a3346);
+    let info = alloc::format!("{} ta element", win.rows.len());
+    gfx::draw_text(win.x + u, top + (bar - small()) / 2, &info, 0xaebccf, small());
+    let [rb, eb] = trash_btns(win);
+    let can = win.fsel.is_some();
+    gfx::fill_round_rect(rb.0, rb.1, rb.2, rb.3, rb.3 / 3, if can { accent() } else { 0x323b4d });
+    gfx::draw_text_centered(rb.0 + rb.2 / 2, rb.1 + (rb.3 - small()) / 2, "Tiklaş", if can { OQ } else { 0x6f7f95 }, small());
+    gfx::fill_round_rect(eb.0, eb.1, eb.2, eb.3, eb.3 / 3, 0x5c2427);
+    gfx::draw_text_centered(eb.0 + eb.2 / 2, eb.1 + (eb.3 - small()) / 2, "Böşatiş", 0xff8a80, small());
+    // Ro'yxat
+    let (lx, ly, lw, rh, max) = trash_list_geo(win);
+    for (i, (name, kind)) in win.rows.iter().enumerate().take(max) {
+        let ry = ly + i * rh;
+        if win.fsel == Some(i) {
+            fill_round_rect_a(lx, ry, lw, rh - 2, u / 3, accent(), 90);
+        } else if i % 2 == 1 {
+            fill_round_rect_a(lx, ry, lw, rh - 2, u / 3, 0xffffff, 8);
+        }
+        let isz = rh * 3 / 4;
+        big_icon(*kind, name, lx + u / 2, ry + (rh - isz) / 2 - 1, isz);
+        let nx = lx + u / 2 + isz + u / 2;
+        gfx::draw_text(nx, ry + (rh - small()) / 2 - 1, &fit_text(name, lw / 2, small()), 0xe7edf6, small());
+        let orig = win.side.get(i).map(|o| o.rsplit_once('/').map(|(d, _)| d).unwrap_or("~")).unwrap_or("~");
+        let o = fit_text(&alloc::format!("Asl joyi: {}", orig), lw / 2 - u, small() * 4 / 5);
+        let ow = gfx::text_width(&o, small() * 4 / 5);
+        gfx::draw_text((lx + lw).saturating_sub(ow + u / 2), ry + (rh - small() * 4 / 5) / 2, &o, 0x7d8ca3, small() * 4 / 5);
+    }
+}
+
+// ---------------- Fayllar: tanlaş, klaviatura, bufer ----------------
+
+/// Nomini özgartirişni yakunlaydi (yangi nom böş yoki öşa bölsa — bekor).
+fn files_rename_commit(win: &mut Window) {
+    let Some(new) = win.rename.take() else { return };
+    let Some(old) = win.fsel.and_then(|s| win.rows.get(s)).map(|r| r.0.clone()) else { return };
+    let new = String::from(new.trim());
+    if new.is_empty() || new == old || new.contains('/') || new.starts_with('.') {
+        return;
+    }
+    let from = path_join(&win.path, &old);
+    let to = path_join(&win.path, &new);
+    match fs::rename(&from, &to) {
+        Ok(()) => {
+            let _ = fs::commit();
+            notify("Nomi özgartirildi", &alloc::format!("{} — {}", old, new), 0x2f88ff);
+        }
+        Err(e) => notify("Nomini özgartirib bölmadi", &alloc::format!("{}: {:?}", old, e), 0xff453a),
+    }
+    let p = win.path.clone();
+    load_dir(win, &p);
+    win.fsel = win.rows.iter().position(|r| r.0 == new);
+}
+
+/// Tanlangan faylni savatga tashlaydi.
+fn files_trash_sel(windows: &mut Vec<Window>, wi: usize, desk: &mut Desk) {
+    let w = &windows[wi];
+    let Some(name) = w.fsel.and_then(|s| w.rows.get(s)).map(|r| r.0.clone()) else { return };
+    let p = path_join(&w.path, &name);
+    match to_trash(&p) {
+        Ok(n) => notify("Savatga tashlandi", &n, 0xff9f0a),
+        Err(e) => notify("Savatga tashlab bölmadi", &e, 0xff453a),
+    }
+    reload_all_files(windows);
+    desk.icons = home_icons();
+}
+
+/// Buferga olish (nusxa yoki kesish).
+fn clip_set(desk: &mut Desk, p: String, cut: bool) {
+    let name = String::from(p.rsplit('/').next().unwrap_or(""));
+    notify(if cut { "Kesildi" } else { "Nusxa olindi" }, &alloc::format!("{} — joylaş: Alt+V", name), 0x2f88ff);
+    desk.fclip = Some((p, cut));
+}
+
+/// Buferdagini `dir` papkasiga joylaydi.
+fn paste_into(windows: &mut Vec<Window>, desk: &mut Desk, dir: &str) {
+    let Some((src, cut)) = desk.fclip.clone() else {
+        notify("Bufer böş", "Avval nusxa oling yoki kesing", 0x8a93a6);
+        return;
+    };
+    let name = String::from(src.rsplit('/').next().unwrap_or(""));
+    let src_dir = src.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    if cut && src_dir == dir {
+        desk.fclip = None;
+        return;
+    }
+    let dst = unique_dest(&path_join(dir, &name));
+    if dst.starts_with(&alloc::format!("{}/", src)) {
+        notify("Joylab bölmadi", "Papkani öz içiga joylab bölmaydi", 0xff453a);
+        return;
+    }
+    let r = if cut { fs::rename(&src, &dst).map_err(|e| alloc::format!("{:?}", e)) } else { copy_path(&src, &dst, 0) };
+    match r {
+        Ok(()) => {
+            let _ = fs::commit();
+            if cut {
+                desk.fclip = None;
+            }
+            notify(if cut { "Köçirildi" } else { "Nusxalandi" }, dst.rsplit('/').next().unwrap_or(""), 0x2fbf5f);
+        }
+        Err(e) => notify("Joylab bölmadi", &alloc::format!("{}: {}", name, e), 0xff453a),
+    }
+    reload_all_files(windows);
+    desk.icons = home_icons();
+}
+
+/// Alt+C / Alt+X / Alt+V — faol Fayllar oynasida. Işlangan bölsa true.
+fn files_clip_key(windows: &mut Vec<Window>, desk: &mut Desk, code: u16) -> bool {
+    let Some(w) = windows.last().filter(|w| !w.hidden && w.kind == Kind::Files) else { return false };
+    match code {
+        46 | 45 => {
+            if let Some(name) = w.fsel.and_then(|s| w.rows.get(s)).map(|r| r.0.clone()) {
+                let p = path_join(&w.path, &name);
+                clip_set(desk, p, code == 45);
+            }
+        }
+        _ => {
+            let dir = w.path.clone();
+            paste_into(windows, desk, &dir);
+        }
+    }
+    true
+}
+
+/// Fayllar oynasi klaviaturasi: strelkalar, Enter, Backspace, Delete, F2.
+fn files_key(windows: &mut Vec<Window>, desk: &mut Desk, code: u16, shift: bool, opened: &mut usize) {
+    let wi = windows.len() - 1;
+    {
+        let w = &mut windows[wi];
+        if let Some(r) = w.rename.as_mut() {
+            match code {
+                28 => {
+                    files_rename_commit(w);
+                    desk.icons = home_icons();
+                }
+                14 => {
+                    r.pop();
+                }
+                _ => {
+                    if let Some(c) = keycode_char(code, shift) {
+                        if c != '/' && r.chars().count() < 60 {
+                            r.push(c);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+    }
+    let (n, cols, cur) = {
+        let w = &windows[wi];
+        (w.rows.len(), files_geo(w).cols, w.fsel)
+    };
+    match code {
+        105 | 106 | 103 | 108 if n > 0 => {
+            let c = match (cur, code) {
+                (None, _) => 0,
+                (Some(c), 105) => c.saturating_sub(1),
+                (Some(c), 106) => (c + 1).min(n - 1),
+                (Some(c), 103) => if c >= cols { c - cols } else { c },
+                (Some(c), _) => if c + cols < n { c + cols } else { c },
+            };
+            windows[wi].fsel = Some(c);
+        }
+        28 => {
+            if let Some(c) = cur {
+                files_activate(windows, wi, c, opened);
+            }
+        }
+        14 => {
+            let w = &mut windows[wi];
+            if w.path != "~" && w.path != "/" {
+                let p = path_join(&w.path, "..");
+                load_dir(w, &p);
+            }
+        }
+        111 => files_trash_sel(windows, wi, desk),
+        60 => {
+            let w = &mut windows[wi];
+            if let Some(c) = cur {
+                w.rename = Some(w.rows[c].0.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
+// ---------------- Kalkulyator ----------------
+
+/// Tugmalar: (yozuv, tur) — 0: amal (kulrang), 1: arifmetika, 2: raqam, 3: "=".
+const CALC_KEYS: [(&str, u8); 19] = [
+    ("C", 0), ("+/-", 0), ("%", 0), ("/", 1),
+    ("7", 2), ("8", 2), ("9", 2), ("*", 1),
+    ("4", 2), ("5", 2), ("6", 2), ("-", 1),
+    ("1", 2), ("2", 2), ("3", 2), ("+", 1),
+    ("0", 2), (".", 2), ("=", 3),
+];
+
+/// Kalkulyator geometriyasi: displey (x, y, w, h) va tugma töğriburçaklari.
+fn calc_geo(win: &Window) -> ((usize, usize, usize, usize), Vec<(usize, usize, usize, usize)>) {
+    let u = body();
+    let pad = u * 2 / 3;
+    let dx = win.x + pad;
+    let dy = win.y + title_h() + pad;
+    let dw = win.w.saturating_sub(pad * 2);
+    let dh = u * 4;
+    let gy = dy + dh + pad;
+    let gap = u / 2;
+    let bw = dw.saturating_sub(gap * 3) / 4;
+    let bh = ((win.y + win.h).saturating_sub(gy + pad)).saturating_sub(gap * 4) / 5;
+    let mut r = Vec::new();
+    for k in 0..CALC_KEYS.len() {
+        let (row, col, w) = match k {
+            16 => (4, 0, bw * 2 + gap),
+            17 => (4, 2, bw),
+            18 => (4, 3, bw),
+            _ => (k / 4, k % 4, bw),
+        };
+        r.push((dx + col * (bw + gap), gy + row * (bh + gap), w, bh));
+    }
+    ((dx, dy, dw, dh), r)
+}
+
+fn calc_eval(e: &str) -> Option<f64> {
+    calc(&alloc::format!("0+({})", e))
+}
+
+/// Tugma bosilişini bajaradi (`tab == 1` — natija körsatilmoqda).
+fn calc_press(win: &mut Window, key: &str) {
+    let fresh = win.tab == 1;
+    let ops = "+-*/";
+    match key {
+        "C" => {
+            win.input = String::from("0");
+            win.lines.clear();
+            win.tab = 0;
+        }
+        "=" => {
+            let e = win.input.clone();
+            match calc_eval(&e) {
+                Some(v) if v.is_finite() => {
+                    win.lines = alloc::vec![alloc::format!("{} =", e)];
+                    win.input = fmt_num(v);
+                    win.tab = 1;
+                }
+                _ => win.lines = alloc::vec![String::from("Xato")],
+            }
+        }
+        "+/-" => {
+            let s = win.input.clone();
+            win.input = if let Some(inner) = s.strip_prefix("-(").and_then(|r| r.strip_suffix(')')) {
+                String::from(inner)
+            } else if let Some(r) = s.strip_prefix('-').filter(|r| !r.contains(|c| ops.contains(c))) {
+                String::from(r)
+            } else if s == "0" {
+                s
+            } else if s.contains(|c| ops.contains(c)) {
+                alloc::format!("-({})", s)
+            } else {
+                alloc::format!("-{}", s)
+            };
+        }
+        "%" => {
+            if let Some(v) = calc_eval(&win.input) {
+                win.input = fmt_num(v / 100.0);
+                win.tab = 1;
+            }
+        }
+        "back" => {
+            win.input.pop();
+            if win.input.is_empty() {
+                win.input = String::from("0");
+            }
+            win.tab = 0;
+        }
+        k => {
+            let is_op = ops.contains(k);
+            if fresh && !is_op {
+                win.input.clear();
+            }
+            win.tab = 0;
+            if win.input == "0" && !is_op && k != "." && k != ")" {
+                win.input.clear();
+            }
+            if is_op && win.input.chars().last().is_some_and(|l| ops.contains(l)) {
+                win.input.pop();
+            }
+            if win.input.len() < 28 {
+                win.input.push_str(k);
+            }
+        }
+    }
+}
+
+fn calc_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    let (_, keys) = calc_geo(win);
+    if let Some(k) = keys.iter().position(|&r| in_rect(r, cx, cy)) {
+        calc_press(win, CALC_KEYS[k].0);
+        win.lclick = (crate::timer::uptime_ms(), k); // bosilgan tugma (yorituv uçun)
+        return true;
+    }
+    false
+}
+
+fn calc_key(win: &mut Window, code: u16, shift: bool) {
+    match code {
+        28 => calc_press(win, "="),
+        14 => calc_press(win, "back"),
+        111 => calc_press(win, "C"),
+        _ => match keycode_char(code, shift) {
+            Some('=') => calc_press(win, "="),
+            Some('c') | Some('C') => calc_press(win, "C"),
+            Some(',') => calc_press(win, "."),
+            Some(c) if c.is_ascii_digit() || "+-*/.%()".contains(c) => {
+                let mut b = [0u8; 4];
+                let s = c.encode_utf8(&mut b);
+                if c == '%' {
+                    calc_press(win, "%");
+                } else {
+                    let s = String::from(&*s);
+                    calc_press(win, &s);
+                }
+            }
+            _ => {}
+        },
+    }
+}
+
+fn draw_calc(win: &Window) {
+    let u = body();
+    let ((dx, dy, dw, dh), keys) = calc_geo(win);
+    gfx::fill_round_rect(dx, dy, dw, dh, u / 2, 0x10151f);
+    if let Some(l) = win.lines.first() {
+        let t = fit_text(l, dw - u, small());
+        let tw = gfx::text_width(&t, small());
+        let col = if l == "Xato" { 0xff6b61 } else { 0x7d8ca3 };
+        gfx::draw_text(dx + dw - tw - u / 2, dy + u / 2, &t, col, small());
+    }
+    // Asosiy son: sigʻmasa — kiçraytiriladi
+    let mut px = u * 2;
+    while px > small() && gfx::text_width(&win.input, px) > dw - u {
+        px -= 2;
+    }
+    let shown = if gfx::text_width(&win.input, px) > dw - u {
+        let v: Vec<char> = win.input.chars().collect();
+        let mut k = v.len();
+        let mut s = String::new();
+        while k > 0 {
+            let t: String = v[k - 1..].iter().collect();
+            if gfx::text_width(&t, px) > dw - u {
+                break;
+            }
+            s = t;
+            k -= 1;
+        }
+        s
+    } else {
+        win.input.clone()
+    };
+    let tw = gfx::text_width(&shown, px);
+    gfx::draw_text(dx + dw - tw - u / 2, dy + dh - px - u / 2, &shown, OQ, px);
+    let flash = crate::timer::uptime_ms().saturating_sub(win.lclick.0) < 150;
+    for (k, &(x, y, w, h)) in keys.iter().enumerate() {
+        let (label, t) = CALC_KEYS[k];
+        let mut c = match t {
+            0 => 0x5a6476,
+            1 | 3 => 0xff9f0a,
+            _ => 0x2c3446,
+        };
+        if flash && win.lclick.1 == k {
+            c = mix(c, 0xffffff, 90);
+        }
+        gfx::fill_round_rect(x, y, w, h, h.min(w) / 2, c);
+        let (bx, by) = (x + w / 2, y + h / 2);
+        let gs = (h * 2 / 5).min(u * 3 / 2);
+        if t == 1 || t == 3 {
+            op_glyph(bx, by, gs, label, OQ);
+        } else {
+            let px = if label.len() > 1 { small() } else { u * 6 / 5 };
+            gfx::draw_text_centered(bx, by.saturating_sub(px / 2 + 1), label, OQ, px);
+        }
+    }
+}
+
+// ---------------- Tizim monitori ----------------
+
+/// Oxirgi 60 soniya CPU yuklanişi (%).
+static CPU_HIST: crate::sync::SpinLock<Vec<u32>> = crate::sync::SpinLock::new(Vec::new());
+
+fn state_name(s: &task::State) -> &'static str {
+    match s {
+        task::State::Ready => "Tayyor",
+        task::State::Running => "Işlayapti",
+        task::State::Sleeping(_) => "Uxlayapti",
+        task::State::WaitingInput => "Kiriş kutmoqda",
+        task::State::WaitingPid(_) => "Kutmoqda",
+        task::State::WaitingChannel(_) => "Kanal kutmoqda",
+        task::State::WaitingEvent(_) => "Hodisa kutmoqda",
+        task::State::Dead(_) => "Tugagan",
+    }
+}
+
+/// Monitor geometriyasi: (kartalar y, karta balandligi, jadval y, qator, Tugatiş tugmasi).
+fn monitor_geo(win: &Window) -> (usize, usize, usize, usize, (usize, usize, usize, usize)) {
+    let u = body();
+    let pad = u * 2 / 3;
+    let cy = win.y + title_h() + pad;
+    let ch = u * 6;
+    let ty = cy + ch + pad;
+    let rh = u * 3 / 2;
+    let bh = u * 3 / 2;
+    let bw = gfx::text_width("Tugatiş", small()) + u * 2;
+    let btn = ((win.x + win.w).saturating_sub(pad + bw), (win.y + win.h).saturating_sub(pad + bh), bw, bh);
+    (cy, ch, ty, rh, btn)
+}
+
+fn monitor_tasks() -> Vec<task::TaskInfo> {
+    let mut v = task::snapshot();
+    v.retain(|t| !matches!(t.state, task::State::Dead(_)));
+    v.sort_by_key(|t| t.pid);
+    v
+}
+
+/// Tanlov kaliti: PID (boş vazifalar hammasi PID 0 — ular qator raqami bilan).
+fn task_key(t: &task::TaskInfo, idx: usize) -> usize {
+    if t.pid == 0 { usize::MAX - idx } else { t.pid }
+}
+
+fn task_sel<'a>(tasks: &'a [task::TaskInfo], sel: Option<usize>) -> Option<&'a task::TaskInfo> {
+    let k = sel?;
+    tasks.iter().enumerate().find(|(i, t)| task_key(t, *i) == k).map(|(_, t)| t)
+}
+
+fn monitor_rows_max(win: &Window) -> usize {
+    let (_, _, ty, rh, btn) = monitor_geo(win);
+    btn.1.saturating_sub(ty + rh + body() / 3) / rh
+}
+
+fn monitor_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    let (_, _, ty, rh, btn) = monitor_geo(win);
+    if in_rect(btn, cx, cy) {
+        let tasks = monitor_tasks();
+        if let Some(t) = task_sel(&tasks, win.fsel) {
+            if !t.user {
+                notify("Tugatib bölmaydi", &alloc::format!("{} — yadro vazifasi", t.name), 0xff9f0a);
+            } else if task::kill(t.pid) {
+                notify("Jarayon tugatildi", &alloc::format!("{} (PID {})", t.name, t.pid), 0xff453a);
+                win.fsel = None;
+            } else {
+                notify("Tugatib bölmadi", &alloc::format!("{}: ruxsat yöq", t.name), 0xff453a);
+            }
+        }
+        return true;
+    }
+    let first = ty + rh;
+    if cy >= first && cx >= win.x && cx < win.x + win.w {
+        let i = (cy - first) / rh;
+        if i < monitor_rows_max(win) {
+            let tasks = monitor_tasks();
+            if let Some(t) = tasks.get(i) {
+                win.fsel = Some(task_key(t, i));
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn draw_monitor(win: &Window) {
+    let u = body();
+    let pad = u * 2 / 3;
+    let (cy, ch, ty, rh, btn) = monitor_geo(win);
+    let iw = win.w.saturating_sub(pad * 2);
+    let cw0 = iw * 11 / 20;
+    let cw1 = iw - cw0 - pad;
+    let x0 = win.x + pad;
+    let x1 = x0 + cw0 + pad;
+    // --- CPU kartasi ---
+    gfx::fill_round_rect(x0, cy, cw0, ch, u / 2, 0x141a26);
+    let hist = CPU_HIST.lock().clone();
+    let cur = hist.last().copied().unwrap_or(0);
+    gfx::draw_text(x0 + u * 2 / 3, cy + u / 2, "Protsessor", 0xaebccf, small());
+    let pct = alloc::format!("{}%", cur);
+    let pw = gfx::text_width(&pct, u * 6 / 5);
+    gfx::draw_text(x0 + cw0 - pw - u * 2 / 3, cy + u / 3, &pct, 0x34c759, u * 6 / 5);
+    let (gx, gy) = (x0 + u * 2 / 3, cy + u * 2);
+    let (gw, gh) = (cw0.saturating_sub(u * 4 / 3), ch.saturating_sub(u * 5 / 2));
+    for k in 1..4 {
+        fill_rect(gx, gy + gh * k / 4, gw, 1, 0x222b3b);
+    }
+    if hist.len() >= 2 && gw > 0 {
+        let n = 60usize;
+        let off = n.saturating_sub(hist.len()); // böş boşlanişi — öngda
+        for px in 0..gw {
+            let pos = px * (n - 1) * 16 / gw.max(1);
+            let (i, f) = (pos / 16, (pos % 16) as u32);
+            if i < off {
+                continue;
+            }
+            let a = hist[(i - off).min(hist.len() - 1)];
+            let b = hist[(i + 1 - off).min(hist.len() - 1)];
+            let v = (a * (16 - f) + b * f) / 16;
+            let h = (v as usize * gh / 100).min(gh);
+            if h > 0 {
+                fill_rect(gx + px, gy + gh - h, 1, h, 0x1d5a35);
+                fill_rect(gx + px, gy + gh - h, 1, 2.min(h), 0x34c759);
+            }
+        }
+    }
+    // --- Xotira kartasi ---
+    gfx::fill_round_rect(x1, cy, cw1, ch, u / 2, 0x141a26);
+    gfx::draw_text(x1 + u * 2 / 3, cy + u / 2, "Xotira", 0xaebccf, small());
+    let (free_p, total_p) = crate::memory::frame::stats();
+    let used_p = total_p.saturating_sub(free_p);
+    let mpct = used_p * 100 / total_p.max(1);
+    let mtxt = alloc::format!("{}%", mpct);
+    let mw = gfx::text_width(&mtxt, u * 6 / 5);
+    gfx::draw_text(x1 + cw1 - mw - u * 2 / 3, cy + u / 3, &mtxt, 0x2f9bff, u * 6 / 5);
+    let (bx, by, bw, bh) = (x1 + u * 2 / 3, cy + u * 2 + u / 4, cw1.saturating_sub(u * 4 / 3), u / 2);
+    gfx::fill_round_rect(bx, by, bw, bh, bh / 2, 0x262f40);
+    gfx::fill_round_rect(bx, by, (bw * mpct / 100).max(bh), bh, bh / 2, 0x2f9bff);
+    let (hu, ht) = crate::memory::heap::stats();
+    let (files, dirs, bytes) = fs::stats();
+    let lines = [
+        alloc::format!("RAM: {} / {} MB", used_p * 4 / 1024, total_p * 4 / 1024),
+        alloc::format!("Uyum: {} / {} KB", hu / 1024, ht / 1024),
+        alloc::format!("Disk: {} fayl, {} papka, {} KB", files, dirs, bytes / 1024),
+    ];
+    for (k, l) in lines.iter().enumerate() {
+        gfx::draw_text(bx, by + bh + u / 2 + k * (small() + 3), &fit_text(l, bw, small() * 4 / 5), 0x8ea0b6, small() * 4 / 5);
+    }
+    // --- Jarayonlar jadvali ---
+    let tasks = monitor_tasks();
+    let cols = [x0 + u / 2, x0 + u * 3, x0 + iw * 9 / 20, x0 + iw * 7 / 10, x0 + iw * 7 / 8];
+    fill_round_rect_a(x0, ty, iw, rh, u / 3, 0xffffff, 12);
+    for (k, h) in ["PID", "Nomi", "Holati", "Turi", "Yadro"].iter().enumerate() {
+        gfx::draw_text(cols[k], ty + (rh - small() * 4 / 5) / 2, h, 0x8ea0b6, small() * 4 / 5);
+    }
+    let max = monitor_rows_max(win);
+    for (i, t) in tasks.iter().take(max).enumerate() {
+        let ry = ty + rh + i * rh;
+        if win.fsel == Some(task_key(t, i)) {
+            fill_round_rect_a(x0, ry, iw, rh, u / 3, accent(), 110);
+        } else if i % 2 == 1 {
+            fill_round_rect_a(x0, ry, iw, rh, u / 3, 0xffffff, 6);
+        }
+        let ty2 = ry + (rh - small() * 9 / 10) / 2;
+        let px = small() * 9 / 10;
+        let col = if t.user { 0xe7edf6 } else { 0xaab6c8 };
+        gfx::draw_text(cols[0], ty2, &alloc::format!("{}", t.pid), col, px);
+        gfx::draw_text(cols[1], ty2, &fit_text(&t.name, cols[2] - cols[1] - u / 2, px), col, px);
+        let sc = match t.state {
+            task::State::Running => 0x34c759,
+            task::State::Ready => 0x64d2ff,
+            _ => 0x8ea0b6,
+        };
+        gfx::draw_text(cols[2], ty2, state_name(&t.state), sc, px);
+        gfx::draw_text(cols[3], ty2, if t.user { "Dastur" } else { "Yadro" }, col, px);
+        gfx::draw_text(cols[4], ty2, &alloc::format!("{}", t.cpu), col, px);
+    }
+    // --- Pastki qator ---
+    let info = alloc::format!("{} ta vazifa · {} ta dastur", tasks.len(), tasks.iter().filter(|t| t.user).count());
+    gfx::draw_text(x0, btn.1 + (btn.3 - small()) / 2, &info, 0x8ea0b6, small());
+    let can = task_sel(&tasks, win.fsel).is_some_and(|t| t.user);
+    gfx::fill_round_rect(btn.0, btn.1, btn.2, btn.3, btn.3 / 3, if can { 0xd83b33 } else { 0x323b4d });
+    gfx::draw_text_centered(btn.0 + btn.2 / 2, btn.1 + (btn.3 - small()) / 2, "Tugatiş", if can { OQ } else { 0x6f7f95 }, small());
+}
+
+fn monitor_key(win: &mut Window, code: u16) {
+    let tasks = monitor_tasks();
+    if tasks.is_empty() {
+        return;
+    }
+    let cur = win.fsel.and_then(|k| tasks.iter().enumerate().position(|(i, t)| task_key(t, i) == k));
+    let i = match (code, cur) {
+        (103, Some(c)) => c.saturating_sub(1),
+        (108, Some(c)) => (c + 1).min(tasks.len() - 1),
+        (103 | 108, None) => 0,
+        _ => return,
+    };
+    win.fsel = Some(task_key(&tasks[i], i));
+}
+
+// ---------------- Rasm va video köruvçi boşqaruvi ----------------
+
+/// Köruvçi geometriyasi: rasm maydoni (x, y, w, h) va pastki qator y, balandligi.
+fn viewer_geo(win: &Window) -> (usize, usize, usize, usize, usize, usize) {
+    let pad = body() / 2;
+    let x = win.x + pad;
+    let y = win.content_top();
+    let w = win.w.saturating_sub(pad * 2);
+    let foot = if win.video { body() * 2 } else { small() + pad };
+    let h = (win.y + win.h).saturating_sub(y + pad + foot);
+    (x, y, w, h, y + h + pad / 2, foot)
+}
+
+/// Video boşqaruvi: (play markazi x, y, radius, chiziq x0, x1).
+fn video_bar(win: &Window) -> (usize, usize, usize, usize, usize) {
+    let u = body();
+    let (x, _, w, _, fy, foot) = viewer_geo(win);
+    let r = u * 2 / 3;
+    let py = fy + foot / 2;
+    (x + r, py, r, x + r * 2 + u, (x + w).saturating_sub(u * 5))
+}
+
+/// Oldingi/keyingi strelkalari markazlari (rasm uçun).
+fn viewer_arrows(win: &Window) -> [(usize, usize, usize); 2] {
+    let u = body();
+    let (x, y, w, h, _, _) = viewer_geo(win);
+    let r = u;
+    let my = y + h / 2;
+    [(x + r + u / 3, my, r), ((x + w).saturating_sub(r + u / 3), my, r)]
+}
+
+fn in_circle(c: (usize, usize, usize), px: usize, py: usize) -> bool {
+    let (dx, dy) = (px as isize - c.0 as isize, py as isize - c.1 as isize);
+    (dx * dx + dy * dy) as usize <= (c.2 + 3) * (c.2 + 3)
+}
+
+fn viewer_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    if win.video {
+        if win.frames.is_empty() {
+            return false;
+        }
+        let (px, py, r, x0, x1) = video_bar(win);
+        if in_circle((px, py, r), cx, cy) {
+            video_toggle(win);
+            return true;
+        }
+        if cx + 4 >= x0 && cx <= x1 + 4 && cy + r >= py && cy <= py + r && x1 > x0 {
+            let f = (cx.clamp(x0, x1) - x0) * (win.frames.len() - 1) / (x1 - x0);
+            win.frame = f;
+            win.frame_ms = crate::timer::uptime_ms();
+            return true;
+        }
+        return false;
+    }
+    if win.path.is_empty() || (win.img.is_none() && win.frames.is_empty()) {
+        return false;
+    }
+    let [l, r] = viewer_arrows(win);
+    if in_circle(l, cx, cy) {
+        image_step(win, -1);
+        return true;
+    }
+    if in_circle(r, cx, cy) {
+        image_step(win, 1);
+        return true;
+    }
+    false
+}
+
+fn video_toggle(win: &mut Window) {
+    win.playing = !win.playing;
+    if win.playing && win.frame + 1 >= win.frames.len() {
+        win.frame = 0; // oxirida — boşidan
+    }
+    win.frame_ms = crate::timer::uptime_ms();
+}
+
+fn image_key(win: &mut Window, code: u16) {
+    if win.video {
+        let n = win.frames.len();
+        match code {
+            57 => video_toggle(win),
+            105 if n > 0 => {
+                win.playing = false;
+                win.frame = win.frame.saturating_sub(1);
+            }
+            106 if n > 0 => {
+                win.playing = false;
+                win.frame = (win.frame + 1).min(n - 1);
+            }
+            _ => {}
+        }
+        return;
+    }
+    match code {
+        105 => image_step(win, -1),
+        106 => image_step(win, 1),
+        _ => {}
+    }
+}
+
+fn draw_image(win: &Window) {
+    let img = if !win.frames.is_empty() {
+        &win.frames[win.frame.min(win.frames.len() - 1)].0
+    } else if let Some(img) = &win.img {
+        img
+    } else {
+        return;
+    };
+    let u = body();
+    let (x, y, w, h, fy, foot) = viewer_geo(win);
+    gfx::fill_rect(x, y, w, h, 0x11151d);
+    let (ix, iy, iw, ih) = gfx::blit_fit(x, y, w, h, img.w, img.h, &img.px);
+    gfx::round_outline(ix.saturating_sub(1), iy.saturating_sub(1), iw + 2, ih + 2, 1, 1, 0x3a4458);
+    if win.video {
+        let (px, py, r, x0, x1) = video_bar(win);
+        gfx::fill_circle(px, py, r, accent());
+        if win.playing {
+            fill_rect(px - r / 3, py - r / 2, (r / 4).max(2), r, OQ);
+            fill_rect(px + r / 8, py - r / 2, (r / 4).max(2), r, OQ);
+        } else {
+            let t = r * 2 / 5;
+            gfx::fill_poly(
+                &[((px - t / 2) as f32, (py - t) as f32), ((px + t) as f32, py as f32), ((px - t / 2) as f32, (py + t) as f32)],
+                OQ,
+            );
+        }
+        let n = win.frames.len().max(1);
+        let th = (u / 4).max(3);
+        gfx::fill_round_rect(x0, py - th / 2, x1.saturating_sub(x0), th, th / 2, 0x2a3346);
+        let kx = x0 + if n > 1 { win.frame * (x1 - x0) / (n - 1) } else { 0 };
+        gfx::fill_round_rect(x0, py - th / 2, (kx - x0).max(th), th, th / 2, accent());
+        gfx::fill_circle(kx, py, th * 3 / 2, OQ);
+        // vaqt: kadrlar davomiyligi yigʻindisi
+        let ms = |k: usize| -> u32 { win.frames.iter().take(k).map(|f| f.1.max(20)).sum() };
+        let (pos, dur) = (ms(win.frame), ms(n));
+        let tt = alloc::format!("{}:{:02} / {}:{:02}", pos / 60000, (pos / 1000) % 60, dur / 60000, (dur / 1000) % 60);
+        gfx::draw_text(x1 + u / 2, py.saturating_sub(small() * 4 / 10), &tt, 0xaebccf, small() * 4 / 5);
+        let _ = (fy, foot);
+        return;
+    }
+    // Oldingi / keyingi (papkada bir nechta rasm bölsa)
+    let sib = if win.path.is_empty() { Vec::new() } else { image_siblings(&win.path) };
+    if sib.len() > 1 {
+        for (k, (ax, ay, r)) in viewer_arrows(win).into_iter().enumerate() {
+            fill_round_rect_a(ax - r, ay - r, r * 2, r * 2, r, 0x000000, 130);
+            let d = r as f32 * 0.35;
+            let (fx, fy2) = (ax as f32, ay as f32);
+            let s = if k == 0 { 1.0 } else { -1.0 };
+            let t = (r as f32 / 9.0).max(1.2);
+            seg(fx + d * 0.5 * s, fy2 - d, fx - d * 0.5 * s, fy2, t, OQ);
+            seg(fx - d * 0.5 * s, fy2, fx + d * 0.5 * s, fy2 + d, t, OQ);
+        }
+    }
+    let pos = sib.iter().position(|p| *p == win.path);
+    let info = match pos {
+        Some(p) if sib.len() > 1 => alloc::format!("{}x{} · {} / {} · strelkalar bilan almaştiring", img.w, img.h, p + 1, sib.len()),
+        _ => alloc::format!("{}x{} · {} piksel", img.w, img.h, img.w * img.h),
+    };
+    gfx::draw_text(x, fy + (foot - small()) / 2, &fit_text(&info, w, small()), 0x8aa0bc, small());
 }

@@ -525,6 +525,48 @@ pub fn mkdir(path: &str) -> Result<NodeId, FsError> {
     v.add(parent, name, Data::Dir(Vec::new()), false)
 }
 
+/// Fayl yoki papkani boşqa joyga köçiradi / nomini özgartiradi.
+/// Maʼlumot nusxalanmaydi — faqat tugun yangi ota papkaga ulanadi.
+pub fn rename(from: &str, to: &str) -> Result<(), FsError> {
+    let mut v = vfs_as_caller();
+    let id = v.lookup(from)?;
+    let node = v.node(id)?;
+    if id == ROOT || node.readonly || node.role.is_some() {
+        return Err(FsError::Denied);
+    }
+    let (old_parent, owner) = (node.parent, node.owner);
+    let (np, name) = v.split(to)?;
+    if v.node(np)?.readonly {
+        return Err(FsError::Denied);
+    }
+    // Papkani öz içiga köçirib bölmaydi
+    if v.is_inside(np, id) {
+        return Err(FsError::Invalid);
+    }
+    if v.child(np, name).is_ok() {
+        return Err(FsError::Exists);
+    }
+    v.need(old_parent, PERM_W)?;
+    v.need(np, PERM_W)?;
+    let sticky = v.node(old_parent)?.mode & PERM_STICKY != 0;
+    if sticky && v.uid != 0 && owner != v.uid {
+        return Err(FsError::Denied);
+    }
+    let name = String::from(name);
+    if let Data::Dir(c) = &mut v.node_mut(old_parent)?.data {
+        c.retain(|&c| c != id);
+    }
+    if let Data::Dir(c) = &mut v.node_mut(np)?.data {
+        c.push(id);
+    }
+    let n = v.node_mut(id)?;
+    n.name = name;
+    n.parent = np;
+    n.mtime = crate::timer::unix_time();
+    mark_dirty();
+    Ok(())
+}
+
 /// Yöl bölgan tugun (yadro huquqi bilan): qafas papkasini aniqlaş uçun.
 pub fn node_of(path: &str) -> Result<NodeId, FsError> {
     vfs_as_kernel().lookup(path)
