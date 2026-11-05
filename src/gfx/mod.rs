@@ -132,6 +132,19 @@ fn blend(f: &Fb, x: usize, y: usize, c: Color, a: u32) {
     put(f, x, y, (r << 16) | (g << 8) | b);
 }
 
+/// Ekrandagi barça piksellar (0xRRGGBB) — ekran rasmi uçun.
+pub fn read_pixels() -> alloc::vec::Vec<u32> {
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return alloc::vec::Vec::new() };
+    let mut v = alloc::vec::Vec::with_capacity(f.w * f.h);
+    for y in 0..f.h {
+        for x in 0..f.w {
+            v.push(get(f, x, y) & 0xff_ffff);
+        }
+    }
+    v
+}
+
 pub fn clear(c: Color) {
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };
@@ -481,6 +494,26 @@ pub fn blit_fit(bx: usize, by: usize, bw: usize, bh: usize, iw: usize, ih: usize
         }
     }
     (ox, oy, tw, th)
+}
+
+/// Rasmni berilgan töğriburçakni to'liq to'ldirib chizadi (eng-yaqin namuna).
+/// Fon (wallpaper) uçun — nisbat saqlashsiz, butun maydonni qoplaydi.
+pub fn blit_scaled(bx: usize, by: usize, bw: usize, bh: usize, iw: usize, ih: usize, px: &[u32]) {
+    if iw == 0 || ih == 0 || bw == 0 || bh == 0 {
+        return;
+    }
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return };
+    for ty in 0..bh {
+        let sy = ty * ih / bh;
+        let row = sy * iw;
+        for tx in 0..bw {
+            let sx = tx * iw / bw;
+            if let Some(&c) = px.get(row + sx) {
+                put(f, bx + tx, by + ty, c);
+            }
+        }
+    }
 }
 
 // --- Matn (silliq, masshtablanadigan) ---

@@ -8,6 +8,207 @@ Rust tilida **noldan** yozilayotgan, **ARM64 (AArch64)** protsessorlari uçun op
 **Asosiy qoida:** heç qanday taşqi crate yoki boşqa OS kodi işlatilmaydi — `Cargo.toml` dagi
 `[dependencies]` böş. Faqat Rust kompilyatori va `core` kutubxonasi.
 
+## Ekran koʻrinişi
+
+![Zamin OS ish stoli](docs/desktop.png)
+
+To'liq grafik ish stoli (virtio-gpu): yuqori menyu paneli, rangli dok, va oʻng
+tomonda vidjetlar — ob-havo, kalendar, musiqa pleeri va tizim halqalari
+(CPU/RAM/Disk). Fon rasmi OS ning **öz JPEG dekoderi** bilan chiziladi.
+
+![Bir neçta oyna](docs/showcase.png)
+
+### Menyular va interaktiv vidjetlar
+
+![Menyular va vidjetlar](docs/menus.png)
+
+- **Ilovalar / Joylar / Tizim** — oçiladigan menyular (siçqon ostidagi band ajratiladi,
+  Esc yopadi). *Joylar* uy papkalarini Fayllar oynasida oçadi; *Tizim* — haqida,
+  sozlamalar, **qayta yuklaş** va **öçiriş** (avval diskka saqlanadi).
+- **Kalendar** — ‹ › bilan oylar almaşadi (sarlavhani bosiş — bugungi oyga qaytiş).
+- **Pleer** — haqiqiy kuyni (MP3, öz dekoderimiz) chaladi: ijro/pauza, boşiga, progress.
+- **Tizim halqalari haqiqiy:** CPU — rejalaştiruvçi har uzilişda band/böş vazifani
+  sanaydi; RAM — fizik sahifalar; Disk — ZaminFS band bloklari.
+
+### Oyna boshqaruvi
+
+![Yashiriş, ölçam va qaytariş](docs/window-controls.png)
+
+- 🔴 **yopiş**, 🟡 **dokka yashiriş**, 🟢 **butun ekranga kattalashtiriş** (yana bosilsa —
+  oldingi ölçam). Siçqon tugmalar ustida bölganda macOS kabi `× − +` belgilari chiqadi.
+- Sarlavhadan sudrab **siljitiş**, öng-pastki burçakdan sudrab **ölçamni özgartiriş**
+  (mazmun — Fayllar grid, terminal satrlari, rasm — yangi ölçamga moslaşadi).
+- Dokdagi ikona: ilova oçiq bölsa (yashirilgan ham) — oynani old planga qaytaradi,
+  bölmasa — yangi oçadi. Ostidagi nuqta oçiq ilovani bildiradi.
+
+### Ish stoli ikonalari va animatsiyalar
+
+<img src="docs/desktop-icons.png" width="160" align="left" style="margin-right:12px">
+
+Ish stolining çap tomonida uy papkalari (Hujjatlar, Yuklamalar, Musiqa, Rasmlar,
+Videolar) ikonalari: **bir marta bosiş — tanlaş**, **ikki marta — Fayllarda oçiş**.
+
+Oynalar **animatsiya** bilan: yangi oyna dok ikonasidan kattalaşib çiqadi, yashirilganda
+dokka "uçib" kiradi, kattalaştiriş/qaytariş silliq oʻtadi (easeOutCubic, 230 ms).
+Quyidagi kadrlar animatsiya sekinlaştirilgan holda olingan:
+
+<br clear="left">
+
+![Animatsiya kadrlari](docs/animation.jpg)
+
+### Sozlamalar: fon rasmi va asosiy rang
+
+![Aurora fon + binafşa rang: ish stoli va qulf ekrani](docs/themes.jpg)
+
+Sozlamalar → **Ekran**: 4 ta fon (Zamin manzarasi — foto; **Tun**, **Aurora**, **Şafaq** —
+OS içida protsedural chiziladi, istalgan ekran ölçamida) va 6 ta **asosiy rang**
+(menyu, qidiruv, yon panellar, tanlovlar uçun). Tanlov darhol qöllanadi, **diskka
+saqlanadi** (`fon=`, `rang=`) va qayta yuklaşdan keyin ham — qulf ekranida ham — qoladi.
+
+Boşqa bölimlar haqiqiy tizim maʼlumotini körsatadi: **Tarmoq** (virtio-net, DHCP, IP,
+şlyuz, DNS, MAC), **Övoz** (qurilma va dekoderlar), **Foydalanuvçilar**, **Xavfsizlik**
+(W^X, PAN, KASLR, disk şifrlaş…), **Umumiy** (versiya, xotira, ish vaqti).
+
+<img src="docs/settings-network.png" width="480">
+
+### Kontekst menyulari va öz rasmingiz fonda
+
+![Kontekst menyulari](docs/context-menus.jpg)
+
+Siçqonning **öng tugmasi**:
+- **Fayllarda rasm ustida** — Oçiş, **Fon qilib qöyiş**, Öçiriş; papka ustida — Oçiş, Öçiriş;
+  boʻş joyda — Yangi papka, Yangilaş.
+- **Ish stolida** — Fon rasmini almaştiriş… (Sozlamalar → Ekran), Yangi papka, Terminal,
+  Sozlamalar; ish stoli ikonasi ustida — Oçiş.
+
+Tanlangan rasm ekranni toʻliq qoplaydigan qilib kesiladi ("cover"), yöli diskka
+saqlanadi (`fon_yol=`) va Sozlamalarda 5-variant — **"Sizning rasmingiz"** bölib çiqadi.
+(Qulf ekranida — foydalanuvçi fayllari hali şifrlangan bölgani uçun — asosiy foto
+körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlanmaydi.
+
+### Fayl boshqaruvi va Savat
+
+![Fayllar va Savat](docs/file-manager.png)
+
+- **Bir marta bosiş — tanlaş, ikki marta — oçiş**; strelkalar bilan yuriş, `Enter` — oçiş,
+  `Backspace` — ota papka.
+- **`F2` (yoki öng tugma → Nomini özgartiriş)** — joyida tahrirlanadigan nom maydoni
+  (`Enter` — saqlaş, `Esc` — bekor). Fayl tizimida yangi `fs::rename` — maʼlumot
+  nusxalanmaydi, tugun yangi joyga ulanadi.
+- **Nusxa olish / Kesiş / Joylaş** — `Alt+C`, `Alt+X`, `Alt+V` yoki kontekst menyusi;
+  papkalar içidagilari bilan nusxalanadi, band nom bölsa `nom (2).txt`.
+- **Haqiqiy Savat** — `Delete` yoki "Savatga tashlaş": fayl `~/.Savat` ga köçadi, asl
+  joyi `~/.Savat/.joylar` indeksida saqlanadi. Savat oynasida **Tiklaş** (asl joyiga,
+  papka yöq bölsa — uyga) va **Böşatiş**; dokdagi savat töla bölsa — qogʻozlar körinadi.
+  Nuqta bilan boşlanadigan yaşirin fayllar körsatilmaydi.
+
+### Oyna yopiştiriş, sudrab tashlaş va ekran rasmi
+
+| Yopiştiriş (çap/öng yarim) + matn muharriri | Faylni sudrab tashlaş |
+|---|---|
+| ![Yopiştiriş](docs/snap-editor.png) | ![Sudrab tashlaş](docs/drag-drop.png) |
+
+- **Yopiştiriş (snap)**: oynani ekranning çap/öng çetiga sudrang — yarim ekranga,
+  tepaga — toʻliq ekranga yopişadi (oldindan körinişi yoritiladi). Sarlavhani **ikki marta
+  bosiş** — kattalaştiriş/qaytariş; yopiştirilgan oynani sudrasangiz — avvalgi ölçamiga qaytadi.
+- **Sudrab tashlaş**: Fayllardagi elementni papkaga, yon paneldagi joyga, boşqa Fayllar
+  oynasiga, ish stoli papkasiga yoki dokdagi **Savatga** sudrang (Shift — nusxalaydi).
+- **Ekran rasmi**: `PrtSc` yoki Tizim → Ekran rasmi — `~/Rasmlar/ekran-YYYYMMDD-HHMMSS.png`.
+  PNG **kodlovçisi noldan** yozildi: qator filtrlari (None/Sub/Up, eng yaxşisi tanlanadi),
+  deflate (qatʼiy Huffman + LZ77 xesh zanjiri), CRC32, Adler-32; öz dekoderimiz bilan
+  self-test orqali tekşiriladi.
+- **Matn muharriri**: haqiqiy kursor (strelkalar, Home/End, PgUp/PgDn, Delete, Tab),
+  siçqon bilan joylaş, aylantiriş, "Qator, ustun" körsatkiçi, saqlanmagan özgariş belgisi `*`,
+  `Alt+S` — saqlaş.
+- **Oʻzbekça harflar**: `AltGr` (öng Alt) + `s` `c` `o` `g` `'` → **ş ç ö ğ ʼ**
+  (Shift bilan — Ş Ç Ö Ğ) — barça ilovalarda va terminalda.
+
+### Kalkulyator va Tizim monitori
+
+![Kalkulyator va Tizim monitori](docs/calc-monitor.png)
+
+- **Kalkulyator** — siçqon yoki klaviatura (raqamlar, `+ - * / ( ) %`, `Enter`/`=`,
+  `Backspace`, `C`); ifoda qavslar va ustuvorlik bilan hisoblanadi, oldingi ifoda
+  displey tepasida körinadi.
+- **Tizim monitori** — oxirgi 60 soniyalik CPU grafigi (rejalaştiruvçi namunalari),
+  RAM/uyum/disk, barça vazifalar jadvali (PID, nomi, holati, turi, yadro raqami);
+  dastur jarayonini tanlab **Tugatiş** (`task::kill`, ruxsat tekşiruvi bilan).
+
+### Rasm va video köruvçi
+
+| Rasm: oldingi / keyingi | Video: ijro / pauza va progress |
+|---|---|
+| ![Rasm köruvçi](docs/image-viewer.png) | ![Video pleer](docs/video-player.png) |
+
+Papkada bir nechta rasm bölsa — çap/öng **strelkalar** (yoki `←`/`→`) bilan almaşadi,
+pastda "2 / 4". Video oynasida **ijro/pauza** tugmasi (`Space`), kadrlar böyiça
+**progress chizig'i** (bosib kerakli joyga ötiladi) va vaqt.
+
+### Tezkor qidiruv (Alt+Space)
+
+<img src="docs/search.png" width="420" align="right">
+
+`Alt+Space` yoki menyu panelidagi lupa — bitta maydondan:
+- **ilovalar** (nomi böyiça),
+- **papka va fayllar** (uy papkasi içida, yöli bilan) — Enter mos ilovada oçadi,
+- **kalkulyator**: `12*(3+4)/2` → `= 42` (+ − × ÷, qavslar, kasrlar),
+- **tizim amallari**: qayta yuklaş, öçiriş.
+
+↑/↓ — tanlaş, Enter — oçiş, Esc — yopiş, siçqon bilan ham bosiladi.
+
+<br clear="right">
+
+### Klaviatura yorliqlari va bildirişnomalar
+
+| Ilova almaştirgiç (Alt+Tab) | Bildirişnomalar markazi |
+|---|---|
+| ![Alt+Tab](docs/switcher.png) | ![Bildirişnomalar](docs/notifications.png) |
+
+| Yorliq | Amal |
+|---|---|
+| `Alt+Space` | Tezkor qidiruv (ilova, fayl, hisob) |
+| `Alt+Tab` / `Alt+Shift+Tab` | Ilova almaştirgiç — Alt qoʻyib yuborilganda tanlangan oyna faollaşadi (yashirilgani ham) |
+| `Alt+W` | Faol oynani yopiş |
+| `Alt+M` | Faol oynani dokka yashiriş |
+| `Alt+F` | Kattalaştiriş / oldingi ölçam |
+| `Alt+C` / `Alt+X` / `Alt+V` | Fayllarda: nusxa olish / kesiş / joylaş |
+| `F2`, `Delete` | Fayllarda: nomini özgartiriş, savatga tashlaş |
+| `Alt+S` | Matn muharririda saqlaş |
+| `PrtSc` | Ekran rasmi (PNG, ~/Rasmlar) |
+| `AltGr` + s/c/o/g/' | ş ç ö ğ ʼ |
+| `Esc` | Menyu, bildirişnomalar paneli va almaştirgiçni yopiş |
+
+**Bildirişnomalar** öng yuqoridan sirpanib çiqadi (4.5 s, bosilsa yopiladi), menyu
+panelidagi qoʻngʻiroq — oxirgi xabarlar tarixi ("Tozalaş" bilan). Yadroning istalgan
+joyidan `gui::notify(sarlavha, matn, rang)` bilan yuboriladi. Hozir: kiriş, fayl
+saqlaş, övoz qurilmasi yöqligi haqida.
+
+### Qulf ekrani
+
+![Qulf ekrani](docs/lockscreen.png)
+
+Fon rasmi (xiralashtirilgan), katta soat va toʻliq sana, shishasimon kiriş kartasi.
+
+### Ilovalar
+
+| Fayllar | Terminal |
+|---|---|
+| ![Fayllar](docs/apps/files.png) | ![Terminal](docs/apps/terminal.png) |
+| Yon panel (Joylar), orqaga tugmasi va yöl, katta ikonali grid. Rasmlar uçun **haqiqiy eskizlar** (PNG/GIF/SVG — öz dekoderlarimiz bilan). | Haqiqiy EL0 jarayoni bilan quvur orqali bogʻlangan. Rangli prompt (`user@zamin` — yashil, yöl — koʻk), blok kursor. |
+
+| Sozlamalar | Brauzer |
+|---|---|
+| ![Sozlamalar](docs/apps/settings.png) | ![Brauzer](docs/apps/browser.png) |
+| Bölimlar ro'yxati va tizim maʼlumoti (versiya, foydalanuvçi, xotira, ekran). | Manzil qatori va boşlang'iç sahifa (tarmoq qatlami tayyorlanmoqda). |
+
+| Musiqa pleeri | Boşqotirma |
+|---|---|
+| ![Pleer](docs/apps/music.png) | ![Boşqotirma](docs/apps/puzzle.png) |
+| Muqova, nom, format maʼlumoti, normallaşgan toʻlqin (ijro qilingan qismi yashil), ijro tugmasi. MP3/OGG/FLAC/WAV/AIFF. | 15 ta raqamli plitka öyini: siçqon (qator/ustun böylab bir nechtasini suradi) yoki strelkalar; yurişlar va vaqt hisobi, har doim yeçiladigan aralaştiriş. |
+
+Barça skrinshotlar QEMU da (virtio-gpu) QMP `screendump` orqali olingan — haqiqiy render.
+Dizayn namunasi: [`docs/design-mockup.png`](docs/design-mockup.png).
+
 ## Işga tuşiriş
 
 ```bash
@@ -175,6 +376,10 @@ soddalaştirilgan.
   stereo (MS/intensity), antialias, IMDCT (uzun/qisqa bloklar), polifaz sintez
   filtri. Taniş barcha versiyalar uçun (MPEG-1/2/2.5, Layer I/II/III, VBR, ID3).
   ffmpeg bilan tekşirilgan (korrelyatsiya 1.0000).
+- **OGG/Vorbis** — to'liq dekod (noldan): OGG konteyner, Vorbis kodkitoblari
+  (Huffman + VQ qidiruv), floor1 egri chizigʼi, residue (0/1/2 turlari), kanal
+  birikuvi (coupling), teskari MDCT va oyna/overlap-add. Metama'lumot va teglar
+  (vendor, TITLE/ARTIST…) ham. ffmpeg bilan tekşirilgan (korrelyatsiya 1.0000).
 
 Grafik **Övoz köruvçi** toʻlqin shaklini chizadi va virtio-sound orqali chaladi.
 
@@ -404,7 +609,7 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [x] **9. Işonçlilik** — yadro jurnali, panic diskka yoziladi, fuzz sinovi
 - [x] **8½. Yadro himoyasi** — qörğonli yadro steklari, PAN, WXN, böşatilgan xotirani nollaş, ASLR
 - [x] **9. Grafika** — virtio-gpu framebuffer, şrift, oynalar menejeri, grafik terminal, sichqoncha/klaviatura
-- [x] **9½. Media** — rasm (16+ format), audio (WAV/AIFF/FLAC/MP3 + ADPCM/μ-law/A-law), video (MJPEG/AVI dekod; MP4/MOV/MKV/WebM taniş) — hammasi noldan
+- [x] **9½. Media** — rasm (16+ format), audio (WAV/AIFF/FLAC/MP3/OGG-Vorbis + ADPCM/μ-law/A-law), video (MJPEG/AVI dekod; MP4/MOV/MKV/WebM taniş) — hammasi noldan, ffmpeg bilan tekşirilgan
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar (davom etmoqda)
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
 
@@ -478,14 +683,14 @@ Keyin yana uchta yönaliş qoşildi:
     haqiqiy sertifikatlar (ISRG Root X1 — RSA, USERTrust ECC — ECDSA) bilan sinaldi.
 
 Yadro öz-özini tekşirişi (yuklanişda `[test]`): heap, MMU, W^X, PAN, kripto,
-X.509, rasm (15 format), audio (WAV/FLAC/MP3), video (MJPEG/AVI), taymer, KASLR,
+X.509, rasm (15 format), audio (WAV/FLAC/MP3/OGG), video (MJPEG/AVI), taymer, KASLR,
 rejalaştiruvçi, SMP, mutex, disk, fuzz, stek qörğoni, foydalanuvçi rejimi, va
 (ikkinchi disk bölsa) FAT yoziş.
 Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi.
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.9**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.21**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -502,5 +707,37 @@ bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.9 — **MP3** (MPEG-1 Layer III) dekoderi va kengaytirilgan WAV kodeklari
   (μ-law/A-law/ADPCM); **video**: MJPEG/AVI dekod, MP4/MOV/MKV/WebM taniş.
   Barça media dekoderlari ffmpeg bilan tekşirilgan.
+- 0.0.10 — **OGG/Vorbis** to'liq dekoderi (noldan): kodkitoblar, floor1,
+  residue, kanal birikuvi, teskari MDCT. ffmpeg bilan aniq mos (korr. 1.0000).
+- 0.0.11 — **Ish stoli qayta dizayni**: rasm fon (ichki JPEG dekoder bilan),
+  yuqori menyu (menyular + holat belgilari + sana), oʻng vidjetlar paneli
+  (ob-havo, kalendar, pleer, CPU/RAM/Disk halqalari), 10 ta rangli dok ikonasi.
+- 0.0.12 — **Ilovalar qayta chizildi**: Fayllar (yon panel + grid + rasm eskizlari),
+  Terminal (rangli prompt, blok kursor), Matn muharriri (qator raqamlari), Soat
+  (analog siferblat), Musiqa pleeri (muqova + toʻlqin), Sozlamalar, Brauzer, Savat,
+  Haqida (Zamin logosi). UI matnlari yangi alifboda.
+- 0.0.13 — **Menyular va interaktiv vidjetlar**: Ilovalar/Joylar/Tizim oçiladigan
+  menyulari (qayta yuklaş/öçiriş bilan), kalendarda oylar almaşadi, pleer haqiqiy
+  kuyni chaladi ("Zamin kuyi", Karplus-Strong sintezi), CPU/Disk halqalari haqiqiy
+  oʻlçovlardan; yangi qulf ekrani (fon rasmi + soat).
+- 0.0.14 — **Oyna boshqaruvi**: sariq — dokka yashiriş, yashil — kattalashtiriş/qaytariş,
+  hover belgilari (× − +), burçakdan ölçamni özgartiriş, dok ikonasi oçiq oynani qaytaradi.
+- 0.0.15 — **Ish stoli ikonalari** (uy papkalari; bir marta — tanlaş, ikki marta — oçiş)
+  va **oyna animatsiyalari** (oçiliş, yashiriş, qaytariş, kattalaştiriş).
+- 0.0.16 — **Klaviatura yorliqlari** (Alt+Tab almaştirgiç, Alt+W/M/F) va
+  **bildirişnomalar** (toastlar + tarix paneli, `gui::notify` API).
+- 0.0.17 — **Tezkor qidiruv** (Alt+Space): ilovalar, fayllar, kalkulyator, tizim amallari;
+  klaviatura toʻliq US belgilari bilan (Shift+raqam, qavslar va h.k.).
+- 0.0.18 — **Jonli Sozlamalar**: fon rasmi (foto + 3 protsedural) va asosiy rang tanlaş,
+  diskka saqlaş; Tarmoq/Övoz/Foydalanuvçilar/Xavfsizlik bölimlari haqiqiy maʼlumot bilan.
+- 0.0.19 — **Kontekst menyulari** (öng tugma: Fayllar, ish stoli), **öz rasmini fon qilish**,
+  yangi papka va öçiriş, eskizlar keşi, Rasmlar'da yangi namuna foto (saroy.jpg).
+- 0.0.20 — **Fayl boshqaruvi va yangi ilovalar**: haqiqiy Savat (tiklaş/böşatiş),
+  nomini özgartiriş (`fs::rename`), nusxa/kesiş/joylaş, klaviatura bilan tanlaş;
+  **Kalkulyator**, **Tizim monitori** (CPU grafigi, jarayonlar, tugatiş); rasm
+  köruvçida oldingi/keyingi, video pleerda ijro/pauza va progress; 12 ta dok ikonasi.
+- 0.0.21 — **Ish unumdorligi**: oyna yopiştiriş (yarim/toʻliq ekran), sarlavhani ikki marta
+  bosiş, fayllarni sudrab tashlaş (papka, yon panel, savat), ekran rasmi (PNG kodlovçi noldan),
+  haqiqiy kursorli matn muharriri, AltGr bilan oʻzbekça harflar, Boşqotirma öyini.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

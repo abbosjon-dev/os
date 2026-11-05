@@ -19,6 +19,7 @@ mod jpeg;
 mod pcx;
 mod pdf;
 mod png;
+pub mod png_enc;
 mod qoi;
 mod sample;
 mod sample_gif;
@@ -27,7 +28,7 @@ mod svg;
 mod testdata;
 mod text;
 mod tga;
-mod vector;
+pub mod vector;
 mod wmf;
 
 pub use sample::SAMPLE_PNG;
@@ -35,6 +36,7 @@ pub use sample_gif::SAMPLE_GIF;
 pub use sample_svg::SAMPLE_SVG;
 
 /// Dekodlangan rasm.
+#[derive(Clone)]
 pub struct Image {
     pub w: usize,
     pub h: usize,
@@ -199,6 +201,20 @@ pub fn self_test() -> Result<usize, &'static str> {
         match decode(bytes) {
             Some(img) if check(&img) => n += 1,
             _ => return Err(name),
+        }
+    }
+    // PNG kodlovçisi: kodlab, öz dekoderimiz bilan qaytarib öqiymiz (aniq mos)
+    {
+        let mut px = alloc::vec::Vec::new();
+        for y in 0..16 {
+            for x in 0..16 {
+                px.push(want(x, y));
+            }
+        }
+        let enc = png_enc::encode(16, 16, &px);
+        match decode(&enc) {
+            Some(img) if check(&img) && img.px == px => n += 1,
+            _ => return Err("PNG kodlovçi"),
         }
     }
     // TGA, PCX, ICO — yöqotişsiz, aniq rang (kengaytmali nom bilan)

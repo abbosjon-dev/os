@@ -8,15 +8,22 @@ use alloc::vec::Vec;
 mod aiff;
 mod flac;
 mod flac_test;
+mod kuy;
 mod mp3;
 mod mp3_tables;
 mod mp3_test;
+mod ogg;
 mod sample_wav;
 pub mod sound;
+mod vorbis;
+mod vorbis_dbtab;
+mod vorbis_test;
 mod wav;
 
 pub use sample_wav::SAMPLE_WAV;
 pub use mp3_test::MP3 as SAMPLE_MP3;
+pub use vorbis_test::OGG as SAMPLE_OGG;
+pub use kuy::KUY as SAMPLE_KUY;
 
 /// Dekodlangan övoz: namuna chastotasi, kanallar, i16 namunalar (interleaved).
 pub struct Clip {
@@ -79,6 +86,12 @@ pub fn format_name(d: &[u8]) -> Option<&'static str> {
         Some("AIFF")
     } else if &d[..4] == b"fLaC" {
         Some("FLAC")
+    } else if &d[..4] == b"OggS" {
+        if vorbis::is_vorbis(d) {
+            Some("OGG/Vorbis")
+        } else {
+            Some("OGG")
+        }
     } else if &d[..3] == b"ID3" || (d[0] == 0xff && (d[1] & 0xe0) == 0xe0 && mp3::is_mp3(d)) {
         Some("MP3")
     } else {
@@ -93,6 +106,7 @@ pub fn decode(_name: &str, d: &[u8]) -> Option<Clip> {
         "AIFF" => aiff::decode(d),
         "FLAC" => flac::decode(d),
         "MP3" => mp3::decode(d),
+        "OGG/Vorbis" => vorbis::decode(d),
         _ => None,
     }
 }
@@ -149,6 +163,30 @@ pub fn self_test() -> Result<(), &'static str> {
     let peak = seg.iter().map(|s| s.unsigned_abs() as u32).max().unwrap_or(0);
     if !(420..=460).contains(&freq) || !(2500..=5000).contains(&peak) {
         return Err("MP3");
+    }
+    // OGG/Vorbis — taniş, metama'lumot va to'liq dekod (440 Hz ohang).
+    if format_name(&vorbis_test::OGG) != Some("OGG/Vorbis") {
+        return Err("OGG taniş");
+    }
+    let vi = vorbis::info(&vorbis_test::OGG).ok_or("OGG info")?;
+    if vi.channels != 1 || vi.rate != 44100 || vi.bs1 != 2048 {
+        return Err("OGG metama'lumot");
+    }
+    let oc = decode("a.ogg", &vorbis_test::OGG).ok_or("OGG dekod")?;
+    if oc.rate != 44100 || oc.channels != 1 || oc.samples.len() < 2000 {
+        return Err("OGG");
+    }
+    let seg = &oc.samples[1000..oc.samples.len().min(2000)];
+    let mut zc = 0usize;
+    for i in 1..seg.len() {
+        if seg[i - 1] < 0 && seg[i] >= 0 {
+            zc += 1;
+        }
+    }
+    let freq = zc * 44100 / seg.len();
+    let peak = seg.iter().map(|s| s.unsigned_abs() as u32).max().unwrap_or(0);
+    if !(420..=460).contains(&freq) || !(2000..=6000).contains(&peak) {
+        return Err("OGG");
     }
     Ok(())
 }

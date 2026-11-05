@@ -584,9 +584,9 @@ pub mod msg {
         "[snd ] no sound device",
     ];
     pub const TEST_AUDIO: Text = [
-        "[test] audio: WAV, FLAC va MP3 dekoderlari — OK",
-        "[test] аудио: декодеры WAV, FLAC и MP3 — OK",
-        "[test] audio: WAV, FLAC and MP3 decoders — OK",
+        "[test] audio: WAV, FLAC, MP3 va OGG/Vorbis dekoderlari — OK",
+        "[test] аудио: декодеры WAV, FLAC, MP3 и OGG/Vorbis — OK",
+        "[test] audio: WAV, FLAC, MP3 and OGG/Vorbis decoders — OK",
     ];
     pub const TEST_VIDEO: Text = [
         "[test] video: MJPEG/AVI dekoderi, MP4/MOV/MKV/WebM taniş — OK",

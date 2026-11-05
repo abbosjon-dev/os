@@ -16,6 +16,12 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+/// Interfeys sozlamalari (diskda "fon=" va "rang=" kalitlari).
+pub static UI_WALL: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+pub static UI_ACCENT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+/// Foydalanuvçi tanlagan fon rasmi yöli ("fon_yol=").
+pub static UI_WALL_PATH: crate::sync::SpinLock<String> = crate::sync::SpinLock::new(String::new());
+
 const MAGIC: &[u8; 8] = b"ZAMINDSK";
 const VERSION: u32 = 2;
 const CONFIG_SECTOR: u64 = 1;
@@ -94,6 +100,12 @@ pub fn load() -> Option<Settings> {
         let Some((k, v)) = line.split_once('=') else { continue };
         if k == "til" && !in_section {
             lang = Lang::from_code(v).unwrap_or(Lang::Uz);
+        } else if k == "fon" && !in_section {
+            UI_WALL.store(v.parse().unwrap_or(0), core::sync::atomic::Ordering::Relaxed);
+        } else if k == "fon_yol" && !in_section {
+            *UI_WALL_PATH.lock() = String::from(v);
+        } else if k == "rang" && !in_section {
+            UI_ACCENT.store(v.parse().unwrap_or(0), core::sync::atomic::Ordering::Relaxed);
         } else if k == "mintaqa" && !in_section {
             if let Ok(m) = v.parse::<i32>() {
                 crate::time::set_tz_minutes(m);
@@ -112,9 +124,12 @@ pub fn save(s: &Settings) -> bool {
         return false;
     }
     let mut text = format!(
-        "# Zamin OS sozlamalari\ntil={}\nmintaqa={}\n",
+        "# Zamin OS sozlamalari\ntil={}\nmintaqa={}\nfon={}\nrang={}\nfon_yol={}\n",
         lang_code(s.lang),
-        crate::time::tz_minutes()
+        crate::time::tz_minutes(),
+        UI_WALL.load(core::sync::atomic::Ordering::Relaxed),
+        UI_ACCENT.load(core::sync::atomic::Ordering::Relaxed),
+        UI_WALL_PATH.lock().as_str()
     );
     for a in &s.accounts {
         text += &format!(
