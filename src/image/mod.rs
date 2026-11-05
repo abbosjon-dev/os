@@ -19,6 +19,7 @@ mod jpeg;
 mod pcx;
 mod pdf;
 mod png;
+pub mod png_enc;
 mod qoi;
 mod sample;
 mod sample_gif;
@@ -200,6 +201,20 @@ pub fn self_test() -> Result<usize, &'static str> {
         match decode(bytes) {
             Some(img) if check(&img) => n += 1,
             _ => return Err(name),
+        }
+    }
+    // PNG kodlovçisi: kodlab, öz dekoderimiz bilan qaytarib öqiymiz (aniq mos)
+    {
+        let mut px = alloc::vec::Vec::new();
+        for y in 0..16 {
+            for x in 0..16 {
+                px.push(want(x, y));
+            }
+        }
+        let enc = png_enc::encode(16, 16, &px);
+        match decode(&enc) {
+            Some(img) if check(&img) && img.px == px => n += 1,
+            _ => return Err("PNG kodlovçi"),
         }
     }
     // TGA, PCX, ICO — yöqotişsiz, aniq rang (kengaytmali nom bilan)

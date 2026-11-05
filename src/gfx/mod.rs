@@ -132,6 +132,19 @@ fn blend(f: &Fb, x: usize, y: usize, c: Color, a: u32) {
     put(f, x, y, (r << 16) | (g << 8) | b);
 }
 
+/// Ekrandagi barça piksellar (0xRRGGBB) — ekran rasmi uçun.
+pub fn read_pixels() -> alloc::vec::Vec<u32> {
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return alloc::vec::Vec::new() };
+    let mut v = alloc::vec::Vec::with_capacity(f.w * f.h);
+    for y in 0..f.h {
+        for x in 0..f.w {
+            v.push(get(f, x, y) & 0xff_ffff);
+        }
+    }
+    v
+}
+
 pub fn clear(c: Color) {
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };

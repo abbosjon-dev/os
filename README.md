@@ -102,6 +102,27 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   papka yöq bölsa — uyga) va **Böşatiş**; dokdagi savat töla bölsa — qogʻozlar körinadi.
   Nuqta bilan boşlanadigan yaşirin fayllar körsatilmaydi.
 
+### Oyna yopiştiriş, sudrab tashlaş va ekran rasmi
+
+| Yopiştiriş (çap/öng yarim) + matn muharriri | Faylni sudrab tashlaş |
+|---|---|
+| ![Yopiştiriş](docs/snap-editor.png) | ![Sudrab tashlaş](docs/drag-drop.png) |
+
+- **Yopiştiriş (snap)**: oynani ekranning çap/öng çetiga sudrang — yarim ekranga,
+  tepaga — toʻliq ekranga yopişadi (oldindan körinişi yoritiladi). Sarlavhani **ikki marta
+  bosiş** — kattalaştiriş/qaytariş; yopiştirilgan oynani sudrasangiz — avvalgi ölçamiga qaytadi.
+- **Sudrab tashlaş**: Fayllardagi elementni papkaga, yon paneldagi joyga, boşqa Fayllar
+  oynasiga, ish stoli papkasiga yoki dokdagi **Savatga** sudrang (Shift — nusxalaydi).
+- **Ekran rasmi**: `PrtSc` yoki Tizim → Ekran rasmi — `~/Rasmlar/ekran-YYYYMMDD-HHMMSS.png`.
+  PNG **kodlovçisi noldan** yozildi: qator filtrlari (None/Sub/Up, eng yaxşisi tanlanadi),
+  deflate (qatʼiy Huffman + LZ77 xesh zanjiri), CRC32, Adler-32; öz dekoderimiz bilan
+  self-test orqali tekşiriladi.
+- **Matn muharriri**: haqiqiy kursor (strelkalar, Home/End, PgUp/PgDn, Delete, Tab),
+  siçqon bilan joylaş, aylantiriş, "Qator, ustun" körsatkiçi, saqlanmagan özgariş belgisi `*`,
+  `Alt+S` — saqlaş.
+- **Oʻzbekça harflar**: `AltGr` (öng Alt) + `s` `c` `o` `g` `'` → **ş ç ö ğ ʼ**
+  (Shift bilan — Ş Ç Ö Ğ) — barça ilovalarda va terminalda.
+
 ### Kalkulyator va Tizim monitori
 
 ![Kalkulyator va Tizim monitori](docs/calc-monitor.png)
@@ -152,6 +173,9 @@ pastda "2 / 4". Video oynasida **ijro/pauza** tugmasi (`Space`), kadrlar böyiç
 | `Alt+F` | Kattalaştiriş / oldingi ölçam |
 | `Alt+C` / `Alt+X` / `Alt+V` | Fayllarda: nusxa olish / kesiş / joylaş |
 | `F2`, `Delete` | Fayllarda: nomini özgartiriş, savatga tashlaş |
+| `Alt+S` | Matn muharririda saqlaş |
+| `PrtSc` | Ekran rasmi (PNG, ~/Rasmlar) |
+| `AltGr` + s/c/o/g/' | ş ç ö ğ ʼ |
 | `Esc` | Menyu, bildirişnomalar paneli va almaştirgiçni yopiş |
 
 **Bildirişnomalar** öng yuqoridan sirpanib çiqadi (4.5 s, bosilsa yopiladi), menyu
@@ -177,10 +201,10 @@ Fon rasmi (xiralashtirilgan), katta soat va toʻliq sana, shishasimon kiriş kar
 | ![Sozlamalar](docs/apps/settings.png) | ![Brauzer](docs/apps/browser.png) |
 | Bölimlar ro'yxati va tizim maʼlumoti (versiya, foydalanuvçi, xotira, ekran). | Manzil qatori va boşlang'iç sahifa (tarmoq qatlami tayyorlanmoqda). |
 
-| Musiqa pleeri |
-|---|
-| ![Pleer](docs/apps/music.png) |
-| Muqova, nom, format maʼlumoti, normallaşgan toʻlqin (ijro qilingan qismi yashil), ijro tugmasi. MP3/OGG/FLAC/WAV/AIFF. |
+| Musiqa pleeri | Boşqotirma |
+|---|---|
+| ![Pleer](docs/apps/music.png) | ![Boşqotirma](docs/apps/puzzle.png) |
+| Muqova, nom, format maʼlumoti, normallaşgan toʻlqin (ijro qilingan qismi yashil), ijro tugmasi. MP3/OGG/FLAC/WAV/AIFF. | 15 ta raqamli plitka öyini: siçqon (qator/ustun böylab bir nechtasini suradi) yoki strelkalar; yurişlar va vaqt hisobi, har doim yeçiladigan aralaştiriş. |
 
 Barça skrinshotlar QEMU da (virtio-gpu) QMP `screendump` orqali olingan — haqiqiy render.
 Dizayn namunasi: [`docs/design-mockup.png`](docs/design-mockup.png).
@@ -666,7 +690,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.20**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.21**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -712,5 +736,8 @@ bosqiç (etap) yakunlanganda kötariladi.
   nomini özgartiriş (`fs::rename`), nusxa/kesiş/joylaş, klaviatura bilan tanlaş;
   **Kalkulyator**, **Tizim monitori** (CPU grafigi, jarayonlar, tugatiş); rasm
   köruvçida oldingi/keyingi, video pleerda ijro/pauza va progress; 12 ta dok ikonasi.
+- 0.0.21 — **Ish unumdorligi**: oyna yopiştiriş (yarim/toʻliq ekran), sarlavhani ikki marta
+  bosiş, fayllarni sudrab tashlaş (papka, yon panel, savat), ekran rasmi (PNG kodlovçi noldan),
+  haqiqiy kursorli matn muharriri, AltGr bilan oʻzbekça harflar, Boşqotirma öyini.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

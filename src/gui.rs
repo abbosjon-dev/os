@@ -67,6 +67,7 @@ enum Kind {
     Calc,
     Monitor,
     Info,
+    Puzzle,
 }
 
 impl Kind {
@@ -166,6 +167,11 @@ struct Window {
     lclick: (u64, usize), // ikki marta bosiş: (vaqt, element)
     rename: Option<String>, // Fayllar: nomini özgartiriş maydoni
     video: bool,        // Rasm oynasi video ijro qilyaptimi
+    crow: usize,        // Muharrir: kursor qatori
+    ccol: usize,        // Muharrir: kursor ustuni (belgilarda)
+    scroll: usize,      // Muharrir: birinçi körinadigan qator
+    dirty: bool,        // Muharrir: saqlanmagan özgarişlar
+    tiles: Vec<u8>,     // Boşqotirma: 16 ta katak (0 — böş)
 }
 
 impl Window {
@@ -247,7 +253,7 @@ struct Launcher {
     color: Color,
 }
 
-const LAUNCHERS: [Launcher; 12] = [
+const LAUNCHERS: [Launcher; 13] = [
     Launcher { label: "Zamin", kind: Kind::About, color: 0x34c759 },
     Launcher { label: "Brauzer", kind: Kind::Browser, color: 0x1e88e5 },
     Launcher { label: "Fayllar", kind: Kind::Files, color: 0x2f88ff },
@@ -255,6 +261,7 @@ const LAUNCHERS: [Launcher; 12] = [
     Launcher { label: "Kod", kind: Kind::Code, color: 0x7c5cff },
     Launcher { label: "Kalkulyator", kind: Kind::Calc, color: 0xff9f0a },
     Launcher { label: "Tizim monitori", kind: Kind::Monitor, color: 0x1f9d55 },
+    Launcher { label: "Boşqotirma", kind: Kind::Puzzle, color: 0xe0457b },
     Launcher { label: "Video", kind: Kind::Video, color: 0x8257ff },
     Launcher { label: "Musiqa", kind: Kind::Music, color: 0xff7a2f },
     Launcher { label: "Rasmlar", kind: Kind::Image, color: 0x3a9bff },
@@ -331,6 +338,11 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         lclick: (0, usize::MAX),
         rename: None,
         video: false,
+        crow: 0,
+        ccol: 0,
+        scroll: 0,
+        dirty: false,
+        tiles: Vec::new(),
     }
 }
 
@@ -377,9 +389,12 @@ fn new_window(kind: Kind, n: usize) -> Window {
             let input = lines.pop().unwrap_or_default();
             let (w, h) = (u * 29, u * 20);
             let (x, y) = place(w, h);
+            lines.push(input);
             let mut win = base(x, y, w, h, kind, String::from("Matn — qaydlar.txt"), lines);
-            win.input = input;
             win.path = String::from(NOTES_PATH);
+            win.crow = win.lines.len() - 1;
+            win.ccol = win.lines[win.crow].chars().count();
+            editor_fix(&mut win);
             win
         }
         Kind::Clock => {
@@ -442,6 +457,13 @@ fn new_window(kind: Kind, n: usize) -> Window {
             let (x, y) = place(w, h);
             let mut win = base(x, y, w, h, kind, String::from("Kalkulyator"), Vec::new());
             win.input = String::from("0");
+            win
+        }
+        Kind::Puzzle => {
+            let (w, h) = (u * 20, u * 24);
+            let (x, y) = place(w, h);
+            let mut win = base(x, y, w, h, kind, String::from("Boşqotirma"), Vec::new());
+            puzzle_new(&mut win);
             win
         }
         Kind::Monitor => {
@@ -604,9 +626,10 @@ fn open_file(windows: &mut Vec<Window>, path: &str, n: usize) {
     let mut lines: Vec<String> = String::from_utf8_lossy(&data).lines().map(String::from).collect();
     let input = lines.pop().unwrap_or_default();
     let (w, h) = (u * 29, u * 20);
+    lines.push(input);
     let mut win = base(x.min(sw - w), y, w, h, Kind::Editor, alloc::format!("Matn — {}", name), lines);
     win.path = String::from(path);
-    win.input = input;
+    editor_fix(&mut win);
     windows.push(win);
 }
 
@@ -1096,6 +1119,10 @@ fn desktop() {
         search: None,
         ctx: None,
         fclip: None,
+        snap: None,
+        fdrag: None,
+        flash: 0,
+        drag_start: (0, 0),
     };
     TRASH_N.store(usize::MAX, Ordering::Relaxed); // yangi foydalanuvçi — qayta hisoblanadi
     CPU_HIST.lock().clear();
@@ -1224,7 +1251,8 @@ fn desktop() {
             if e.typ == input::EV_KEY && e.code != input::BTN_LEFT && desk.search.is_some() {
                 match e.code {
                     42 | 54 => shift = e.value != 0,
-                    56 | 100 => alt = e.value != 0,
+                    56 => alt = e.value != 0,
+                    100 => ALTGR.store(e.value != 0, Ordering::Relaxed),
                     _ if e.value == 0 => {}
                     1 => desk.search = None,
                     57 if alt => desk.search = None,
@@ -1291,8 +1319,26 @@ fn desktop() {
                         {
                             desk_icon_click(&mut desk, &mut windows, cx, cy, &mut opened);
                         }
+                        desk.drag_start = (cx, cy);
                     } else {
                         pressed = false;
+                        if let Some(d) = desk.fdrag.take() {
+                            drop_file(&mut windows, &mut desk, d, cx, cy, shift);
+                        }
+                        *FDRAG_PENDING.lock() = None;
+                        if let (Some((idx, off)), Some(r)) = (drag, desk.snap.take()) {
+                            if off != RESIZE && idx < windows.len() {
+                                let w = &mut windows[idx];
+                                let from = (w.x, w.y, w.w, w.h);
+                                if w.saved.is_none() {
+                                    w.saved = Some(from);
+                                }
+                                (w.x, w.y, w.w, w.h) = r;
+                                w.hidden = true;
+                                desk.anim = Some(Anim { from, to: r, t0: crate::timer::uptime_ms(), dur: ANIM_MS, reveal: w.id });
+                            }
+                        }
+                        desk.snap = None;
                         drag = None;
                     }
                     changed = true;
@@ -1306,7 +1352,8 @@ fn desktop() {
                     }
                 }
                 (input::EV_KEY, 42) | (input::EV_KEY, 54) => shift = e.value != 0,
-                (input::EV_KEY, 56) | (input::EV_KEY, 100) => {
+                (input::EV_KEY, 100) => ALTGR.store(e.value != 0, Ordering::Relaxed),
+                (input::EV_KEY, 56) => {
                     alt = e.value != 0;
                     if !alt {
                         // Alt qoʻyib yuborildi — tanlangan oyna faollaşadi
@@ -1363,6 +1410,16 @@ fn desktop() {
                         changed = true;
                     }
                 }
+                (input::EV_KEY, 31) if e.value == 1 && alt => {
+                    // Alt+S — muharrirda saqlaş
+                    if let Some(w) = windows.last_mut().filter(|w| !w.hidden && w.kind == Kind::Editor) {
+                        let msg = save_notes(w);
+                        notify("Matn muharriri", &msg, 0x4aa3df);
+                        w.cur = msg.into_bytes();
+                        changed = true;
+                    }
+                }
+                (input::EV_KEY, 99) if e.value == 1 => SHOT_REQ.store(true, Ordering::Relaxed),
                 (input::EV_KEY, _) if alt => {}
                 (input::EV_KEY, code) if e.value == 1 => {
                     let top = windows.last().filter(|w| !w.hidden).map(|w| w.kind);
@@ -1371,6 +1428,7 @@ fn desktop() {
                         Some(Kind::Calc) => calc_key(windows.last_mut().unwrap(), code, shift),
                         Some(Kind::Image) => image_key(windows.last_mut().unwrap(), code),
                         Some(Kind::Monitor) => monitor_key(windows.last_mut().unwrap(), code),
+                        Some(Kind::Puzzle) => puzzle_key(windows.last_mut().unwrap(), code),
                         Some(Kind::Trash) if code == 111 => {
                             let w = windows.last_mut().unwrap();
                             if let Some(name) = w.fsel.and_then(|s| w.rows.get(s)).map(|r| r.0.clone()) {
@@ -1392,6 +1450,39 @@ fn desktop() {
         }
         // Siljitiş
         if pressed {
+            // Fayl sudraş: bosilgan element 8 pikseldan köp siljisa boşlanadi
+            if desk.fdrag.is_none() {
+                let pend = FDRAG_PENDING.lock().clone();
+                if let Some((p, n, k, x0, y0)) = pend {
+                    if cx.abs_diff(x0) + cy.abs_diff(y0) > 8 {
+                        desk.fdrag = Some(FDrag { path: p, name: n, kind: k });
+                        *FDRAG_PENDING.lock() = None;
+                    }
+                }
+            }
+            if desk.fdrag.is_some() {
+                changed = true;
+            }
+            // Yopiştirilgan / kattalaştirilgan oyna sudralsa — oldingi ölçamiga qaytadi
+            if let Some((idx, off)) = drag {
+                if off != RESIZE && idx < windows.len() && windows[idx].saved.is_some()
+                    && cx.abs_diff(desk.drag_start.0) + cy.abs_diff(desk.drag_start.1) > 8
+                {
+                    let w = &mut windows[idx];
+                    let (_, _, ow, oh) = w.saved.take().unwrap();
+                    let ox = ((off & 0xffff) * ow / w.w.max(1)).min(ow.saturating_sub(1));
+                    w.w = ow;
+                    w.h = oh;
+                    drag = Some((idx, ox | ((off >> 16) << 16)));
+                }
+                if off != RESIZE {
+                    let z = snap_zone(cx, cy);
+                    if z != desk.snap {
+                        desk.snap = z;
+                        changed = true;
+                    }
+                }
+            }
             if let Some((idx, RESIZE)) = drag {
                 if idx < windows.len() {
                     let u = body();
@@ -1414,6 +1505,15 @@ fn desktop() {
         if pump(&mut windows) {
             changed = true;
         }
+        if SHOT_REQ.swap(false, Ordering::Relaxed) {
+            desk.menu = None;
+            take_screenshot(&windows, &wp, &desk);
+            desk.flash = crate::timer::uptime_ms();
+            changed = true;
+        }
+        if crate::timer::uptime_ms().saturating_sub(desk.flash) < 400 {
+            changed = true;
+        }
         if changed {
             draw(&windows, cx, cy, &wp, &desk);
             gfx::flush();
@@ -1424,26 +1524,7 @@ fn desktop() {
 
 fn type_key(w: &mut Window, code: u16, shift: bool) {
     if w.kind == Kind::Editor {
-        match code {
-            28 => w.lines.push(core::mem::take(&mut w.input)), // Enter: yangi qator
-            14 => {
-                // Orqaga oçiriş: qator boşida bölsa avvalgi qatorga qoşilamiz
-                if w.input.is_empty() {
-                    if let Some(prev) = w.lines.pop() {
-                        w.input = prev;
-                    }
-                } else {
-                    w.input.pop();
-                }
-            }
-            _ => {
-                if let Some(ch) = keycode_char(code, shift) {
-                    if w.input.len() < 200 {
-                        w.input.push(ch);
-                    }
-                }
-            }
-        }
+        editor_key(w, code, shift);
         return;
     }
     // Terminal
@@ -1477,18 +1558,18 @@ fn type_key(w: &mut Window, code: u16, shift: bool) {
 }
 
 /// Matn muharriri mazmunini `~/qaydlar.txt` ga saqlaydi. Natija — xabar.
-fn save_notes(w: &Window) -> String {
+fn save_notes(w: &mut Window) -> String {
     use crate::abi::{OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
     let mut text = w.lines.join("\n");
-    if !w.lines.is_empty() {
-        text.push('\n');
-    }
-    text.push_str(&w.input);
     text.push('\n');
-    let path = if w.path.is_empty() { NOTES_PATH } else { w.path.as_str() };
-    match fs::open(path, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE) {
+    let path = if w.path.is_empty() { String::from(NOTES_PATH) } else { w.path.clone() };
+    match fs::open(&path, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE) {
         Ok(id) => match fs::write(id, Some(0), text.as_bytes()) {
-            Ok(n) => alloc::format!("saqlandi: {} bayt — {}", n, path),
+            Ok(n) => {
+                w.dirty = false;
+                let _ = fs::commit();
+                alloc::format!("saqlandi: {} bayt", n)
+            }
             Err(e) => alloc::format!("xato: {:?}", e),
         },
         Err(e) => alloc::format!("oçib bölmadi: {:?}", e),
@@ -1572,6 +1653,8 @@ fn handle_click(
             Kind::Calc => calc_click(&mut windows[i], cx, cy),
             Kind::Monitor => monitor_click(&mut windows[i], cx, cy),
             Kind::Image => viewer_click(&mut windows[i], cx, cy),
+            Kind::Puzzle => puzzle_click(&mut windows[i], cx, cy),
+            Kind::Editor => editor_click(&mut windows[i], cx, cy),
             Kind::Trash => match trash_click(&mut windows[i], cx, cy) {
                 2 => {
                     reload_all_files(windows);
@@ -1594,7 +1677,7 @@ fn handle_click(
             return true;
         }
         if windows[i].kind == Kind::Editor && windows[i].in_save_btn(cx, cy) {
-            let msg = save_notes(&windows[i]);
+            let msg = save_notes(&mut windows[i]);
             notify("Matn muharriri", &msg, 0x4aa3df);
             windows[i].cur = msg.into_bytes(); // holat xabari
             return true;
@@ -1610,6 +1693,18 @@ fn handle_click(
             return true;
         }
         if windows[i].title_bar(cx, cy) {
+            // Sarlavhani ikki marta bosiş — kattalaştiriş / qaytariş
+            let id = windows[i].id;
+            let dbl = {
+                let mut t = TITLE_CLICK.lock();
+                let d = t.1 == id && now.saturating_sub(t.0) < 450;
+                *t = if d { (0, 0) } else { (now, id) };
+                d
+            };
+            if dbl {
+                zoom_window(windows, i, anim);
+                return true;
+            }
             let off = (cx - windows[i].x) | ((cy - windows[i].y) << 16);
             let w = windows.remove(i);
             windows.push(w); // old planga
@@ -1644,6 +1739,10 @@ fn handle_click(
                 let dbl = w.lclick.1 == row && now.saturating_sub(w.lclick.0) < 500;
                 w.fsel = Some(row);
                 w.lclick = (now, row);
+                if !dbl {
+                    let (name, kind) = w.rows[row].clone();
+                    *FDRAG_PENDING.lock() = Some((path_join(&w.path, &name), name, kind, cx, cy));
+                }
                 if dbl {
                     w.lclick = (0, usize::MAX);
                     files_activate(windows, wi, row, opened);
@@ -1698,6 +1797,10 @@ fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Imag
     if let Some(a) = &desk.anim {
         draw_anim(a);
     }
+    if let Some((x, y, w2, h2)) = desk.snap {
+        fill_round_rect_a(x, y, w2, h2, radius(), accent(), 45);
+        gfx::round_outline(x, y, w2, h2, radius(), 2, accent());
+    }
 
     draw_dock(w, h, cx, cy, windows);
     draw_toasts(desk);
@@ -1715,6 +1818,13 @@ fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Imag
     }
     if let Some(c) = &desk.ctx {
         draw_ctx(c, cx, cy);
+    }
+    if let Some(d) = &desk.fdrag {
+        draw_fdrag(windows, desk, d, cx, cy);
+    }
+    let fa = crate::timer::uptime_ms().saturating_sub(desk.flash);
+    if desk.flash != 0 && fa < 400 {
+        gfx::blend_rect(0, 0, w, h, 0xffffff, ((400 - fa) * 150 / 400) as u32);
     }
     cursor(cx, cy);
 }
@@ -1885,6 +1995,10 @@ struct Desk {
     search: Option<Search>,     // tezkor qidiruv (Alt+Space)
     ctx: Option<Ctx>,           // öng tugma menyusi
     fclip: Option<(String, bool)>, // fayl buferi: (yöl, kesilganmi)
+    snap: Option<(usize, usize, usize, usize)>, // yopiştiriş körinişi (sudralayotganda)
+    fdrag: Option<FDrag>,       // sudralayotgan fayl
+    flash: u64,                 // ekran rasmi çaqnaşi vaqti
+    drag_start: (usize, usize), // oyna sudraş boşlangan nuqta
 }
 
 // ---------------- Kontekst menyusi (öng tugma) ----------------
@@ -2170,7 +2284,7 @@ struct Search {
     res: Vec<(String, String, SAct)>, // (nom, izoh, amal)
 }
 
-const SEARCH_APPS: [(&str, Kind); 13] = [
+const SEARCH_APPS: [(&str, Kind); 14] = [
     ("Terminal", Kind::Terminal),
     ("Fayllar", Kind::Files),
     ("Matn muharriri", Kind::Editor),
@@ -2184,6 +2298,7 @@ const SEARCH_APPS: [(&str, Kind); 13] = [
     ("Savat", Kind::Trash),
     ("Kalkulyator", Kind::Calc),
     ("Tizim monitori", Kind::Monitor),
+    ("Boşqotirma", Kind::Puzzle),
 ];
 
 /// Uy papkasidagi fayl va papkalar (çuqurlik ≤ 3).
@@ -3016,6 +3131,7 @@ fn widget_click(desk: &mut Desk, sw: usize, cx: usize, cy: usize) -> bool {
 
 #[derive(Clone)]
 enum MAct {
+    Shot,
     Open(Kind),
     Path(String),
     Reboot,
@@ -3033,6 +3149,7 @@ fn menu_items(i: usize) -> Vec<(String, MAct)> {
             (s("Soat"), MAct::Open(Kind::Clock)),
             (s("Kalkulyator"), MAct::Open(Kind::Calc)),
             (s("Tizim monitori"), MAct::Open(Kind::Monitor)),
+            (s("Boşqotirma"), MAct::Open(Kind::Puzzle)),
             (s("Sep"), MAct::Sep),
             (s("Musiqa"), MAct::Open(Kind::Music)),
             (s("Video"), MAct::Open(Kind::Video)),
@@ -3058,6 +3175,8 @@ fn menu_items(i: usize) -> Vec<(String, MAct)> {
         _ => alloc::vec![
             (s("Zamin OS haqida"), MAct::Open(Kind::About)),
             (s("Sozlamalar"), MAct::Open(Kind::Settings)),
+            (s("Tizim monitori"), MAct::Open(Kind::Monitor)),
+            (s("Ekran rasmi (PrtSc)"), MAct::Shot),
             (s("Sep"), MAct::Sep),
             (s("Qayta yuklaş…"), MAct::Reboot),
             (s("Öçiriş…"), MAct::Shutdown),
@@ -3128,6 +3247,10 @@ fn draw_menu(i: usize, cx: usize, cy: usize) {
             MAct::Reboot | MAct::Shutdown => {
                 gfx::fill_circle(ix + isz / 2, iy + isz / 2, isz / 2, if matches!(act, MAct::Shutdown) { 0xff453a } else { 0xff9f0a });
             }
+            MAct::Shot => {
+                gfx::round_outline(ix, iy + isz / 6, isz, isz * 3 / 4, isz / 6, 1, 0x9fb0c3);
+                gfx::fill_circle(ix + isz / 2, iy + isz / 2 + isz / 8, isz / 5, 0x9fb0c3);
+            }
             MAct::Sep => {}
         }
         gfx::draw_text(ix + isz + u / 2, ty, name, if hover { OQ } else { 0xe1e8f2 }, small());
@@ -3190,6 +3313,7 @@ fn menu_act(act: MAct, windows: &mut Vec<Window>, opened: &mut usize) {
                 crate::power::reboot();
             }
         }
+        MAct::Shot => SHOT_REQ.store(true, Ordering::Relaxed),
         MAct::Sep => {}
     }
     *opened += 1;
@@ -3303,6 +3427,7 @@ fn draw_window(win: &Window, active: bool, mx: usize, my: usize) {
         Kind::Trash => draw_trash(win),
         Kind::Calc => draw_calc(win),
         Kind::Monitor => draw_monitor(win),
+        Kind::Puzzle => draw_puzzle(win),
         _ => draw_text_window(win),
     }
     gfx::reset_clip();
@@ -3732,47 +3857,6 @@ fn draw_clock(win: &Window) {
 }
 
 /// Matn muharriri: asboblar qatori (fayl nomi + Saqla), qator raqamlari, kursor.
-fn draw_editor(win: &Window) {
-    let px = small();
-    let lh = gfx::line_height(px, Font::Mono).max(px + 3);
-    let u = body();
-    // Asboblar qatori
-    let (bx, by, bw, bh) = win.save_btn();
-    let fname = win.path.rsplit('/').next().unwrap_or("");
-    let status = String::from_utf8_lossy(&win.cur);
-    let left = if status.is_empty() { String::from(fname) } else { alloc::format!("{}  ·  {}", fname, status) };
-    gfx::draw_text(win.x + u, by + (bh.saturating_sub(small())) / 2, &left, 0x9fb0c3, small());
-    gfx::fill_round_rect(bx, by, bw, bh, bh / 2, 0x30c85a);
-    gfx::draw_text_centered(bx + bw / 2, by + (bh.saturating_sub(small())) / 2, "Saqla", 0x06230f, small());
-    let top = by + bh + u / 3;
-    fill_rect(win.x + 1, top - 1, win.w.saturating_sub(2), 1, 0x2a3346);
-    // Gutter
-    let adv = gfx::mono_advance(px);
-    let gut = adv * 3 + u / 2;
-    let bottom = (win.y + win.h).saturating_sub(radius());
-    fill_rect(win.x + 1, top, gut, bottom.saturating_sub(top), 0x161b26);
-    let mut ty = top + u / 3;
-    let tx = win.x + gut + u / 2;
-    let mut n = 1usize;
-    for line in &win.lines {
-        if ty + lh > win.y + win.h - u / 2 {
-            break;
-        }
-        let num = alloc::format!("{:>3}", n);
-        gfx::draw_text_mono(win.x + u / 4, ty, &num, 0x55627a, px);
-        gfx::draw_text_mono(tx, ty, line, 0xe7edf6, px);
-        ty += lh;
-        n += 1;
-    }
-    if ty + lh <= win.y + win.h - u / 2 {
-        gfx::blend_rect(win.x + gut, ty.saturating_sub(1), win.w.saturating_sub(gut + 2), lh, accent(), 28);
-        let num = alloc::format!("{:>3}", n);
-        gfx::draw_text_mono(win.x + u / 4, ty, &num, 0x9fb0c3, px);
-        let w = gfx::text_width_mono(&win.input, px);
-        gfx::draw_text_mono(tx, ty, &win.input, 0xf2f5fa, px);
-        fill_rect(tx + w + 1, ty, (px / 10).max(2), px + 2, 0x7fb0ea);
-    }
-}
 
 /// Zamin logosi (olmos-yulduz), markaz va ölçam böyiça.
 fn zamin_logo(cx: usize, cy: usize, s: usize) {
@@ -4604,6 +4688,20 @@ fn draw_icon(kind: Kind, color: Color, x: usize, y: usize, s: usize) {
         Kind::Info => {
             gfx::draw_text_centered(c, y + s / 6, "i", OQ, s * 3 / 5);
         }
+        Kind::Puzzle => {
+            let q = s * 9 / 40;
+            let g = s / 20;
+            let x0 = c - q - g / 2;
+            let y0 = y + s / 2 - q - g / 2;
+            for k in 0..4 {
+                if k == 3 {
+                    continue;
+                }
+                let (tx, ty) = (x0 + (k % 2) * (q + g), y0 + (k / 2) * (q + g));
+                gfx::fill_round_rect(tx, ty, q, q, q / 4, OQ);
+                gfx::draw_text_centered(tx + q / 2, ty + q / 8, ["1", "2", "3"][k], color, q * 3 / 4);
+            }
+        }
         Kind::Trash => {
             let tw = s * 2 / 5;
             let th = s * 9 / 20;
@@ -4635,6 +4733,9 @@ fn hill(bx: usize, by: usize, _bw: usize, bh: usize, peak_x: usize, peak_h: usiz
 }
 
 fn keycode_char(code: u16, shift: bool) -> Option<char> {
+    if let Some(c) = altgr_char(code, shift) {
+        return Some(c);
+    }
     let c = match code {
         2..=11 => {
             let row = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
@@ -5720,4 +5821,475 @@ fn draw_image(win: &Window) {
         _ => alloc::format!("{}x{} · {} piksel", img.w, img.h, img.w * img.h),
     };
     gfx::draw_text(x, fy + (foot - small()) / 2, &fit_text(&info, w, small()), 0x8aa0bc, small());
+}
+
+// ---------------- Matn muharriri (haqiqiy kursor) ----------------
+
+fn byte_at(s: &str, col: usize) -> usize {
+    s.char_indices().nth(col).map(|(i, _)| i).unwrap_or(s.len())
+}
+
+/// Muharrir geometriyasi: (matn y boşi, matn x, qator balandligi, körinadigan qatorlar, gutter).
+fn editor_geo(win: &Window) -> (usize, usize, usize, usize, usize) {
+    let px = small();
+    let lh = gfx::line_height(px, Font::Mono).max(px + 3);
+    let u = body();
+    let (_, by, _, bh) = win.save_btn();
+    let top = by + bh + u / 3;
+    let ty0 = top + u / 3;
+    let digits = if win.lines.len() > 999 { 4 } else { 3 };
+    let gut = gfx::mono_advance(px) * digits + u / 2;
+    let rows = ((win.y + win.h).saturating_sub(u / 2 + ty0) / lh).max(1);
+    (ty0, win.x + gut + u / 2, lh, rows, gut)
+}
+
+fn editor_fix(w: &mut Window) {
+    if w.lines.is_empty() {
+        w.lines.push(String::new());
+    }
+    w.crow = w.crow.min(w.lines.len() - 1);
+    w.ccol = w.ccol.min(w.lines[w.crow].chars().count());
+    let (_, _, _, rows, _) = editor_geo(w);
+    if w.crow < w.scroll {
+        w.scroll = w.crow;
+    }
+    if w.crow >= w.scroll + rows {
+        w.scroll = w.crow + 1 - rows;
+    }
+}
+
+fn editor_insert(w: &mut Window, s: &str) {
+    let line = &mut w.lines[w.crow];
+    if line.chars().count() >= 400 {
+        return;
+    }
+    let b = byte_at(line, w.ccol);
+    line.insert_str(b, s);
+    w.ccol += s.chars().count();
+    w.dirty = true;
+}
+
+fn editor_key(w: &mut Window, code: u16, shift: bool) {
+    editor_fix(w);
+    let (_, _, _, rows, _) = editor_geo(w);
+    let (r, c) = (w.crow, w.ccol);
+    let len = w.lines[r].chars().count();
+    match code {
+        28 => {
+            let b = byte_at(&w.lines[r], c);
+            let rest = w.lines[r].split_off(b);
+            w.lines.insert(r + 1, rest);
+            w.crow += 1;
+            w.ccol = 0;
+            w.dirty = true;
+        }
+        14 => {
+            if c > 0 {
+                let b = byte_at(&w.lines[r], c - 1);
+                w.lines[r].remove(b);
+                w.ccol -= 1;
+                w.dirty = true;
+            } else if r > 0 {
+                let l = w.lines.remove(r);
+                w.crow = r - 1;
+                w.ccol = w.lines[r - 1].chars().count();
+                w.lines[r - 1].push_str(&l);
+                w.dirty = true;
+            }
+        }
+        111 => {
+            if c < len {
+                let b = byte_at(&w.lines[r], c);
+                w.lines[r].remove(b);
+                w.dirty = true;
+            } else if r + 1 < w.lines.len() {
+                let n = w.lines.remove(r + 1);
+                w.lines[r].push_str(&n);
+                w.dirty = true;
+            }
+        }
+        105 => {
+            if c > 0 {
+                w.ccol -= 1;
+            } else if r > 0 {
+                w.crow -= 1;
+                w.ccol = usize::MAX;
+            }
+        }
+        106 => {
+            if c < len {
+                w.ccol += 1;
+            } else if r + 1 < w.lines.len() {
+                w.crow += 1;
+                w.ccol = 0;
+            }
+        }
+        103 => w.crow = r.saturating_sub(1),
+        108 => w.crow = r + 1,
+        102 => w.ccol = 0,
+        107 => w.ccol = usize::MAX,
+        104 => w.crow = r.saturating_sub(rows),
+        109 => w.crow = r + rows,
+        15 => editor_insert(w, "    "),
+        _ => {
+            if let Some(ch) = keycode_char(code, shift) {
+                let mut b = [0u8; 4];
+                let s = String::from(&*ch.encode_utf8(&mut b));
+                editor_insert(w, &s);
+            }
+        }
+    }
+    editor_fix(w);
+}
+
+fn editor_click(w: &mut Window, cx: usize, cy: usize) -> bool {
+    let (ty0, tx, lh, rows, _) = editor_geo(w);
+    if cy < ty0 || cy >= ty0 + rows * lh || cx < w.x || cx >= w.x + w.w {
+        return false;
+    }
+    w.crow = w.scroll + (cy - ty0) / lh;
+    let adv = gfx::mono_advance(small()).max(1);
+    w.ccol = (cx.saturating_sub(tx) + adv / 2) / adv;
+    editor_fix(w);
+    true
+}
+
+fn draw_editor(win: &Window) {
+    let px = small();
+    let u = body();
+    let (bx, by, bw, bh) = win.save_btn();
+    let fname = win.path.rsplit('/').next().unwrap_or("");
+    let status = String::from_utf8_lossy(&win.cur);
+    let name = if win.dirty { alloc::format!("{} *", fname) } else { String::from(fname) };
+    let left = if status.is_empty() { name } else { alloc::format!("{}  ·  {}", name, status) };
+    let pos = alloc::format!("Qator {}, ustun {}", win.crow + 1, win.ccol + 1);
+    let pw = gfx::text_width(&pos, small() * 4 / 5);
+    let px_pos = bx.saturating_sub(pw + u);
+    gfx::draw_text(win.x + u, by + (bh.saturating_sub(small())) / 2, &fit_text(&left, px_pos.saturating_sub(win.x + u * 2), small()), 0x9fb0c3, small());
+    gfx::draw_text(px_pos, by + (bh.saturating_sub(small() * 4 / 5)) / 2, &pos, 0x6f7f95, small() * 4 / 5);
+    gfx::fill_round_rect(bx, by, bw, bh, bh / 2, if win.dirty { 0x30c85a } else { 0x2a6b3d });
+    gfx::draw_text_centered(bx + bw / 2, by + (bh.saturating_sub(small())) / 2, "Saqla", 0x06230f, small());
+    let top = by + bh + u / 3;
+    fill_rect(win.x + 1, top - 1, win.w.saturating_sub(2), 1, 0x2a3346);
+    let (ty0, tx, lh, rows, gut) = editor_geo(win);
+    let bottom = (win.y + win.h).saturating_sub(radius());
+    fill_rect(win.x + 1, top, gut, bottom.saturating_sub(top), 0x161b26);
+    let digits = if win.lines.len() > 999 { 4 } else { 3 };
+    for k in 0..rows {
+        let li = win.scroll + k;
+        let Some(line) = win.lines.get(li) else { break };
+        let ty = ty0 + k * lh;
+        let cur = li == win.crow;
+        if cur {
+            gfx::blend_rect(win.x + gut, ty.saturating_sub(1), win.w.saturating_sub(gut + 2), lh, accent(), 28);
+        }
+        let num = alloc::format!("{:>w$}", li + 1, w = digits);
+        gfx::draw_text_mono(win.x + u / 4, ty, &num, if cur { 0x9fb0c3 } else { 0x55627a }, px);
+        gfx::draw_text_mono(tx, ty, line, 0xe7edf6, px);
+        if cur {
+            let pre: String = line.chars().take(win.ccol).collect();
+            let cw = gfx::text_width_mono(&pre, px);
+            fill_rect(tx + cw, ty, (px / 10).max(2), px + 2, 0x7fb0ea);
+        }
+    }
+}
+
+// ---------------- Oʻzbekça harflar: AltGr (öng Alt) ----------------
+
+static ALTGR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// AltGr + s/c/o/g/' → ş ç ö ğ ʼ (Shift bilan — bosh harf).
+fn altgr_char(code: u16, shift: bool) -> Option<char> {
+    if !ALTGR.load(Ordering::Relaxed) {
+        return None;
+    }
+    let c = match code {
+        31 => 'ş',
+        46 => 'ç',
+        24 => 'ö',
+        34 => 'ğ',
+        40 => return Some('ʼ'),
+        _ => return None,
+    };
+    Some(if shift { c.to_uppercase().next().unwrap_or(c) } else { c })
+}
+
+// ---------------- Oyna yopiştiriş (snap) ----------------
+
+/// Siçqon ekran çetida bölsa — oyna yopişadigan maydon.
+fn snap_zone(cx: usize, cy: usize) -> Option<(usize, usize, usize, usize)> {
+    let (sw, _) = gfx::size();
+    let (zx, zy, zw, zh) = zoom_rect();
+    let m = body() / 3;
+    if cy <= menubar_h() + 1 {
+        Some((zx, zy, zw, zh))
+    } else if cx <= 2 {
+        Some((zx, zy, (zw - m) / 2, zh))
+    } else if cx + 3 >= sw {
+        let hw = (zw - m) / 2;
+        Some((zx + zw - hw, zy, hw, zh))
+    } else {
+        None
+    }
+}
+
+static TITLE_CLICK: crate::sync::SpinLock<(u64, usize)> = crate::sync::SpinLock::new((0, 0));
+
+// ---------------- Fayllarni sudrab tashlaş (drag & drop) ----------------
+
+/// Fayllar oynasida bosilgan element: (yöl, nom, tur, x, y) — siljisa sudraş boşlanadi.
+static FDRAG_PENDING: crate::sync::SpinLock<Option<(String, String, FKind, usize, usize)>> = crate::sync::SpinLock::new(None);
+
+struct FDrag {
+    path: String,
+    name: String,
+    kind: FKind,
+}
+
+/// Tashlaş nişoni: (papka yöli yoki "" — savat, yoritiladigan töğriburçak).
+fn drop_target(windows: &[Window], desk: &Desk, cx: usize, cy: usize) -> Option<(String, (usize, usize, usize, usize))> {
+    let (sw, sh) = gfx::size();
+    if let Some(ti) = LAUNCHERS.iter().position(|l| l.kind == Kind::Trash) {
+        let (ix, iy, isz) = dock_icon_rect(sw, sh, ti);
+        if in_rect((ix, iy, isz, isz), cx, cy) {
+            return Some((String::new(), (ix, iy, isz, isz)));
+        }
+    }
+    if let Some(i) = windows.iter().rposition(|w| !w.hidden && w.contains(cx, cy)) {
+        let w = &windows[i];
+        match w.kind {
+            Kind::Trash => return Some((String::new(), (w.x, w.y, w.w, w.h))),
+            Kind::Files => {
+                let g = files_geo(w);
+                if let Some(r) = file_row_at(w, cx, cy) {
+                    if w.rows[r].1 == FKind::Dir {
+                        let (row, col) = (r / g.cols, r % g.cols);
+                        return Some((path_join(&w.path, &w.rows[r].0), (g.gx + col * g.cw, g.gy + row * g.ch, g.cw, g.ch)));
+                    }
+                }
+                if let Some(p) = files_side_at(w, cx, cy) {
+                    let k = (cy - g.side_y) / g.item_h;
+                    return Some((p, (w.x + body() / 3, g.side_y + k * g.item_h, g.sbw - body() * 2 / 3, g.item_h)));
+                }
+                if cx >= g.gx && cy >= g.gy {
+                    return Some((w.path.clone(), (g.tx, g.top + g.th, w.x + w.w - g.tx, (w.y + w.h).saturating_sub(g.top + g.th))));
+                }
+            }
+            _ => {}
+        }
+        return None;
+    }
+    (0..desk.icons.len()).find_map(|k| {
+        let r = desk_icon_rect(k);
+        in_rect(r, cx, cy).then(|| (alloc::format!("~/{}", desk.icons[k]), r))
+    })
+}
+
+fn draw_fdrag(windows: &[Window], desk: &Desk, d: &FDrag, cx: usize, cy: usize) {
+    let u = body();
+    if let Some((_, (x, y, w, h))) = drop_target(windows, desk, cx, cy) {
+        fill_round_rect_a(x, y, w, h, u / 2, accent(), 60);
+        gfx::round_outline(x, y, w, h, u / 2, 2, accent());
+    }
+    let s = u * 2;
+    big_icon(d.kind, &d.name, cx + u / 2, cy + u / 2, s);
+    let lbl = fit_text(&d.name, u * 8, small() * 9 / 10);
+    let lw = gfx::text_width(&lbl, small() * 9 / 10) + u;
+    fill_round_rect_a(cx + u / 2, cy + u / 2 + s + 2, lw, small() + u / 3, u / 3, accent(), 220);
+    gfx::draw_text(cx + u, cy + u / 2 + s + 2 + u / 6, &lbl, OQ, small() * 9 / 10);
+}
+
+/// Sudralgan faylni tashlaydi: papkaga köçiradi (Shift — nusxalaydi) yoki savatga.
+fn drop_file(windows: &mut Vec<Window>, desk: &mut Desk, d: FDrag, cx: usize, cy: usize, copy: bool) {
+    let Some((dir, _)) = drop_target(windows, desk, cx, cy) else { return };
+    if dir.is_empty() {
+        match to_trash(&d.path) {
+            Ok(n) => notify("Savatga tashlandi", &n, 0xff9f0a),
+            Err(e) => notify("Savatga tashlab bölmadi", &e, 0xff453a),
+        }
+    } else {
+        let src_dir = d.path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+        if dir == d.path || (src_dir == dir && !copy) {
+            return;
+        }
+        if dir.starts_with(&alloc::format!("{}/", d.path)) {
+            notify("Köçirib bölmadi", "Papkani öz içiga köçirib bölmaydi", 0xff453a);
+            return;
+        }
+        let dst = unique_dest(&path_join(&dir, &d.name));
+        let r = if copy { copy_path(&d.path, &dst, 0) } else { fs::rename(&d.path, &dst).map_err(|e| alloc::format!("{:?}", e)) };
+        let to = dir.rsplit('/').next().unwrap_or("");
+        let to = if dir == "~" { "Uy" } else { to };
+        match r {
+            Ok(()) => {
+                let _ = fs::commit();
+                notify(if copy { "Nusxalandi" } else { "Köçirildi" }, &alloc::format!("{} — {} papkasiga", d.name, to), 0x2fbf5f);
+            }
+            Err(e) => notify("Köçirib bölmadi", &alloc::format!("{}: {}", d.name, e), 0xff453a),
+        }
+    }
+    reload_all_files(windows);
+    desk.icons = home_icons();
+}
+
+// ---------------- Ekran rasmi (PNG) ----------------
+
+static SHOT_REQ: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Ekranni (kursorsiz) PNG qilib ~/Rasmlar ga saqlaydi.
+fn take_screenshot(windows: &[Window], wp: &Option<crate::image::Image>, desk: &Desk) {
+    use crate::abi::{OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
+    let (sw, sh) = gfx::size();
+    draw(windows, sw + 64, sh + 64, wp, desk);
+    let px = gfx::read_pixels();
+    let t0 = crate::timer::uptime_ms();
+    let png = crate::image::png_enc::encode(sw, sh, &px);
+    let ms = crate::timer::uptime_ms().saturating_sub(t0);
+    let t = time::now();
+    let name = alloc::format!("ekran-{:04}{:02}{:02}-{:02}{:02}{:02}.png", t.year, t.month, t.day, t.hour, t.minute, t.second);
+    let dir = if fs::list("~/Rasmlar").is_ok() { "~/Rasmlar" } else { "~" };
+    let path = unique_dest(&path_join(dir, &name));
+    let r = fs::open(&path, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE).and_then(|id| fs::write(id, Some(0), &png));
+    match r {
+        Ok(_) => {
+            let _ = fs::commit();
+            notify(
+                "Ekran rasmi saqlandi",
+                &alloc::format!("{} · {} KB · {} ms", path.rsplit('/').next().unwrap_or(""), png.len() / 1024, ms),
+                0x2fbf5f,
+            );
+        }
+        Err(e) => notify("Ekran rasmini saqlab bölmadi", &alloc::format!("{:?}", e), 0xff453a),
+    }
+}
+
+// ---------------- Boşqotirma (15 ta raqamli plitka) ----------------
+
+fn puzzle_new(win: &mut Window) {
+    win.tiles = (1..16).chain(core::iter::once(0)).collect();
+    let mut blank = 15usize;
+    let mut last = usize::MAX;
+    for _ in 0..400 {
+        let (r, c) = (blank / 4, blank % 4);
+        let mut nb: Vec<usize> = Vec::new();
+        if r > 0 { nb.push(blank - 4); }
+        if r < 3 { nb.push(blank + 4); }
+        if c > 0 { nb.push(blank - 1); }
+        if c < 3 { nb.push(blank + 1); }
+        nb.retain(|&n| n != last);
+        let n = nb[(crate::random::u64() % nb.len() as u64) as usize];
+        win.tiles.swap(blank, n);
+        last = blank;
+        blank = n;
+    }
+    win.play_pos = 0;
+    win.play_t = crate::timer::uptime_ms();
+    win.tab = 0;
+}
+
+fn puzzle_solved(t: &[u8]) -> bool {
+    t.iter().enumerate().all(|(i, &v)| if i == 15 { v == 0 } else { v as usize == i + 1 })
+}
+
+/// Taxta geometriyasi: (x, y, ölçam, katak) va "Yangi öyin" tugmasi.
+fn puzzle_geo(win: &Window) -> ((usize, usize, usize, usize), (usize, usize, usize, usize)) {
+    let u = body();
+    let head = u * 5 / 2;
+    let top = win.y + title_h() + head;
+    let avail_w = win.w.saturating_sub(u * 2);
+    let avail_h = (win.y + win.h).saturating_sub(top + u);
+    let bs = avail_w.min(avail_h);
+    let bx = win.x + (win.w - bs) / 2;
+    let bw = gfx::text_width("Yangi öyin", small()) + u * 2;
+    let bh = u * 3 / 2;
+    let btn = ((win.x + win.w).saturating_sub(u + bw), win.y + title_h() + (head - bh) / 2, bw, bh);
+    ((bx, top, bs, bs / 4), btn)
+}
+
+/// Plitkani (yoki qator/ustundagi bir nechtasini) böş joyga suradi.
+fn puzzle_move(win: &mut Window, idx: usize) -> bool {
+    let Some(blank) = win.tiles.iter().position(|&v| v == 0) else { return false };
+    let (br, bc, r, c) = (blank / 4, blank % 4, idx / 4, idx % 4);
+    if idx == blank || (br != r && bc != c) {
+        return false;
+    }
+    let step: isize = if br == r { if c > bc { 1 } else { -1 } } else if r > br { 4 } else { -4 };
+    let mut b = blank as isize;
+    while b != idx as isize {
+        let n = b + step;
+        win.tiles.swap(b as usize, n as usize);
+        b = n;
+    }
+    win.play_pos += 1;
+    if puzzle_solved(&win.tiles) {
+        win.tab = 1;
+        win.frame_ms = crate::timer::uptime_ms();
+        let s = win.frame_ms.saturating_sub(win.play_t) / 1000;
+        notify("Barakalla!", &alloc::format!("{} ta yuriş · {}:{:02}", win.play_pos, s / 60, s % 60), 0x2fbf5f);
+    }
+    true
+}
+
+fn puzzle_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    let ((bx, by, bs, cs), btn) = puzzle_geo(win);
+    if in_rect(btn, cx, cy) {
+        puzzle_new(win);
+        return true;
+    }
+    if win.tab == 1 || !in_rect((bx, by, bs, bs), cx, cy) || cs == 0 {
+        return in_rect((bx, by, bs, bs), cx, cy);
+    }
+    let idx = ((cy - by) / cs).min(3) * 4 + ((cx - bx) / cs).min(3);
+    puzzle_move(win, idx);
+    true
+}
+
+fn puzzle_key(win: &mut Window, code: u16) {
+    if win.tab == 1 {
+        return;
+    }
+    let Some(blank) = win.tiles.iter().position(|&v| v == 0) else { return };
+    let (r, c) = (blank / 4, blank % 4);
+    // Strelka plitkani shu tomonga suradi (böş joy teskari tomonga ketadi)
+    let idx = match code {
+        105 if c < 3 => blank + 1,
+        106 if c > 0 => blank - 1,
+        103 if r < 3 => blank + 4,
+        108 if r > 0 => blank - 4,
+        _ => return,
+    };
+    puzzle_move(win, idx);
+}
+
+fn draw_puzzle(win: &Window) {
+    let u = body();
+    let ((bx, by, bs, cs), btn) = puzzle_geo(win);
+    let hy = win.y + title_h();
+    let head = u * 5 / 2;
+    let end = if win.tab == 1 { win.frame_ms } else { crate::timer::uptime_ms() };
+    let s = end.saturating_sub(win.play_t) / 1000;
+    let info = alloc::format!("Yurişlar: {}   Vaqt: {}:{:02}", win.play_pos, s / 60, s % 60);
+    gfx::draw_text(win.x + u, hy + (head - small()) / 2, &info, 0xdbe3ee, small());
+    gfx::fill_round_rect(btn.0, btn.1, btn.2, btn.3, btn.3 / 3, accent());
+    gfx::draw_text_centered(btn.0 + btn.2 / 2, btn.1 + (btn.3 - small()) / 2, "Yangi öyin", OQ, small());
+    gfx::fill_round_rect(bx, by, bs, bs, u / 2, 0x111622);
+    let gap = (cs / 14).max(2);
+    for (i, &v) in win.tiles.iter().enumerate() {
+        if v == 0 {
+            continue;
+        }
+        let (x, y) = (bx + (i % 4) * cs + gap, by + (i / 4) * cs + gap);
+        let ts = cs - gap * 2;
+        let ok = v as usize == i + 1;
+        let base = if ok { mix(accent(), 0x34c759, 110) } else { accent() };
+        gradient_round_rect(x, y, ts, ts, ts / 5, mix(base, 0xffffff, 50), mix(base, 0x000000, 40));
+        let txt = alloc::format!("{}", v);
+        let px = ts * 2 / 5;
+        gfx::draw_text_centered(x + ts / 2, y + (ts - px) / 2 - px / 10, &txt, OQ, px);
+    }
+    if win.tab == 1 {
+        fill_round_rect_a(bx, by, bs, bs, u / 2, 0x000000, 150);
+        gfx::draw_text_centered(bx + bs / 2, by + bs / 2 - u * 2, "Barakalla!", 0x5cf08e, u * 2);
+        gfx::draw_text_centered(bx + bs / 2, by + bs / 2 + u / 2, &alloc::format!("{} ta yurişda yeçildi", win.play_pos), OQ, small());
+    }
 }
