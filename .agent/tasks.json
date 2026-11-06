@@ -120,9 +120,51 @@
       "detail": "Shu to'plamda (batch 2) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz.",
       "status": "done",
       "done_at": "2026-11-06 16:05:15"
+    },
+    {
+      "id": "T16",
+      "title": "Yumaloq burchaklar: zamin://matn ni qayta tekshirish va qolgan holatlarni tuzatish (border, soya, gradient, qisman aylantirish)",
+      "detail": "Avval zamin://matn ni qayta tekshir. T9 tuzatishidan keyin docs/web-text-align.png toza ko'rinadi, lekin nuqson qaytmaganini tasdiqlash kerak. Keyin border-radius bilan birga keladigan, T9 qamramagan yo'llarni ko'rib chiq: round_ring/round_outline (border), box-shadow ostidagi yumaloq quti, linear-gradient fonli yumaloq quti, ichma-ich radiuslar (ota fon ustidagi bola blok), sahifa yarim aylantirilganda yuqoridan va pastdan kesilgan bloklar, flex/rtl ichidagi bloklar. Fayllar: src/gfx/mod.rs (corner_cov, corner_at, fill_round_rect_a, round_ring/round_outline, shadow chizish), src/gui.rs ~7844-8250 (lay(), web deco chizish sikli, set_clip). zamin://matn sahifasiga (src/gui.rs:6954) shu holatlarni ko'rsatadigan bloklar qo'sh: border:2px solid, box-shadow, gradient, ichma-ich radius. Qabul mezoni: (1) gfx::self_test_round() kengaytiriladi: ofscreen buferda round_ring va gradientli yumaloq quti har r=1..30 va har border qalinligida (1..4) yorug' va to'q fon ustida chiziladi; chegaradagi hech bir piksel fon rangi bilan quti/chegara rangining eng to'qidan to'qroq bo'lmaydi; '[ok]' chiqadi. (2) scripts/agent/shot.py bilan zamin://matn suratga olinadi va docs/web-text-align.png yangilanadi. Uni tekshiruvchi skript har blok burchagi atrofidagi 6x6 hududlarda fondan va blok rangidan to'qroq piksel topmasligi kerak. Aylantirilgan holat uchun ham alohida skrinshot olinadi. (3) verify.sh full o'tadi.",
+      "batch": 3
+    },
+    {
+      "id": "T17",
+      "title": "Tizim almashuv buferi va matn muharririda matn tanlash (Shift+strelkalar, sichqoncha, Alt+C/X/V)",
+      "detail": "Hozir tizim bo'ylab umumiy almashuv buferi yo'q, muharrirda esa tanlash yo'q. Fayllar: yangi src/clip.rs (yoki gui.rs ichida modul): umumiy matn buferi, pub fn set(&str) / get() -> String, spin-qulf bilan. src/edit.rs: tanlash langari (anchor) va kursor; Shift+←/→/↑/↓/Home/End tanlashni kengaytiradi, sichqoncha bilan sudrab tanlash mumkin; Alt+A — hammasini tanlash; Alt+C — nusxa, Alt+X — kesish, Alt+V — joylash; tanlangan matn ustiga yozilsa, u almashtiriladi. Kesish/joylash undo tarixiga (Alt+Z) bitta qadam bo'lib yoziladi. src/gui.rs: muharrir chizishida tanlangan hudud asosiy rang (accent) foni bilan ko'rsatiladi; brauzer manzil qatori va <input> maydonlariga Alt+V bilan joylash qo'shiladi. Qabul mezoni: edit::self_test() kengaytiriladi: ko'p qatorli tanlash, nusxa, kesish, joylash, tanlangan matn ustiga yozish va Alt+Z bilan qaytarish UTF-8 o'zbek harflari (ğ, ö, ç) bilan to'g'ri ishlaydi. Shift+strelkalar tanlashni ham, tanlashni bekor qilishni ham bajaradi. Skrinshot docs/apps/editor-select.png (bir necha qatorli tanlov) olinadi; README dagi muharrir bo'limi yangilanadi; verify.sh full o'tadi.",
+      "batch": 3
+    },
+    {
+      "id": "T18",
+      "title": "Terminal: sichqoncha bilan matn tanlash, nusxa olish va joylash",
+      "detail": "Oldingi vazifadagi umumiy buferdan foydalanadi. Fayllar: src/gui.rs (grafik terminal oynasi: sichqoncha bosish/sudrash/qo'yib yuborish, chizish), src/termbuf.rs (vizual qator/ustun → manba qator va bayt ofseti xaritasi; wrap_lines ustiga quriladi). Tanlov qoidalari: sudrab tanlash scrollback ichida ham ishlaydi; o'ralgan qatorlar nusxada bitta qator bo'lib qoladi; ikki marta bosish so'zni tanlaydi. Alt+C (yoki o'ng tugma menyusi → Nusxa olish) tanlovni buferga oladi. Alt+V (yoki menyu → Joylash) bufer matnini quvurga xuddi terilgandek yuboradi, '\\n' esa '\\r' ga aylanadi. Yangi chiqish kelsa yoki tugma bosilsa, tanlov tozalanadi. Qabul mezoni: termbuf::self_test() kengaytiriladi: 80 ustunda o'ralgan 250 belgilik qatorda (vizual 1:10)–(3:5) tanlov to'g'ri manba matnini qaytaradi va UTF-8 belgi o'rtasidan kesilmaydi; so'z chegarasini aniqlash ham tekshiriladi. Skrinshot docs/apps/terminal-select.png olinadi; README dagi 'Zamin terminali' bo'limiga band qo'shiladi; verify.sh full o'tadi.",
+      "batch": 3
+    },
+    {
+      "id": "T19",
+      "title": "Fayllar menejeri: ro'yxat ko'rinishi (nom, hajm, sana, tur) va ustun bo'yicha saralash",
+      "detail": "Fayllar: src/gui.rs (draw_files ~3740, fayllar bosish/klaviatura ishlovi, ~513 dagi entries.sort_by). Asboblar paneliga 'Grid / Ro'yxat' almashtirgich qo'sh. Ro'yxat ko'rinishida kichik ikona, nom, hajm (B/KB/MB, papka uchun '—'), o'zgartirilgan sana (fs vaqt metamaydonlaridan, Toshkent UTC+5) va tur ustunlari bo'ladi. Ustun sarlavhasini bosish shu ustun bo'yicha saralaydi, yana bosish tartibni teskari qiladi (▲/▼ belgisi chiqadi); papkalar doim yuqorida qoladi. Tanlash, Enter, F2, Delete, sudrab tashlash va kontekst menyusi ro'yxatda ham ishlashi kerak. Tanlangan ko'rinish va saralash ~/.zamin/ ga saqlanadi. Mantiq sof funksiyada: sort_entries(entries, key, desc) va human_size(u64). Qabul mezoni: yangi self-test ([ok] fayllar saralash) nom, hajm va sana bo'yicha teskari tartibni va papkalar birinchi turishini tekshiradi; human_size(0/1023/1024/5*1024*1024) to'g'ri chiqadi. Skrinshot docs/apps/files-list.png olinadi; README 'Fayl boshqaruvi' bo'limi yangilanadi; verify.sh full o'tadi.",
+      "batch": 3
+    },
+    {
+      "id": "T20",
+      "title": "Sozlamalar → Ovoz: ovoz balandligi slayderi va ovozsiz rejim (barcha ijrolarga ta'sir qiladi)",
+      "detail": "Hozir Ovoz bo'limi (src/gui.rs ~4425) faqat ma'lumot ko'rsatadi. Fayllar: src/drivers/virtio_snd.rs yoki src/audio/sound.rs: global ovoz balandligi (0..100, atomik) va mute. PCM namunalar virtio-sound ga yuborishdan oldin shu daraja bilan ko'paytiriladi (fixed-point, chegaradan oshganda qirqiladi). src/gui.rs: Ovoz bo'limida sudraladigan slayder, % ko'rsatkichi va 'Ovozsiz' tugmasi bo'ladi; yuqori menyu paneliga ovoz belgisi qo'shiladi (mute bo'lsa ustidan chizilgan). Sozlama boshqa sozlamalar kabi diskka saqlanadi va qayta yuklashda tiklanadi. Musiqa pleeri, brauzer <audio> va pleer vidjeti shu darajaga bo'ysunadi. Qabul mezoni: self-test ([ok] ovoz balandligi): scale_samples daraja 100 da namunalarni o'zgartirmaydi, 50 da ±1 aniqlikda yarmiga tushiradi, 0 da va mute da nol beradi, i16 chegarasida toshib ketmaydi. Skrinshot docs/settings-sound.png (slayder ~40%) olinadi; README 'Sozlamalar' bo'limi yangilanadi; verify.sh full o'tadi.",
+      "batch": 3
+    },
+    {
+      "id": "T21",
+      "title": "CSS: overflow: hidden/auto, white-space: nowrap/pre, text-overflow: ellipsis va opacity",
+      "detail": "Bu xossalar hozir css.rs da umuman yo'q. Fayllar: src/css.rs (xossalarni o'qish; uslub strukturasiga overflow, white_space, ellipsis, opacity maydonlari qo'shiladi), src/gui.rs lay() (~7898) va web chizish sikli. overflow: hidden — balandligi/eni berilgan bloklarda bolalar items/deco blok to'rtburchagi bilan kesiladi; chizishda set_clip ishlatiladi, yumaloq burchakli bo'lsa ham to'rtburchak bilan kesish yetarli. overflow: auto/scroll hozircha hidden kabi ishlaydi. white-space: nowrap — qator o'ralmaydi. white-space: pre / pre-wrap — bo'shliqlar va \\n saqlanadi. text-overflow: ellipsis (nowrap + hidden bilan) — sig'magan matn '…' bilan tugaydi. opacity: 0..1 — blok va uning matni/foni alfa bilan aralashtiriladi (fill_round_rect_a va matn rangini fon bilan aralashtirish orqali). zamin://matn yoki yangi zamin://overflow sinov sahifasi qo'shiladi. Qabul mezoni: html::self_test_overflow() ([ok]): hidden blokdan tashqariga chiqadigan item qolmaydi; nowrap matn bitta qator bo'ladi; ellipsis bilan kesilgan qator '…' bilan tugaydi va eni konteynerdan oshmaydi; pre da ikki bo'shliq va \\n saqlanadi; opacity 0.5 css dan to'g'ri o'qiladi. Skrinshot docs/web-overflow.png olinadi; README brauzer bo'limiga qisqa band qo'shiladi; verify.sh full o'tadi.",
+      "batch": 3
+    },
+    {
+      "id": "T22",
+      "batch": 3,
+      "title": "Bosqich yakuni: versiyani oshirish (Ish muhiti: almashuv buferi, matn tanlash, fayllar ro'yxati, ovoz balandligi, overflow/opacity)",
+      "detail": "Shu to'plamda (batch 3) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz."
     }
   ],
-  "batch": 2,
+  "batch": 3,
   "plan_notes": [
     "Ma'lum nuqson: zamin://matn sahifasida bloklar chetida kichik qora 'tishchalar' (yumaloq burchak chizish xatosi) — birinchi navbatda tuzat.",
     "Har to'plamda kamida bitta vazifa veb/brauzerdan tashqari bo'lsin (ilovalar, terminal, fayl menejeri, sozlamalar, yadro)."
