@@ -20,10 +20,12 @@ mod gfx;
 mod gfx_font;
 mod gic;
 mod gui;
+mod css;
 mod html;
 mod i18n;
 mod image;
 mod ipc;
+mod js;
 mod line;
 mod irq;
 mod klog;
@@ -495,6 +497,11 @@ fn self_tests() {
         Err(fmt) => panic!("rasm dekoderi yiqildi: {}", fmt),
     }
 
+    // JavaScript interpretatori va HTML/CSS tahlilçisi
+    match js::self_test() {
+        Ok(n) => println!("  [ok] JavaScript: {} ta sinov (funksiyalar, yopilmalar, massivlar, shablonlar); çaqiruv ~{} bayt stek", n, js::stack_per_call()),
+        Err(e) => panic!("JavaScript interpretatori yiqildi: {}", e),
+    }
     // Audio dekoderi: WAV
     audio::self_test().expect("audio (WAV) dekoderi yiqildi");
     tprintln!(msg::TEST_AUDIO);

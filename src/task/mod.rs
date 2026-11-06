@@ -28,8 +28,8 @@ pub type Pid = usize;
 const MAX_TASKS: usize = 64;
 /// Eng köp protsessor yadrolari (QEMU virt: -smp 4).
 pub const MAX_CPUS: usize = 4;
-const KSTACK_PAGES: usize = 8; // 32 KiB
-/// Stek oynasi: 64 KiB (pastki yarmi — qörğon). Qarang: arch/vectors.s
+const KSTACK_PAGES: usize = 15; // 60 KiB (JS interpretatori kabi çuqur rekursiya uçun)
+/// Stek oynasi: 64 KiB (eng pastki 4 KiB — qörğon sahifa). Qarang: arch/vectors.s
 const KSTACK_WINDOW: usize = 64 * 1024;
 /// Foydalanuvçi steki tepasining eng yuqori qiymati; haqiqiy tepa tasodifiy (ASLR).
 pub const USER_STACK_TOP: usize = mmu::USER_END - PAGE_SIZE;
@@ -194,8 +194,8 @@ fn kstack_top(slot: usize) -> usize {
     kstack_window(slot) + KSTACK_WINDOW
 }
 
-/// Yadro steki: böş oyna topiladi, uning yuqori yarmiga sahifalar xaritalanadi.
-/// Pastki yarmi xaritalanmaydi — stek tölib ketsa, apparat xatosi yuz beradi.
+/// Yadro steki: böş oyna topiladi, uning yuqori 60 KiB iga sahifalar xaritalanadi.
+/// Eng pastki 4 KiB xaritalanmaydi — stek tölib ketsa, apparat xatosi yuz beradi.
 fn alloc_kstack() -> Result<usize, SpawnError> {
     let slot = {
         let mut used = KSTACK_SLOTS.lock();

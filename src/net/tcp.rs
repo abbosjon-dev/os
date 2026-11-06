@@ -73,7 +73,14 @@ fn acknowledge(c: &mut Conn, ack: u32) {
 
 /// Davriy tekşiruv (tarmoq oqimidan): vaqtida tasdiq kelmagan segmentlarni qayta jönatadi.
 pub fn tick() {
+    if tick_locked() {
+        task::wake_event(EVENT); // qulfdan taşqarida (qarang: handle)
+    }
+}
+
+fn tick_locked() -> bool {
     let now = crate::timer::uptime_ms();
+    let mut wake = false;
     let mut cs = CONNS.lock();
     for slot in cs.iter_mut() {
         let Some(c) = slot.as_mut() else { continue };
@@ -84,7 +91,7 @@ pub fn tick() {
             if now.saturating_sub(u.sent_ms) >= RTO_MS {
                 if u.retries >= MAX_RETRIES {
                     c.state = St::Closed;
-                    task::wake_event(EVENT);
+                    wake = true;
                     continue;
                 }
                 u.retries += 1;
@@ -98,6 +105,7 @@ pub fn tick() {
             }
         }
     }
+    wake
 }
 
 static CONNS: SpinLock<Vec<Option<Conn>>> = SpinLock::new(Vec::new());
@@ -129,6 +137,9 @@ fn send_segment(c: &Conn, flags: u8, payload: &[u8]) {
 
 /// Ulaniş. Natija: ulaniş raqami (handle) yoki None.
 pub fn connect(remote: Ip, remote_port: u16) -> Option<usize> {
+    // ARP ni qulfdan TAŞQARIDA hal qilamiz: aks holda CONNS qulfi uşlangan holda
+    // kutib qolinadi va tarmoq oqimi (tcp::tick) shu qulfda tiqilib qoladi.
+    super::resolve(remote)?;
     let local_port = NEXT_PORT.fetch_add(1, core::sync::atomic::Ordering::Relaxed).max(49152);
     let seq = (crate::timer::uptime_ms() as u32).wrapping_mul(2654435761);
     let conn = Conn {
@@ -218,9 +229,9 @@ pub fn recv(id: usize, max: usize, timeout_ms: u64) -> Vec<u8> {
         if crate::timer::uptime_ms() - start >= timeout_ms {
             return Vec::new();
         }
-        task::wait_event(EVENT, || {
-            CONNS.lock().get(id).and_then(|c| c.as_ref()).is_some_and(|c| !c.inbox.is_empty() || c.state == St::Closed)
-        });
+        // wait_event da vaqt çeklovi yöq: paket kelmasa, hech kim uyğotmaydi va
+        // `timeout_ms` tekşirilmay qoladi. Şuning uçun qisqa uyqu bilan kutamiz.
+        task::sleep_ms(3);
     }
 }
 
@@ -251,9 +262,17 @@ pub fn close_owned(pid: usize) {
     }
 }
 
+/// Kelgan TCP segmenti. Uyğotiş (wake_event) CONNS qulfi böşatilgandan KEYIN:
+/// rejalaştiruvçi qulfi (SCHED) → CONNS tartibi bilan to'qnaşib, ABBA tiqilishi bölmasin.
 pub fn handle(src: Ip, p: &[u8]) {
+    if handle_locked(src, p) {
+        task::wake_event(EVENT);
+    }
+}
+
+fn handle_locked(src: Ip, p: &[u8]) -> bool {
     if p.len() < 20 {
-        return;
+        return false;
     }
     let src_port = u16::from_be_bytes([p[0], p[1]]);
     let dst_port = u16::from_be_bytes([p[2], p[3]]);
@@ -264,12 +283,11 @@ pub fn handle(src: Ip, p: &[u8]) {
 
     let mut cs = CONNS.lock();
     let Some(c) = cs.iter_mut().flatten().find(|c| c.local_port == dst_port && c.remote == src && c.remote_port == src_port) else {
-        return;
+        return false;
     };
     if flags & RST != 0 {
         c.state = St::Closed;
-        task::wake_event(EVENT);
-        return;
+        return true;
     }
     let seg_ack = u32::from_be_bytes([p[8], p[9], p[10], p[11]]);
     if flags & ACK != 0 {
@@ -278,8 +296,7 @@ pub fn handle(src: Ip, p: &[u8]) {
     if c.state == St::SynSent && flags & SYN != 0 && flags & ACK != 0 {
         c.ack = seg_seq.wrapping_add(1);
         c.got_synack = true;
-        task::wake_event(EVENT);
-        return;
+        return true;
     }
     if c.state == St::Open {
         if !payload.is_empty() {
@@ -296,6 +313,7 @@ pub fn handle(src: Ip, p: &[u8]) {
             send_segment(c, ACK, &[]);
             c.state = St::Closed;
         }
-        task::wake_event(EVENT);
+        return true;
     }
+    false
 }

@@ -1549,6 +1549,10 @@ fn desktop() {
         if pump(&mut windows) {
             changed = true;
         }
+        // Brauzer: fonda yuklangan sahifalar va JS taymerlari
+        if web_poll(&mut windows) {
+            changed = true;
+        }
         // Soat: sekundomer / taymer
         {
             let now = crate::timer::uptime_ms();
@@ -5857,7 +5861,7 @@ fn draw_image(win: &Window) {
         let kx = x0 + if n > 1 { win.frame * (x1 - x0) / (n - 1) } else { 0 };
         gfx::fill_round_rect(x0, py - th / 2, (kx - x0).max(th), th, th / 2, accent());
         gfx::fill_circle(kx, py, th * 3 / 2, OQ);
-        // vaqt: kadrlar davomiyligi yigʻindisi
+        // vaqt: kadrlar davomiyligi yiğindisi
         let ms = |k: usize| -> u32 { win.frames.iter().take(k).map(|f| f.1.max(20)).sum() };
         let (pos, dur) = (ms(win.frame), ms(n));
         let tt = alloc::format!("{}:{:02} / {}:{:02}", pos / 60000, (pos / 1000) % 60, dur / 60000, (dur / 1000) % 60);
@@ -6357,65 +6361,157 @@ fn draw_puzzle(win: &Window) {
     }
 }
 
-// ---------------- Brauzer (HTTP/HTTPS + HTML) ----------------
+// ---------------- Brauzer (HTTP/HTTPS + HTML + CSS + JS) ----------------
+
+use crate::html::{Doc, Kind as HK, NO_EL};
 
 struct Web {
     url: String,
-    doc: crate::html::Doc,
+    doc: Doc,
     scroll: usize,
     hist: Vec<String>,
     status: String,
     editing: bool,
     edit: String,
+    loading: Option<u64>,         // kutilayotgan yuklaş vazifasi
+    images: Vec<(String, crate::image::Image)>, // (src, rasm)
+    js: Option<crate::js::Engine>,
+    console: bool,                // F12 — JS konsoli
+    t0: u64,
 }
 
 struct WItem {
     x: usize,
     y: usize,
     w: usize,
+    h: usize,
     text: String,
     col: Color,
     px: usize,
     mono: bool,
     link: Option<String>,
+    el: u16,
+    button: bool,
+    underline: bool,
+    img: Option<usize>,
 }
 
-const LINK_COL: Color = 0x5aa9ff;
+/// Fonda yuklaş navbati: (raqam, manzil, olindimi, natija).
+struct WebJob {
+    id: u64,
+    url: String,
+    taken: bool,
+    result: Option<WebRes>,
+}
+
+struct WebRes {
+    doc: Doc,
+    url: String,
+    status: String,
+    images: Vec<(String, crate::image::Image)>,
+    scripts: Vec<String>,
+}
+
+static WEB_Q: crate::sync::SpinLock<Vec<WebJob>> = crate::sync::SpinLock::new(Vec::new());
+static WEB_NEXT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+static WEB_WORKER: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 fn builtin_page(url: &str) -> Option<&'static str> {
     Some(match url.trim_end_matches('/') {
-        "zamin://bosh" => r#"<title>Bosh sahifa</title>
-<h1>Zamin Brauzer</h1>
-<p>Xuş kelibsiz! Bu brauzer <b>HTTP/1.1</b> (TCP) va <b>HTTPS</b> (TLS 1.3, ChaCha20-Poly1305) orqali
-sahifalarni yuklaydi va HTML ni öz tahlilçimiz bilan körsatadi. Manzil qatorini bosib, manzil yozing.</p>
+        "zamin://bosh" => r##"<title>Bosh sahifa</title>
+<style>
+.hero{background:#1e3a8a;color:#ffffff;text-align:center}
+.tip{color:#9fb0c3}
+.ok{color:#34c759;font-weight:bold}
+</style>
+<div class="hero"><h1>Zamin Brauzer</h1><p>HTML · CSS · JavaScript · HTTP/HTTPS — hammasi noldan</p></div>
+<p>Bu brauzer sahifalarni <b>fonda</b> yuklaydi (ekran qotmaydi), <b>CSS</b> uslublarini qöllaydi,
+<b>JavaScript</b>ni öz interpretatorimizda bajaradi va <b>rasmlarni</b> körsatadi.</p>
+<p id="vaqt" class="ok">Soat: …</p>
+<p><button id="tugma">Bosing: 0</button></p>
 <h2>Tez havolalar</h2>
 <ul>
+<li><a href="zamin://sinov">JavaScript va CSS sinovi</a></li>
 <li><a href="~/Hujjatlar/zamin.html">Zamin OS qöllanmasi</a> — mahalliy HTML fayl</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
-<li><a href="http://example.com/">example.com</a> (HTTP)</li>
-<li><a href="https://example.com/">example.com</a> (HTTPS)</li>
+<li><a href="https://example.com/">example.com</a> (HTTPS, haqiqiy internet)</li>
 </ul>
-<h2>Klaviatura</h2>
-<ul>
-<li><b>Strelkalar, PgUp/PgDn, Home/End</b>, siçqon ğildiragi — aylantiriş</li>
-<li><b>Backspace</b> — orqaga, <b>F5</b> — yangilaş</li>
-</ul>"#,
-        "zamin://haqida" => r#"<title>Brauzer haqida</title>
+<p class="tip">Klaviatura: strelkalar, PgUp/PgDn, Space — aylantiriş; Backspace — orqaga; F5 — yangilaş; F12 — JS konsoli.</p>
+<script>
+let n = 0;
+const t = document.getElementById("tugma");
+t.addEventListener("click", function () {
+  n++;
+  t.textContent = "Bosing: " + n;
+  if (n % 5 == 0) { t.style.color = "#ff9f0a"; }
+});
+function soat() {
+  const d = new Date();
+  const p = x => String(x).padStart(2, "0");
+  document.getElementById("vaqt").textContent = `Soat: ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+soat();
+setInterval(soat, 1000);
+console.log("Bosh sahifa tayyor");
+</script>"##,
+        "zamin://sinov" => r##"<title>JS va CSS sinovi</title>
+<style>
+body{background:#f5f5f7;color:#1d1d1f}
+h1{color:#0a58ca}
+.karta{background:#ffffff}
+.qizil{color:#d70015}
+#natija{font-size:20px;font-weight:bold;color:#248a3d}
+.markaz{text-align:center}
+.yashirin{display:none}
+</style>
+<h1>JavaScript va CSS sinovi</h1>
+<p class="karta">Bu sahifa <b>och fon</b> (CSS <code>body{background}</code>) bilan. <span class="qizil">Qizil matn</span> — klass orqali.</p>
+<p class="yashirin">Bu xatboşi körinmasligi kerak (display:none).</p>
+<p class="markaz">Markazlaşgan matn (text-align:center)</p>
+<h2>Fibonaçi (JS)</h2>
+<p id="fib">…</p>
+<h2>Massiv amallari</h2>
+<p id="arr">…</p>
+<h2>Hisoblagiç</h2>
+<p id="natija">0</p>
+<p><button onclick="qosh(1)">+1</button> <button onclick="qosh(10)">+10</button> <button onclick="nol()">Nol</button></p>
+<h2>document.write</h2>
+<script>
+function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
+let s = [];
+for (let i = 0; i < 15; i++) s.push(fib(i));
+document.getElementById("fib").textContent = s.join(", ");
+const a = [5, 3, 8, 1, 9, 2];
+const sorted = [...a].sort((x, y) => x - y);
+document.getElementById("arr").textContent =
+  "Saralangan: " + a.sort((x, y) => x - y).join(" ") + " · yiğindi: " + a.reduce((p, x) => p + x, 0) +
+  " · juftlari: " + a.filter(x => x % 2 == 0).join(",") + " · max: " + Math.max(...a);
+let jami = 0;
+function qosh(k) { jami += k; document.getElementById("natija").textContent = jami; }
+function nol() { jami = 0; document.getElementById("natija").textContent = "0"; }
+document.write("<p>Bu qator <b>document.write</b> bilan qöşildi. Sana: " + new Date().toLocaleDateString() + "</p>");
+console.log("Sinov sahifasi:", s.length, "ta Fibonaçi soni");
+</script>
+<p><a href="zamin://bosh">Bosh sahifa</a></p>"##,
+        "zamin://haqida" => r##"<title>Brauzer haqida</title>
 <h1>Brauzer haqida</h1>
 <p>Hamma qatlam noldan yozilgan:</p>
 <ol>
 <li><b>Tarmoq</b>: virtio-net, ARP, IPv4, TCP, UDP, DHCP, DNS</li>
 <li><b>Xavfsizlik</b>: TLS 1.3 — X25519, ChaCha20-Poly1305, SHA-256, X.509</li>
 <li><b>HTTP/1.1</b>: yönaltiriş, chunked, Content-Length</li>
-<li><b>HTML</b>: sarlavhalar, xatboşilar, ro'yxatlar, havolalar, <code>kod</code>, iqtiboslar, belgilar (&amp;amp; &amp;#NN;)</li>
+<li><b>HTML</b>: bloklar, ro'yxatlar, havolalar, rasmlar, tugmalar, belgilar</li>
+<li><b>CSS</b>: teg/klass/id/avlod tanlagiçlari, rang, fon, shrift, tekislaş, display</li>
+<li><b>JavaScript</b>: funksiyalar, yopilmalar, massiv/obyekt, shablonlar, DOM, taymerlar, hodisalar</li>
+<li><b>Rasmlar</b>: PNG, JPEG, GIF, BMP, SVG va boşqalar — öz dekoderlarimiz</li>
 </ol>
-<blockquote>Hozircha CSS, JavaScript va rasmlar körsatilmaydi.</blockquote>
-<p><a href="zamin://bosh">Bosh sahifaga qaytiş</a></p>"#,
+<blockquote>Yuklaş fonda — alohida yadro vazifasida; ekran qotmaydi.</blockquote>
+<p><a href="zamin://bosh">Bosh sahifaga qaytiş</a></p>"##,
         _ => return None,
     })
 }
 
-fn error_doc(title: &str, msg: &str) -> crate::html::Doc {
+fn error_doc(title: &str, msg: &str) -> Doc {
     let src = alloc::format!(
         "<title>{}</title><h1>{}</h1><p>{}</p><p><a href=\"zamin://bosh\">Bosh sahifa</a></p>",
         title,
@@ -6425,79 +6521,278 @@ fn error_doc(title: &str, msg: &str) -> crate::html::Doc {
     crate::html::parse(&src)
 }
 
-/// Manzilni yuklaydi: zamin://, mahalliy fayl yoki http(s)://.
-fn web_fetch(url: &str) -> (crate::html::Doc, String, String) {
+/// Resursni oladi: (baytlar, turi, yakuniy manzil).
+fn web_bytes(url: &str) -> Result<(Vec<u8>, String, String), String> {
     if let Some(src) = builtin_page(url) {
-        return (crate::html::parse(src), String::from(url), String::from("Ichki sahifa"));
+        return Ok((Vec::from(src.as_bytes()), String::from("text/html"), String::from(url)));
     }
     if !url.contains("://") {
         let p = url.strip_prefix("file:").unwrap_or(url);
-        return match fs::read_all(p) {
-            Ok(d) => {
-                let t = String::from_utf8_lossy(&d);
-                let low = p.to_ascii_lowercase();
-                let doc = if low.ends_with(".html") || low.ends_with(".htm") { crate::html::parse(&t) } else { crate::html::plain(&t) };
-                (doc, String::from(p), alloc::format!("Fayl · {} bayt", d.len()))
-            }
-            Err(e) => (error_doc("Fayl topilmadi", &alloc::format!("{}: {:?}", p, e)), String::from(p), String::from("Xato")),
+        let d = fs::read_all(p).map_err(|e| alloc::format!("{}: {:?}", p, e))?;
+        let low = p.to_ascii_lowercase();
+        let ct = if low.ends_with(".html") || low.ends_with(".htm") {
+            "text/html"
+        } else if low.ends_with(".css") {
+            "text/css"
+        } else if low.ends_with(".js") {
+            "text/javascript"
+        } else if FKind::of(p.rsplit('/').next().unwrap_or(p), false) == FKind::Image {
+            "image/*"
+        } else {
+            "text/plain"
         };
+        return Ok((d, String::from(ct), String::from(p)));
     }
+    let r = crate::net::http::get(url)?;
+    if r.status >= 400 {
+        return Err(alloc::format!("HTTP {} — {}", r.status, r.url));
+    }
+    let ct = String::from(r.header("content-type").unwrap_or("text/html")).to_ascii_lowercase();
+    Ok((r.body, ct, r.url))
+}
+
+/// Katta rasmni kiçraytiradi (xotirani tejaş).
+fn shrink(img: crate::image::Image, max: usize) -> crate::image::Image {
+    if img.w <= max && img.h <= max { img } else { make_thumb(&img, max) }
+}
+
+/// Yuklaş vazifasi (fonda): sahifa, tashqi CSS, skriptlar, rasmlar.
+fn web_load(url: &str) -> WebRes {
     let t0 = crate::timer::uptime_ms();
-    match crate::net::http::get(url) {
-        Ok(r) => {
-            let ms = crate::timer::uptime_ms().saturating_sub(t0);
-            let ct = String::from(r.header("content-type").unwrap_or("text/html"));
-            let text = String::from_utf8_lossy(&r.body);
-            let doc = if ct.contains("html") {
-                crate::html::parse(&text)
-            } else if ct.starts_with("text/") || ct.contains("json") {
-                crate::html::plain(&text)
-            } else {
-                error_doc("Körsatib bölmaydi", &alloc::format!("Turi: {} · {} bayt", ct, r.body.len()))
-            };
-            let st = alloc::format!("HTTP {} · {} KB · {} ms{}", r.status, r.body.len() / 1024, ms, if r.url.starts_with("https") { " · TLS 1.3" } else { "" });
-            (doc, r.url, st)
+    let (bytes, ct, final_url) = match web_bytes(url) {
+        Ok(x) => x,
+        Err(e) => {
+            return WebRes { doc: error_doc("Sahifani oçib bölmadi", &e), url: String::from(url), status: String::from("Xato"), images: Vec::new(), scripts: Vec::new() };
         }
-        Err(e) => (error_doc("Sahifani oçib bölmadi", &e), String::from(url), String::from("Xato")),
+    };
+    let name = final_url.rsplit('/').next().unwrap_or("fayl").split('?').next().unwrap_or("fayl");
+    let mut images = Vec::new();
+    let mut scripts = Vec::new();
+    let doc = if ct.contains("html") {
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        // Tashqi CSS
+        let mut css = String::new();
+        for href in crate::html::stylesheet_links(&text).into_iter().take(4) {
+            if let Ok((d, _, _)) = web_bytes(&crate::net::http::join(&final_url, &href)) {
+                if d.len() < 512 * 1024 {
+                    css.push_str(&String::from_utf8_lossy(&d));
+                    css.push('\n');
+                }
+            }
+        }
+        let doc = crate::html::parse_with(&text, &css);
+        // Skriptlar (tartib saqlanadi)
+        for s in doc.scripts.iter().take(12) {
+            match s {
+                crate::html::Script::Inline(c) => scripts.push(c.clone()),
+                crate::html::Script::Src(u) => {
+                    if let Ok((d, _, _)) = web_bytes(&crate::net::http::join(&final_url, u)) {
+                        if d.len() < 1024 * 1024 {
+                            scripts.push(String::from_utf8_lossy(&d).into_owned());
+                        }
+                    }
+                }
+            }
+        }
+        // Rasmlar
+        let mut seen: Vec<String> = Vec::new();
+        for b in doc.blocks.iter().filter(|b| b.kind == HK::Img && !b.src.is_empty()) {
+            if seen.contains(&b.src) || seen.len() >= 16 || b.src.starts_with("data:") {
+                continue;
+            }
+            seen.push(b.src.clone());
+            let full = crate::net::http::join(&final_url, &b.src);
+            if let Ok((d, _, fu)) = web_bytes(&full) {
+                if d.len() < 4 * 1024 * 1024 {
+                    let nm = fu.rsplit('/').next().unwrap_or("rasm").split('?').next().unwrap_or("rasm");
+                    if let Some(img) = crate::image::decode_file(nm, &d).or_else(|| crate::image::decode(&d)) {
+                        images.push((b.src.clone(), shrink(img, 1200)));
+                    }
+                }
+            }
+        }
+        doc
+    } else if ct.starts_with("image/") {
+        match crate::image::decode_file(name, &bytes).or_else(|| crate::image::decode(&bytes)) {
+            Some(img) => {
+                let src = alloc::format!("<title>{}</title><img src=\"{}\">", name, final_url);
+                images.push((final_url.clone(), shrink(img, 1600)));
+                crate::html::parse(&src)
+            }
+            None => error_doc("Rasmni oçib bölmadi", name),
+        }
+    } else if ct.starts_with("text/") || ct.contains("json") || ct.contains("javascript") || ct.contains("xml") {
+        crate::html::plain(&String::from_utf8_lossy(&bytes))
+    } else {
+        // Boşqa fayl — Yuklamalar papkasiga
+        use crate::abi::{OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
+        let dir = if fs::list("~/Yuklamalar").is_ok() { "~/Yuklamalar" } else { "~" };
+        let path = unique_dest(&path_join(dir, if name.is_empty() { "yuklama" } else { name }));
+        match fs::open(&path, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE).and_then(|id| fs::write(id, Some(0), &bytes)) {
+            Ok(_) => {
+                let _ = fs::commit();
+                notify("Yuklab olindi", &alloc::format!("{} · {} KB", path, bytes.len() / 1024), 0x2fbf5f);
+                crate::html::parse(&alloc::format!(
+                    "<title>Yuklab olindi</title><h1>Fayl yuklab olindi</h1><p><b>{}</b></p><p>Turi: {} · {} KB</p><p>Saqlandi: <code>{}</code></p>",
+                    name, ct, bytes.len() / 1024, path
+                ))
+            }
+            Err(e) => error_doc("Saqlab bölmadi", &alloc::format!("{:?}", e)),
+        }
+    };
+    let ms = crate::timer::uptime_ms().saturating_sub(t0);
+    let status = if final_url.contains("://") && !final_url.starts_with("zamin:") {
+        alloc::format!(
+            "{} KB · {} ms{}{}",
+            bytes.len() / 1024,
+            ms,
+            if final_url.starts_with("https") { " · TLS 1.3" } else { "" },
+            if images.is_empty() { String::new() } else { alloc::format!(" · {} rasm", images.len()) }
+        )
+    } else if final_url.starts_with("zamin:") {
+        String::from("Ichki sahifa")
+    } else {
+        alloc::format!("Fayl · {} bayt", bytes.len())
+    };
+    WebRes { doc, url: final_url, status, images, scripts }
+}
+
+extern "C" fn web_worker(_: usize) {
+    loop {
+        let job = {
+            let mut q = WEB_Q.lock();
+            q.iter_mut().find(|j| !j.taken).map(|j| {
+                j.taken = true;
+                (j.id, j.url.clone())
+            })
+        };
+        match job {
+            Some((id, url)) => {
+                let res = web_load(&url);
+                let mut q = WEB_Q.lock();
+                if let Some(j) = q.iter_mut().find(|j| j.id == id) {
+                    j.result = Some(res);
+                }
+            }
+            None => task::sleep_ms(25),
+        }
     }
+}
+
+fn web_new() -> Box<Web> {
+    Box::new(Web {
+        url: String::new(),
+        doc: Doc::empty(),
+        scroll: 0,
+        hist: Vec::new(),
+        status: String::new(),
+        editing: false,
+        edit: String::new(),
+        loading: None,
+        images: Vec::new(),
+        js: None,
+        console: false,
+        t0: 0,
+    })
+}
+
+/// Natijani oynaga qöllaydi va skriptlarni bajaradi.
+fn web_apply(win: &mut Window, res: WebRes) {
+    let w = win.web.get_or_insert_with(web_new);
+    w.doc = res.doc;
+    w.url = res.url;
+    w.images = res.images;
+    w.scroll = 0;
+    w.loading = None;
+    let mut eng = crate::js::Engine::new();
+    let now = crate::timer::uptime_ms();
+    for s in &res.scripts {
+        let _ = eng.run(s, &mut w.doc, now);
+    }
+    for a in eng.alerts.drain(..) {
+        notify("Sahifa xabari", &a, 0x2f88ff);
+    }
+    let js_info = if res.scripts.is_empty() {
+        String::new()
+    } else if eng.errors > 0 {
+        alloc::format!(" · JS: {} xato (F12)", eng.errors)
+    } else {
+        alloc::format!(" · JS: {} skript", res.scripts.len())
+    };
+    w.status = alloc::format!("{}{}", res.status, js_info);
+    w.js = Some(eng);
+    let title = if w.doc.title.is_empty() { w.url.clone() } else { w.doc.title.clone() };
+    win.title = alloc::format!("{} — Zamin Brauzer", title);
 }
 
 fn web_go(win: &mut Window, url: &str, push: bool) {
     let mut url = String::from(url.trim());
-    if !url.contains("://") && !url.starts_with('~') && !url.starts_with('/') && !url.starts_with("file:") {
+    if !url.contains("://") && !url.starts_with('~') && !url.starts_with('/') && !url.starts_with("file:") && !url.starts_with("zamin:") {
         url = alloc::format!("http://{}", url);
     }
-    // "Yuklanmoqda…" ni darhol körsatamiz (yuklaş GUI ni band qiladi)
-    if let Some(w) = win.web.as_mut() {
-        w.status = alloc::format!("Yuklanmoqda… {}", url);
-        w.editing = false;
-        if url.contains("://") && builtin_page(&url).is_none() {
-            draw_window(win, true, 0, 0);
-            gfx::reset_clip();
-            gfx::flush();
-        }
-    }
-    let (doc, final_url, status) = web_fetch(&url);
-    let title = if doc.title.is_empty() { final_url.clone() } else { doc.title.clone() };
-    win.title = alloc::format!("{} — Zamin Brauzer", title);
-    let w = win.web.get_or_insert_with(|| {
-        Box::new(Web {
-            url: String::new(),
-            doc: crate::html::Doc { title: String::new(), blocks: Vec::new() },
-            scroll: 0,
-            hist: Vec::new(),
-            status: String::new(),
-            editing: false,
-            edit: String::new(),
-        })
-    });
-    if push && !w.url.is_empty() && w.url != final_url {
+    let w = win.web.get_or_insert_with(web_new);
+    if push && !w.url.is_empty() && w.url != url {
         w.hist.push(w.url.clone());
     }
-    w.url = final_url;
-    w.doc = doc;
-    w.scroll = 0;
-    w.status = status;
+    w.editing = false;
+    if builtin_page(&url).is_some() {
+        let res = web_load(&url);
+        web_apply(win, res);
+        return;
+    }
+    // Fonda yuklaymiz — ekran qotmaydi
+    if !WEB_WORKER.swap(true, Ordering::Relaxed) {
+        let _ = task::spawn_kernel("brauzer", web_worker, 0);
+    }
+    let id = WEB_NEXT.fetch_add(1, Ordering::Relaxed);
+    {
+        let mut q = WEB_Q.lock();
+        q.retain(|j| !(j.result.is_some() && j.id < id.saturating_sub(8)));
+        q.push(WebJob { id, url: url.clone(), taken: false, result: None });
+    }
+    w.loading = Some(id);
+    w.t0 = crate::timer::uptime_ms();
+    w.url = url.clone();
+    w.status = alloc::format!("Yuklanmoqda… {}", url);
+}
+
+/// GUI sikli: tayyor yuklaşlar va JS taymerlari. Özgariş bölsa — true.
+fn web_poll(windows: &mut [Window]) -> bool {
+    let mut changed = false;
+    let now = crate::timer::uptime_ms();
+    for win in windows.iter_mut().filter(|w| w.kind == Kind::Browser) {
+        let Some(id) = win.web.as_ref().and_then(|w| w.loading) else {
+            if let Some(w) = win.web.as_mut() {
+                if let Some(eng) = w.js.as_mut() {
+                    if eng.tick(&mut w.doc, now) {
+                        changed = true;
+                        for a in eng.alerts.drain(..) {
+                            notify("Sahifa xabari", &a, 0x2f88ff);
+                        }
+                    }
+                }
+            }
+            continue;
+        };
+        let res = {
+            let mut q = WEB_Q.lock();
+            q.iter().position(|j| j.id == id && j.result.is_some()).map(|k| q.remove(k).result.unwrap())
+        };
+        match res {
+            Some(r) => {
+                web_apply(win, r);
+                changed = true;
+            }
+            None => {
+                // aylanuvçi körsatkiç uçun qayta chizamiz
+                if now.wrapping_sub(win.play_t) >= 120 {
+                    win.play_t = now;
+                    changed = true;
+                }
+            }
+        }
+    }
+    changed
 }
 
 /// Brauzer geometriyasi: (asboblar y, balandligi, tugmalar x[3], manzil (x,y,w,h), sahifa (x,y,w,h)).
@@ -6517,90 +6812,190 @@ fn web_geo(win: &Window) -> (usize, usize, [usize; 3], (usize, usize, usize, usi
     (by, bh, btns, addr, page)
 }
 
+fn luma(c: Color) -> u32 {
+    (((c >> 16) & 0xff) * 3 + ((c >> 8) & 0xff) * 6 + (c & 0xff)) / 10
+}
+
+/// Sahifa ranglari: (fon, matn, havola, kod, sarlavha).
+fn web_palette(doc: &Doc) -> (Color, Color, Color, Color, Color) {
+    let bg = doc.bg.unwrap_or(0x161b26);
+    let dark = luma(bg) < 128;
+    let text = doc.color.unwrap_or(if dark { 0xd3dbe6 } else { 0x1d1d1f });
+    if dark { (bg, text, 0x5aa9ff, 0xffc777, doc.color.unwrap_or(OQ)) } else { (bg, text, 0x0b57d0, 0xa3501a, doc.color.unwrap_or(0x000000)) }
+}
+
 /// Sahifa joylaşuvi: elementlar, bezaklar (x, y, w, h, rang) va toʻliq balandlik.
-fn web_layout(doc: &crate::html::Doc, width: usize) -> (Vec<WItem>, Vec<(usize, usize, usize, usize, Color)>, usize) {
-    use crate::html::Kind as K;
+fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<(usize, usize, usize, usize, Color)>, usize) {
+    let doc = &web.doc;
     let u = body();
     let pad = u;
-    let mut items = Vec::new();
+    let k = (small() * 11 / 10) as f32 / 16.0;
+    let pxs = |size: f32| ((size * k) as usize).clamp(8, 90);
+    let (_, text_col, link_col, code_col, head_col) = web_palette(doc);
+    let dark = luma(doc.bg.unwrap_or(0x161b26)) < 128;
+    let mut items: Vec<WItem> = Vec::new();
     let mut deco = Vec::new();
     let mut y = u / 2;
     let maxw = width.saturating_sub(pad * 2);
-    for b in &doc.blocks {
-        let (px, col, indent, gap_top, gap_bot) = match b.kind {
-            K::H(1) => (u * 2, OQ, 0, u, u / 2),
-            K::H(2) => (u * 3 / 2, 0xf0f4fa, 0, u * 3 / 4, u / 3),
-            K::H(_) => (u * 6 / 5, 0xe4eaf3, 0, u / 2, u / 4),
-            K::Li(d, _) => (small() * 11 / 10, 0xd3dbe6, d as usize * u * 3 / 2, u / 6, u / 6),
-            K::Pre => (small(), 0xd7e3c8, u / 2, u / 2, u / 2),
-            K::Quote => (small() * 11 / 10, 0xaab6c8, u * 3 / 2, u / 2, u / 2),
-            K::Hr => (small(), 0, 0, u / 2, u / 2),
-            K::P => (small() * 11 / 10, 0xd3dbe6, 0, u / 3, u / 2),
+    let mut prev_bg: (u32, usize) = (0, usize::MAX); // (fon kaliti, deco indeksi)
+    for b in doc.blocks.iter().filter(|b| !b.hidden) {
+        let base_px = pxs(b.size);
+        let (indent, gap_top, gap_bot) = match b.kind {
+            HK::H(1) => (0, u, u / 2),
+            HK::H(_) => (0, u * 2 / 3, u / 4),
+            HK::Li(d, _) => (d as usize * u * 3 / 2, u / 8, u / 8),
+            HK::Pre => (u / 2, u / 2, u / 2),
+            HK::Quote => (u * 3 / 2, u / 2, u / 2),
+            HK::Hr => (0, u / 2, u / 2),
+            HK::Img => (0, u / 3, u / 3),
+            HK::P => (0, u / 4, u / 3),
         };
+        let bcol = b.color.unwrap_or(match b.kind {
+            HK::H(_) => head_col,
+            HK::Quote => mix(text_col, doc.bg.unwrap_or(0x161b26), 70),
+            _ => text_col,
+        });
+        let has_bg = b.bg.is_some();
         y += gap_top;
-        let lh = px * 14 / 10;
-        if b.kind == K::Hr {
-            deco.push((pad, y, maxw, 1, 0x34405a));
+        if has_bg {
+            y += u / 3;
+        }
+        let y_block = y;
+        if b.kind == HK::Hr {
+            deco.push((pad, y, maxw, 1, if dark { 0x34405a } else { 0xc7ccd6 }));
             y += 1 + gap_bot;
             continue;
         }
+        if b.kind == HK::Img {
+            let found = web.images.iter().position(|(s, _)| *s == b.src);
+            let (w, h) = match found {
+                Some(i) => {
+                    let im = &web.images[i].1;
+                    let w = im.w.min(maxw);
+                    (w, im.h * w / im.w.max(1))
+                }
+                None => (maxw.min(u * 12), u * 3),
+            };
+            let x = pad + match b.align {
+                1 => (maxw - w) / 2,
+                2 => maxw - w,
+                _ => 0,
+            };
+            let alt = b.spans.first().map(|s| s.text.clone()).unwrap_or_default();
+            let link = b.spans.first().and_then(|s| s.link.clone());
+            if found.is_none() {
+                deco.push((x, y, w, h, if dark { 0x232a38 } else { 0xe4e7ec }));
+            }
+            items.push(WItem {
+                x,
+                y,
+                w,
+                h,
+                text: if found.is_some() { String::new() } else { alloc::format!("[rasm] {}", alt) },
+                col: mix(text_col, doc.bg.unwrap_or(0x161b26), 110),
+                px: small(),
+                mono: false,
+                link,
+                el: b.el,
+                button: false,
+                underline: false,
+                img: found,
+            });
+            y += h + gap_bot;
+            continue;
+        }
         let x0 = pad + indent;
-        let y_start = y;
-        if let K::Li(_, n) = b.kind {
+        if let HK::Li(_, n) = b.kind {
             if n == 0 {
-                deco.push((x0 - u * 3 / 4, y + px / 2 - 2, 5, 5, 0x8ea0b6));
+                deco.push((x0 - u * 3 / 4, y + base_px / 2 - 2, 5, 5, mix(bcol, doc.bg.unwrap_or(0x161b26), 90)));
             } else {
                 let t = alloc::format!("{}.", n);
-                let tw = gfx::text_width(&t, px);
-                items.push(WItem { x: x0.saturating_sub(tw + u / 3), y, w: tw, text: t, col: 0x8ea0b6, px, mono: false, link: None });
+                let tw = gfx::text_width(&t, base_px);
+                items.push(WItem { x: x0.saturating_sub(tw + u / 3), y, w: tw, h: base_px, text: t, col: mix(bcol, doc.bg.unwrap_or(0x161b26), 70), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None });
             }
         }
-        if b.kind == K::Pre {
-            let lines: Vec<String> = b.spans.iter().map(|s| s.text.clone()).collect::<Vec<_>>().join("").lines().map(String::from).collect();
-            let lhm = gfx::line_height(px, Font::Mono).max(px + 3);
+        if b.kind == HK::Pre {
+            let all: String = b.spans.iter().map(|s| s.text.as_str()).collect();
+            let lhm = gfx::line_height(base_px, Font::Mono).max(base_px + 3);
+            let lines: Vec<&str> = all.lines().collect();
             let h = lines.len() * lhm + u;
-            deco.push((pad, y, maxw, h, 0x10151f));
+            deco.push((pad, y, maxw, h, b.bg.unwrap_or(if dark { 0x10151f } else { 0xeef0f3 })));
             let mut yy = y + u / 2;
             for l in lines {
-                let w = gfx::text_width_mono(&l, px);
-                items.push(WItem { x: x0, y: yy, w, text: l, col, px, mono: true, link: None });
+                let w = gfx::text_width_mono(l, base_px);
+                items.push(WItem { x: x0, y: yy, w, h: base_px, text: String::from(l), col: b.color.unwrap_or(if dark { 0xd7e3c8 } else { 0x24292f }), px: base_px, mono: true, link: None, el: b.el, button: false, underline: false, img: None });
                 yy += lhm;
             }
             y += h + gap_bot;
             continue;
         }
+        // Qatorlarga bölib joylaş (tekislaş bilan)
         let mut x = x0;
+        let mut line_start = items.len();
+        let mut line_h = base_px * 14 / 10;
+        let line_w = pad + maxw - x0;
+        let finish = |items: &mut Vec<WItem>, start: usize, x: usize| {
+            if b.align != 0 {
+                let used = x - x0;
+                let off = line_w.saturating_sub(used) * b.align as usize / 2;
+                for it in items[start..].iter_mut() {
+                    it.x += off;
+                }
+            }
+        };
         for s in &b.spans {
+            let spx = pxs(s.size);
             if s.br {
+                finish(&mut items, line_start, x);
                 x = x0;
-                y += lh;
+                y += line_h;
+                line_start = items.len();
+                line_h = base_px * 14 / 10;
                 continue;
             }
-            let c = if s.link.is_some() { LINK_COL } else if s.code { 0xffc777 } else if s.bold { OQ } else { col };
+            let c = s.color.unwrap_or(if s.link.is_some() { link_col } else if s.code { code_col } else { bcol });
             let mut rest = s.text.as_str();
             while !rest.is_empty() {
-                // bitta söz (keyingi boşliq bilan)
-                let cut = rest.find(' ').map(|i| i + 1).unwrap_or(rest.len());
+                let cut = if s.button { rest.len() } else { rest.find(' ').map(|i| i + 1).unwrap_or(rest.len()) };
                 let word = &rest[..cut];
                 rest = &rest[cut..];
-                let ww = if s.code { gfx::text_width_mono(word, px) } else { gfx::text_width(word, px) };
+                let ww = if s.code { gfx::text_width_mono(word, spx) } else { gfx::text_width(word, spx) } + if s.button { u / 2 } else { 0 };
                 if x + ww > pad + maxw && x > x0 {
+                    finish(&mut items, line_start, x);
                     x = x0;
-                    y += lh;
+                    y += line_h;
+                    line_start = items.len();
+                    line_h = base_px * 14 / 10;
                     if word == " " {
                         continue;
                     }
                 }
-                items.push(WItem { x, y, w: ww, text: String::from(word), col: c, px, mono: s.code, link: s.link.clone() });
+                line_h = line_h.max(spx * 14 / 10);
+                items.push(WItem { x, y, w: ww, h: spx, text: String::from(word), col: c, px: spx, mono: s.code, link: s.link.clone(), el: s.el, button: s.button, underline: s.link.is_some() && s.underline, img: None });
                 x += ww;
             }
         }
-        y += lh;
-        if b.kind == K::Quote {
-            deco.push((pad + u / 2, y_start, 3, y - y_start, accent()));
+        finish(&mut items, line_start, x);
+        y += line_h;
+        if let Some(bg) = b.bg {
+            if b.bgk != 0 && prev_bg.0 == b.bgk && prev_bg.1 < deco.len() {
+                // shu konteynerning davomi — oldingi fonni çözamiz
+                let d = &mut deco[prev_bg.1];
+                d.3 = (y + u / 3).saturating_sub(d.1);
+            } else {
+                deco.insert(0, (pad / 2, y_block.saturating_sub(u / 3), maxw + pad, y - y_block + u * 2 / 3, bg));
+                // insert(0) indekslarni suradi
+                prev_bg = (b.bgk, 0);
+            }
+            y += u / 3;
+        } else {
+            prev_bg = (0, usize::MAX);
         }
-        if b.kind == K::H(1) {
-            deco.push((pad, y + u / 6, maxw, 1, 0x2a3346));
+        if b.kind == HK::Quote {
+            deco.push((pad + u / 2, y_block, 3, y - y_block, accent()));
+        }
+        if b.kind == HK::H(1) && !has_bg {
+            deco.push((pad, y + u / 6, maxw, 1, if dark { 0x2a3346 } else { 0xd0d5dd }));
             y += u / 3;
         }
         y += gap_bot;
@@ -6612,7 +7007,6 @@ fn draw_browser(win: &Window) {
     let u = body();
     let Some(web) = &win.web else { return };
     let (by, bh, btns, (ax, ay, aw, ah), (px0, py0, pw, ph)) = web_geo(win);
-    // Tugmalar: orqaga, yangilaş, bosh sahifa
     for (k, bx) in btns.iter().enumerate() {
         let (c, m) = ((*bx + bh / 2) as f32, (by + bh / 2) as f32);
         let on = k != 0 || !web.hist.is_empty();
@@ -6627,12 +7021,18 @@ fn draw_browser(win: &Window) {
             }
             1 => {
                 use crate::image::vector::{cos, sin};
-                for i in 0..18 {
-                    let a0 = 0.6 + i as f32 * 0.29;
-                    let a1 = a0 + 0.29;
-                    seg(c + cos(a0) * d, m + sin(a0) * d, c + cos(a1) * d, m + sin(a1) * d, t, col);
+                if web.loading.is_some() {
+                    // yuklanmoqda: X (töxtatiş belgisi)
+                    seg(c - d * 0.7, m - d * 0.7, c + d * 0.7, m + d * 0.7, t, col);
+                    seg(c - d * 0.7, m + d * 0.7, c + d * 0.7, m - d * 0.7, t, col);
+                } else {
+                    for i in 0..18 {
+                        let a0 = 0.6 + i as f32 * 0.29;
+                        let a1 = a0 + 0.29;
+                        seg(c + cos(a0) * d, m + sin(a0) * d, c + cos(a1) * d, m + sin(a1) * d, t, col);
+                    }
+                    seg(c + cos(0.6) * d, m + sin(0.6) * d, c + cos(0.6) * d + d * 0.5, m + sin(0.6) * d - d * 0.1, t, col);
                 }
-                seg(c + cos(0.6) * d, m + sin(0.6) * d, c + cos(0.6) * d + d * 0.5, m + sin(0.6) * d - d * 0.1, t, col);
             }
             _ => {
                 gfx::fill_poly(&[(c, m - d), (c + d, m), (c - d, m)], col);
@@ -6640,7 +7040,6 @@ fn draw_browser(win: &Window) {
             }
         }
     }
-    // Manzil qatori
     gfx::fill_round_rect(ax, ay, aw, ah, ah / 2, 0x10151f);
     gfx::round_outline(ax, ay, aw, ah, ah / 2, if web.editing { 2 } else { 1 }, if web.editing { accent() } else { 0x2a3346 });
     let secure = web.url.starts_with("https://");
@@ -6662,37 +7061,85 @@ fn draw_browser(win: &Window) {
     if web.editing {
         fill_rect(ex + 1, ay + 4, 2, ah - 8, 0x63a8ff);
     }
+    // Yuklaş çizigʻi
     fill_rect(win.x + 1, py0 - 1, win.w.saturating_sub(2), 1, 0x2a3346);
-    // Sahifa
-    fill_rect(px0, py0, pw, ph, 0x161b26);
+    if web.loading.is_some() {
+        let el = crate::timer::uptime_ms().saturating_sub(web.t0);
+        let span = win.w / 4;
+        let pos = (el as usize / 4) % (win.w + span);
+        let x0 = (win.x + pos).saturating_sub(span);
+        let x1 = (win.x + pos).min(win.x + win.w);
+        if x1 > x0.max(win.x) {
+            fill_rect(x0.max(win.x), py0 - 2, x1 - x0.max(win.x), 3, accent());
+        }
+    }
+    let (page_bg, ..) = web_palette(&web.doc);
+    fill_rect(px0, py0, pw, ph, page_bg);
     gfx::set_clip(px0, py0, pw, ph);
-    let (items, deco, total) = web_layout(&web.doc, pw.saturating_sub(u));
+    let (items, deco, total) = web_layout(web, pw.saturating_sub(u));
     let sc = web.scroll.min(total.saturating_sub(ph));
     for (x, y, w, h, c) in deco {
         if y + h >= sc && y < sc + ph {
-            fill_rect(px0 + x, (py0 + y).saturating_sub(sc), w, h - (sc.saturating_sub(y)).min(h), c);
+            let top = y.max(sc);
+            fill_rect(px0 + x, py0 + top - sc, w, (y + h) - top, c);
         }
     }
     for it in &items {
-        if it.y + it.px < sc || it.y > sc + ph {
+        if it.y + it.h < sc || it.y > sc + ph {
             continue;
         }
-        let (x, y) = (px0 + it.x, py0 + it.y - sc);
-        if it.mono {
-            gfx::draw_text_mono(x, y, &it.text, it.col, it.px);
-        } else {
-            gfx::draw_text(x, y, &it.text, it.col, it.px);
+        let (x, y) = (px0 + it.x, (py0 + it.y).saturating_sub(sc));
+        if let Some(i) = it.img {
+            let im = &web.images[i].1;
+            if it.y >= sc {
+                gfx::blit_scaled(x, y, it.w, it.h, im.w, im.h, &im.px);
+            } else {
+                // Yuqoridan qisman körinadi: manba qatorlarining pastki qismini çizamiz
+                let skip = sc - it.y; // ekranda yaşiringan qator (piksel)
+                let sy = (skip * im.h / it.h.max(1)).min(im.h.saturating_sub(1));
+                let rest_h = im.h - sy;
+                let dh = it.h.saturating_sub(skip);
+                if dh > 0 {
+                    gfx::blit_scaled(x, py0, it.w, dh, im.w, rest_h, &im.px[sy * im.w..]);
+                }
+            }
+            continue;
         }
-        if it.link.is_some() {
+        if it.button {
+            gfx::fill_round_rect(x, y.saturating_sub(it.px / 5), it.w.saturating_sub(u / 6), it.px * 7 / 5, it.px / 3, 0x3a4458);
+            gfx::round_outline(x, y.saturating_sub(it.px / 5), it.w.saturating_sub(u / 6), it.px * 7 / 5, it.px / 3, 1, 0x5a6478);
+        }
+        let tx = if it.button { x + u / 4 } else { x };
+        let col = if it.button && it.col == web_palette(&web.doc).1 { OQ } else { it.col };
+        if it.mono {
+            gfx::draw_text_mono(tx, y, &it.text, col, it.px);
+        } else {
+            gfx::draw_text(tx, y, &it.text, col, it.px);
+        }
+        if it.underline || (it.link.is_some() && !it.button) {
             let tw = it.w.saturating_sub(if it.text.ends_with(' ') { gfx::text_width(" ", it.px) } else { 0 });
-            fill_rect(x, y + it.px + 1, tw, 1, 0x2f6fb8);
+            fill_rect(x, y + it.px + 1, tw, 1, mix(it.col, page_bg, 90));
         }
     }
-    // Aylantiriş çizig'i
     if total > ph {
         let th = (ph * ph / total).max(u);
         let ty = py0 + sc * (ph - th) / (total - ph).max(1);
-        fill_round_rect_a(px0 + pw - 7, ty, 4, th, 2, 0xffffff, 60);
+        fill_round_rect_a(px0 + pw - 7, ty, 4, th, 2, if luma(page_bg) < 128 { 0xffffff } else { 0x000000 }, 60);
+    }
+    // JS konsoli (F12)
+    if web.console {
+        let chh = (ph / 3).max(u * 5);
+        let cy = py0 + ph - chh;
+        fill_round_rect_a(px0, cy, pw, chh, 0, 0x0b0f16, 235);
+        fill_rect(px0, cy, pw, 1, accent());
+        gfx::draw_text(px0 + u / 2, cy + u / 4, "Konsol (F12)", 0x8ea0b6, small() * 4 / 5);
+        let log: Vec<String> = web.js.as_ref().map(|e| e.log.clone()).unwrap_or_default();
+        let lh = small() + 2;
+        let rows = (chh.saturating_sub(u + 4)) / lh;
+        for (k, l) in log.iter().rev().take(rows).rev().enumerate() {
+            let col = if l.starts_with("Xato") || l.starts_with("Sintaksis") { 0xff6b61 } else { 0xd7e3c8 };
+            gfx::draw_text_mono(px0 + u / 2, cy + u + k * lh, &fit_text(l, pw - u, small() * 9 / 10), col, small() * 9 / 10);
+        }
     }
     gfx::set_clip(win.x + 1, win.y + title_h(), win.w.saturating_sub(2), win.h.saturating_sub(title_h() + 1));
     gfx::draw_text(win.x + u / 2, py0 + ph + (small() + u / 2 - small() * 4 / 5) / 2, &fit_text(&web.status, win.w - u, small() * 4 / 5), 0x7d8ca3, small() * 4 / 5);
@@ -6701,7 +7148,7 @@ fn draw_browser(win: &Window) {
 fn web_max_scroll(win: &Window) -> usize {
     let Some(web) = &win.web else { return 0 };
     let (_, _, _, _, (_, _, pw, ph)) = web_geo(win);
-    let (_, _, total) = web_layout(&web.doc, pw.saturating_sub(body()));
+    let (_, _, total) = web_layout(web, pw.saturating_sub(body()));
     total.saturating_sub(ph)
 }
 
@@ -6726,8 +7173,14 @@ fn web_click(win: &mut Window, cx: usize, cy: usize) -> bool {
             match k {
                 0 => web_back(win),
                 1 => {
-                    let u = web.url.clone();
-                    web_go(win, &u, false);
+                    if web.loading.is_some() {
+                        let w = win.web.as_mut().unwrap();
+                        w.loading = None;
+                        w.status = String::from("Töxtatildi");
+                    } else {
+                        let u = web.url.clone();
+                        web_go(win, &u, false);
+                    }
                 }
                 _ => web_go(win, "zamin://bosh", true),
             }
@@ -6741,15 +7194,42 @@ fn web_click(win: &mut Window, cx: usize, cy: usize) -> bool {
         return true;
     }
     if in_rect((px0, py0, pw, ph), cx, cy) {
-        let (items, _, total) = web_layout(&web.doc, pw.saturating_sub(body()));
+        let (items, _, total) = web_layout(web, pw.saturating_sub(body()));
         let sc = web.scroll.min(total.saturating_sub(ph));
         let (lx, ly) = (cx - px0, cy - py0 + sc);
-        let hit = items.iter().find(|it| lx >= it.x && lx < it.x + it.w && ly >= it.y && ly < it.y + it.px * 14 / 10).and_then(|it| it.link.clone());
+        // Nuqta ostidagilar ichidan bosiladiganini (havola / JS) afzal köramiz
+        let under: Vec<&WItem> = items.iter().filter(|it| lx >= it.x && lx < it.x + it.w && ly + it.h / 5 >= it.y && ly < it.y + it.h * 7 / 5).collect();
+        let hit = under.iter().find(|it| it.link.is_some() || it.el != NO_EL).or(under.first()).map(|it| (it.el, it.link.clone()));
         let base = web.url.clone();
-        win.web.as_mut().unwrap().editing = false;
-        if let Some(href) = hit {
-            let target = crate::net::http::join(&base, &href);
-            web_go(win, &target, true);
+        let w = win.web.as_mut().unwrap();
+        w.editing = false;
+        if let Some((el, link)) = hit {
+            // JS hodisasi (onclick / addEventListener)
+            if el != NO_EL {
+                if let Some(eng) = w.js.as_mut() {
+                    if eng.has_handler(el as usize, &w.doc) {
+                        eng.click(el as usize, &mut w.doc, crate::timer::uptime_ms());
+                        for a in eng.alerts.drain(..) {
+                            notify("Sahifa xabari", &a, 0x2f88ff);
+                        }
+                        return true;
+                    }
+                }
+            }
+            if let Some(href) = link {
+                if href.starts_with("javascript:") {
+                    let code = String::from(&href[11..]);
+                    if let Some(eng) = w.js.as_mut() {
+                        let _ = eng.run(&code, &mut w.doc, crate::timer::uptime_ms());
+                    }
+                    return true;
+                }
+                if href.starts_with('#') {
+                    return true;
+                }
+                let target = crate::net::http::join(&base, &href);
+                web_go(win, &target, true);
+            }
         }
         return true;
     }
@@ -6790,6 +7270,11 @@ fn web_key(win: &mut Window, code: u16, shift: bool) {
         63 => {
             let u = win.web.as_ref().map(|w| w.url.clone()).unwrap_or_default();
             web_go(win, &u, false);
+        }
+        88 => {
+            if let Some(w) = win.web.as_mut() {
+                w.console = !w.console;
+            }
         }
         _ => {}
     }

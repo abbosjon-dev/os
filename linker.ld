@@ -34,7 +34,7 @@ SECTIONS
 
     /* Yuklaniş steklari (har bir yadroning PID 0 vazifasi): 4 ta 64 KiB oyna,
        64 KiB ga tekislangan; har birida faqat yuqori 32 KiB işlatiladi. Stek
-       körsatkiçining 15-biti 0 bölib qolsa — stek töldi (qarang: arch/vectors.s). */
+       körsatkiçi oynaning pastki 4 KiB iga tuşsa — stek töldi (qarang: arch/vectors.s). */
     . = ALIGN(0x10000);
     __boot_stacks = .;
     . += 4 * 0x10000;

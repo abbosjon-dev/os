@@ -146,7 +146,8 @@ fn complete(raw: &[u8]) -> bool {
 
 /// Bitta so'rov (yönaltirişsiz).
 fn request(u: &Url) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
-    if !super::is_configured() {
+    // Manzil hali olinmagan bölsa — DHCP ni qayta sinaymiz (yuklanişdagi urinish ötmagan bölişi mumkin)
+    if !super::is_configured() && !super::dhcp::configure() {
         return Err(String::from("Tarmoq ulanmagan (DHCP manzil bermadi)"));
     }
     let ip = dns::resolve(&u.host).ok_or_else(|| format!("{} — DNS topilmadi", u.host))?;
@@ -210,7 +211,12 @@ pub fn get(url: &str) -> Result<Response, String> {
     let mut cur = String::from(url);
     for _ in 0..6 {
         let u = parse_url(&cur).ok_or_else(|| format!("Notöğri manzil: {}", cur))?;
-        let (status, headers, body) = request(&u)?;
+        // Javob kelmasa (yöqolgan paket, band server) — bir marta qayta sinaymiz
+        let (status, headers, body) = match request(&u) {
+            Ok(r) => r,
+            Err(e) if e.contains("javobi") => request(&u)?,
+            Err(e) => return Err(e),
+        };
         if matches!(status, 301 | 302 | 303 | 307 | 308) {
             if let Some(loc) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("location")).map(|(_, v)| v.clone()) {
                 cur = join(&cur, &loc);

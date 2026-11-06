@@ -159,7 +159,9 @@ fn send_arp(op: u16, target_ip: Ip, target_mac: Mac) {
 }
 
 /// IP uçun MAC ni topadi (keşda bölmasa — ARP söraydi va kutadi).
-fn resolve(ip: Ip) -> Option<Mac> {
+/// Diqqat: kutiş (sleep) bor — hech qanday SpinLock uşlab turilganda çaqirilmasin;
+/// TCP ulanişdan oldin `tcp::connect` buni qulfsiz çaqiradi (keşni isitadi).
+pub(crate) fn resolve(ip: Ip) -> Option<Mac> {
     let hop = next_hop(ip);
     if let Some(m) = arp_lookup(hop) {
         return Some(m);

@@ -102,6 +102,42 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   papka yöq bölsa — uyga) va **Böşatiş**; dokdagi savat töla bölsa — qogʻozlar körinadi.
   Nuqta bilan boşlanadigan yaşirin fayllar körsatilmaydi.
 
+### Brauzer: CSS, JavaScript, rasmlar va fonda yuklash
+
+| Bosh sahifa: CSS + JS (jonli soat, tugma) | JS va CSS sinovi + F12 konsoli |
+|---|---|
+| ![Bosh sahifa](docs/browser-home.png) | ![JS sinovi](docs/browser-js.png) |
+| **Tashqi CSS, JS va PNG rasm (HTTP)** | **Fayl yuklab olish → ~/Yuklamalar** |
+| ![CSS va rasm](docs/browser-css-img.png) | ![Yuklab olish](docs/browser-download.png) |
+
+- **JavaScript (`js` moduli, noldan)** — leksik tahlil → AST → bajarish. `let/const/var`,
+  funksiyalar (deklaratsiya, ifoda, strelkali), yopilmalar, `if/for/while/do`, `for…of/in`,
+  `try/catch/throw`, `?:`, `&&`/`||`/`??`, `...` (spread), shablon satrlar `${…}`, massiv
+  usullari (`map/filter/reduce/sort/…`), satr usullari, `Math`, `Date`, `JSON.stringify`,
+  `Object.keys`. **DOM**: `document.getElementById/querySelector/write/title`,
+  `element.textContent/innerHTML/style.*`, `onclick` va `addEventListener('click')`,
+  `setTimeout/setInterval`, `console.log` (F12 — konsol), `alert` — bildirishnoma.
+  Cheksiz sikl va chuqur rekursiyadan himoya (qadamlar soni va stek o'lchovi).
+- **CSS (`css` moduli)** — `<style>`, `style=""` va tashqi `<link rel=stylesheet>`:
+  teg/`.klass`/`#id`/avlod tanlagichlari, `color`, `background`, `font-size` (px/em/rem/%/pt),
+  `font-weight`, `text-align`, `display:none`, `visibility`, `text-decoration`; meros
+  (inheritance) va brauzerning o'z uslublari; `<body>`/`<html>` yashirin bo'lsa ham qo'llanadi.
+- **Rasmlar** — `<img>` HTTP yoki fayldan yuklanib, o'z dekoderlarimiz bilan ochiladi
+  (PNG, JPEG, GIF, BMP, SVG…), aylantirishda to'g'ri qirqiladi; to'g'ridan-to'g'ri rasm manzili ham.
+- **Fonda yuklash** — sahifa, CSS, skriptlar va rasmlar alohida yadro vazifasida (`brauzer`)
+  yuklanadi: ekran qotmaydi, yuklash chizig'i va to'xtatish tugmasi bor.
+- **Yuklab olish** — HTML/matn/rasm bo'lmagan fayllar `~/Yuklamalar` ga saqlanadi.
+
+Tuzatilgan tizim xatolari (shu bosqichda topildi):
+- **TCP ABBA tiqilishi**: `tcp::handle/tick` CONNS qulfini ushlab `wake_event` (SCHED)
+  chaqirardi, `wait_event` esa SCHED → CONNS tartibida — ikki yadro bir-birini kutib,
+  butun rejalashtiruvchi to'xtardi. Endi uyg'otish qulf bo'shatilgandan keyin.
+- **ARP kutishi qulf ichida**: `tcp::connect` SYN ni CONNS qulfi ichida yuborar, ARP
+  javobini esa uxlab kutardi. Endi ARP qulfdan tashqarida hal qilinadi.
+- **`tcp::recv` vaqt chekloviga e'tibor bermasdi** (paket kelmasa hech kim uyg'otmasdi).
+- **Yadro steki 32 → 60 KiB** (64 KiB oynada; pastki 4 KiB — qo'rg'on sahifa, `vectors.s`
+  tekshiruvi yangilandi) — daraxt bo'ylab ishlovchi interpretatorlar uchun.
+
 ### Brauzer: HTTP, HTTPS va HTML — noldan
 
 | HTTP (mahalliy server) | HTTPS — haqiqiy internet (example.com, TLS 1.3) |
@@ -722,7 +758,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.22**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.23**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -774,5 +810,9 @@ bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.22 — **Haqiqiy brauzer**: HTTP/1.1 + HTTPS (öz TLS 1.3) va HTML tahlilçi/joylaşuv —
   haqiqiy internet sahifalari oçiladi; **Chizma** (PNG saqlaş), Soatda **sekundomer** va
   **taymer**, dok kontekst menyusi.
+- 0.0.23 — **Internet**: noldan **JavaScript** interpretatori (DOM, hodisalar, taymerlar),
+  **CSS** (tashqi va ichki uslublar, kaskad, meros), sahifadagi **rasmlar**, **fonda yuklash**
+  (ekran qotmaydi), fayl **yuklab olish**, F12 konsol; TCP tiqilishi va ARP-qulf xatolari
+  tuzatildi, yadro steklari 60 KiB.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

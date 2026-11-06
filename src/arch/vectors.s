@@ -38,15 +38,17 @@
 .endm
 
 // Yadro rejimidagi kiriş (SP_EL1): avval stek töliş tekşiriladi.
-// Yadro steklari 64 KiB ga tekislangan oynalarning yuqori yarmida turadi,
-// pastki yarmi — xaritalanmagan qörğon. Demak töğri SP da 15-bit = 1.
+// Yadro steklari 64 KiB ga tekislangan oynalarda turadi (60 KiB stek), eng
+// pastki 4 KiB — xaritalanmagan qörğon. Demak SP ning 12..15-bitlari hammasi
+// 0 bölsa — stek töldi. (Bayroqlarni özgartiriş xavfsiz: PSTATE SPSR da saqlangan.)
 // Registrlarni buzmasdan tekşiriş uçun SP va x0 almaştirib işlatiladi.
 .macro VECTOR_CHECKED kind
 .balign 0x80
     sub     sp, sp, #(34 * 8)
     add     sp, sp, x0          // sp' = sp + x0
     sub     x0, sp, x0          // x0 = sp
-    tbz     x0, #15, 1f         // 15-bit 0 → stek töldi
+    tst     x0, #0xf000         // oynaning pastki 4 KiB i?
+    b.eq    1f                  // ha → stek töldi
     sub     x0, sp, x0          // x0 tiklandi
     sub     sp, sp, x0          // sp tiklandi
     b       save_\kind
