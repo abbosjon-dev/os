@@ -6,3 +6,4 @@ target/
 .agent/HALT
 .agent/*.tmp
 .agent/history.jsonl
+__pycache__/
