@@ -523,6 +523,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] CSS @media (min/max-width) va :hover ({} sinov)", n),
         Err(e) => panic!("CSS @media/:hover tekşiruvi yiqildi: {}", e),
     }
+    match html::self_test_av() {
+        Ok(n) => println!("  [ok] <audio>/<video>: WAV ijro havolasi (virtio-sound) va video poster ({} sinov)", n),
+        Err(e) => panic!("audio/video tekşiruvi yiqildi: {}", e),
+    }
     match html::self_test_iframe() {
         Ok(n) => println!("  [ok] <iframe>: srcdoc va bir xil manbali src ichki hujjat chizilişi ({} sinov)", n),
         Err(e) => panic!("iframe tekşiruvi yiqildi: {}", e),

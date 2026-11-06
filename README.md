@@ -120,7 +120,7 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   `rowspan` — katak pastki qatorlarga çoziladi (ramkasi birlaşadi), keyingi qatorlarda uning ustuni
   böş joy egallovçi bilan saqlanadi; yuklaniş self-testida tekşiriladi.
 - **Media**: `img width/height`, `srcset`, `picture/source`, lazy `data-src`, **`data:` URI**
-  (base64 va URL-kodlangan), **ichki `<svg>`** (SVG dekoderimiz bilan), `video/audio/embed/object` va boshqa
+  (base64 va URL-kodlangan), **ichki `<svg>`** (SVG dekoderimiz bilan), **`<audio>` ijrosi va `<video poster>`** (pastda), `embed/object` va boshqa
   manbali `iframe` kartochkalari (havola orqali yuklab olinadi), **`<iframe>` ichki hujjatlari** (pastda), **`<canvas>` 2D** (pastda).
 - **Formalar**: `radio` guruhlari, `label for` va o'rab turgan `label`, `email/number/date/url/tel/search`,
   `color`, `range`, `file`, `progress`, `meter`, `optgroup`.
@@ -185,6 +185,17 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   ochadi. Sinov: `zamin://ramka`, yuklanish self-testida 8 tekshiruv.
 
   ![iframe ichki hujjatlari](docs/web-iframe.png)
+- **`<audio>` / `<video>`** — `<audio>` endi ijro tugmasini beradi: `▶ Ijro / ■ to'xtatish` bosilsa
+  fayl (`src` yoki `<source>`; bir nechta manba bo'lsa **WAV** afzal ko'riladi) yuklanadi, o'z
+  dekoderlarimiz bilan (WAV · AIFF · FLAC · MP3 · OGG) PCM ga aylantiriladi va **virtio-sound**
+  orqali fonda chalinadi; qayta bosilsa — to'xtaydi. Bildirishnomada nom, chastota va davomiylik.
+  Qurilma bo'lmasa (`-device virtio-sound-device` yo'q) — ogohlantirish. `data:` URI ham ishlaydi;
+  `↓ yuklab olish` havolasi saqlanadi. `<video poster="…">` — **poster rasmi** (`width/height`
+  bilan, rasm kabi yuklanadi; `data:` SVG ham) chiziladi, bosilsa video fayl ochiladi/yuklanadi.
+  Zaxira matn yashirin. Sinov: `zamin://html` (Media bo'limi, namuna `zamin://namuna.wav`),
+  yuklanish self-testida 6 tekshiruv.
+
+  ![audio ijrosi va video poster](docs/web-media.png)
 - **JS** — `async function`, `async () =>`, `await` (fetch va taymerlarni kutadi),
   `localStorage`/`sessionStorage`, `document.cookie`.
 - **DOM** — har bir element ro'yxatda (ota-bolasi bilan): `innerHTML = "<b>…</b>"` (HTML

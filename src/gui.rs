@@ -6534,8 +6534,8 @@ fn builtin_page(url: &str) -> Option<&'static str> {
 <p><select><optgroup label="Osiyo"><option>Toshkent</option><option>Seul</option></optgroup><optgroup label="Yevropa"><option>Berlin</option></optgroup></select> <input type="file"></p>
 </fieldset>
 <h2 id="media">Media</h2>
-<video src="/videolar/zamin.avi" controls>Brauzer videoni qöllamaydi</video>
-<audio controls><source src="/musiqa/kuy.mp3" type="audio/mpeg">audio yöq</audio>
+<video src="/videolar/zamin.avi" width="320" height="120" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='120'%3E%3Crect width='320' height='120' fill='%2313213a'/%3E%3Ccircle cx='160' cy='60' r='34' fill='%23ff9500'/%3E%3Cpath d='M148 42 L180 60 L148 78 Z' fill='%23ffffff'/%3E%3C/svg%3E" controls>Brauzer videoni qöllamaydi</video>
+<audio controls><source src="/musiqa/kuy.mp3" type="audio/mpeg"><source src="zamin://namuna.wav" type="audio/wav">audio yöq</audio>
 <iframe src="https://example.com/"></iframe>
 <h2 id="iframe">Ichki hujjat (iframe)</h2>
 <iframe width="80%" srcdoc="<style>body{background:#fff8e1;color:#4e342e} h3{color:#d84315}</style><h3>srcdoc hujjati</h3><p>Bu matn <b>alohida</b> hujjatda — öz CSS i bilan.</p><ul><li>bir</li><li>ikki</li></ul>"></iframe>
@@ -6852,6 +6852,9 @@ fn web_bytes(url: &str, post: Option<&str>) -> Result<(Vec<u8>, String, String),
     }
     if let Some(src) = builtin_page(url) {
         return Ok((Vec::from(src.as_bytes()), String::from("text/html"), String::from(url)));
+    }
+    if url == "zamin://namuna.wav" {
+        return Ok((Vec::from(crate::audio::SAMPLE_WAV), String::from("audio/wav"), String::from(url)));
     }
     if !url.contains("://") {
         let p = url.strip_prefix("file:").unwrap_or(url);
@@ -8679,6 +8682,11 @@ fn web_click(win: &mut Window, cx: usize, cy: usize) -> bool {
                     web_anchor(win, &frag);
                     return true;
                 }
+                if let Some(m) = href.strip_prefix("zamin-play:") {
+                    let target = if m.starts_with("data:") { String::from(m) } else { crate::net::http::join(&base, m) };
+                    web_media_play(&target);
+                    return true;
+                }
                 let target = crate::net::http::join(&base, &href);
                 // Şu sahifaning yakori — qayta yuklamasdan aylantiramiz
                 let cur = win.web.as_ref().map(|w| String::from(w.url.split('#').next().unwrap_or(""))).unwrap_or_default();
@@ -8695,6 +8703,45 @@ fn web_click(win: &mut Window, cx: usize, cy: usize) -> bool {
         return true;
     }
     false
+}
+
+/// Hozir çalinayotgan <audio> manbasi (qayta bosilsa — töxtatiladi).
+static MEDIA_NOW: crate::sync::SpinLock<String> = crate::sync::SpinLock::new(String::new());
+
+/// <audio> ijrosi: faylni oladi, dekodlaydi (WAV · AIFF · FLAC · MP3 · OGG), virtio-sound ga beradi.
+fn web_media_play(url: &str) {
+    {
+        let mut now = MEDIA_NOW.lock();
+        if *now == url && crate::audio::sound::playing() {
+            crate::audio::sound::stop();
+            now.clear();
+            notify("Audio", "Ijro töxtatildi", 0x8e8e93);
+            return;
+        }
+    }
+    let bytes = if let Some(rest) = url.strip_prefix("data:") {
+        let (meta, data) = rest.split_once(',').unwrap_or((rest, ""));
+        Ok(if meta.ends_with(";base64") { base64_decode(data) } else { crate::js::url_decode(data).into_bytes() })
+    } else {
+        web_bytes(url, None).map(|(d, _, _)| d)
+    };
+    let d = match bytes {
+        Ok(d) if d.len() <= 32 * 1024 * 1024 => d,
+        Ok(_) => return notify("Audio", "Fayl juda katta", 0xff9500),
+        Err(e) => return notify("Audio yuklanmadi", &e, 0xff3b30),
+    };
+    let name = url.rsplit('/').next().unwrap_or("media").split('?').next().unwrap_or("media");
+    let Some(clip) = crate::audio::decode(name, &d) else {
+        return notify("Audio", "Format qöllanmaydi (WAV · AIFF · FLAC · MP3 · OGG)", 0xff9500);
+    };
+    let secs = clip.duration_ms() / 1000;
+    if !crate::audio::sound::present() {
+        notify("Audio", &alloc::format!("{} · {}:{:02} — övoz qurilmasi yöq (virtio-sound)", name, secs / 60, secs % 60), 0xff9500);
+        return;
+    }
+    crate::audio::sound::play(&clip.samples, clip.rate, clip.channels, 0);
+    *MEDIA_NOW.lock() = String::from(url);
+    notify("Ijro etilmoqda", &alloc::format!("♪ {} · {} Hz · {}:{:02}", name, clip.rate, secs / 60, secs % 60), 0x2fbf5f);
 }
 
 /// Formani yuboradi: JS submit işlovçilari → GET (so'rov satri) yoki POST (tana).

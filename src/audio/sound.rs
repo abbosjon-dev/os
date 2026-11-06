@@ -17,3 +17,8 @@ pub fn stop() {
 pub fn present() -> bool {
     virtio_snd::present()
 }
+
+/// Hozir çalinmoqdami?
+pub fn playing() -> bool {
+    virtio_snd::playing()
+}

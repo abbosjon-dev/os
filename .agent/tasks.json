@@ -53,7 +53,9 @@
     {
       "id": "T8",
       "title": "<audio>/<video> elementlari: WAV audio ijro (virtio-sound), video uchun poster",
-      "detail": ""
+      "detail": "",
+      "status": "done",
+      "done_at": "2026-11-06 11:58:47"
     }
   ]
 }

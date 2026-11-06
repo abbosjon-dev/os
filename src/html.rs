@@ -928,7 +928,7 @@ struct P {
     tborder: Vec<bool>,              // <table border> steki
     tgrid: Vec<TGrid>,               // jadval qatorlari: rowspan egallagan ustunlar
     rs_new: bool,                    // oxirgi katak rowspan qöşdi (kengligini yozib qöyiş uçun)
-    media: Option<(String, String)>, // <video>/<audio>: (turi, manba)
+    media: Option<(String, String, String, u16, u16)>, // <video>/<audio>: (turi, manba, poster, width, height)
     pic_src: String,                 // <picture><source srcset>
     depth: u8,                       // iframe ichma-ichligi
 }
@@ -1261,6 +1261,33 @@ impl P {
         b.spans.push(Span { text: String::from("\u{2007}"), link: None, bold: false, code: false, br: false, color: st.color, size: st.size, el, button: false, underline: false, input: idx, fx: 0 });
     }
     /// Havola matni (media / iframe kartoçkalari uçun).
+    /// <audio>/<video> kartoçkasi: video — poster rasmi (bölsa), audio — ijro tugmasi
+    /// (`zamin-play:` havolasi; GUI WAV ni virtio-sound orqali çaladi) va yuklab oliş havolasi.
+    fn media_card(&mut self, kind: &str, msrc: String, poster: String, mw: u16, mh: u16) {
+        self.flush();
+        let fname = String::from(msrc.rsplit('/').next().unwrap_or("").split('?').next().unwrap_or(""));
+        let fname = if fname.is_empty() || msrc.starts_with("data:") { String::from("media") } else { fname };
+        let link = if msrc.is_empty() { None } else { Some(msrc.clone()) };
+        if kind == "video" {
+            if !poster.is_empty() {
+                let mut blk = self.new_block(Kind::Img);
+                blk.src = poster;
+                blk.iw = mw;
+                blk.ih = mh;
+                blk.spans.push(Span { text: alloc::format!("▶ {}", fname), link: link.clone(), bold: false, code: false, br: false, color: None, size: 14.0, el: self.el(), button: false, underline: false, input: NO_EL, fx: 0 });
+                self.doc.blocks.push(blk);
+            }
+            self.start(Kind::P);
+            self.link_text(&alloc::format!("▶ Video {}: (bosing — yuklab oçiş)", fname), link);
+        } else {
+            self.start(Kind::P);
+            let play = if msrc.is_empty() { None } else { Some(alloc::format!("zamin-play:{}", msrc)) };
+            self.link_text(&alloc::format!("▶ Ijro / ■ töxtatiş — ♪ {}", fname), play);
+            self.text("  ");
+            self.link_text("↓ yuklab oliş", link);
+        }
+        self.flush();
+    }
     fn link_text(&mut self, text: &str, link: Option<String>) {
         if self.cur.is_none() {
             self.cur = Some(self.new_block(Kind::P));
@@ -1830,13 +1857,10 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc
                 match name.as_str() {
                     "video" | "audio" => {
                         p.close(&name);
-                        if let Some((kind, msrc)) = p.media.take() {
-                            p.flush();
-                            p.start(Kind::P);
-                            let fname = msrc.rsplit('/').next().unwrap_or("").split('?').next().unwrap_or("");
-                            let label = alloc::format!("{} {}: {}", if kind == "video" { "▶ Video" } else { "♪ Audio" }, if fname.is_empty() { "media" } else { fname }, "(bosing — yuklab oçiş)");
-                            p.link_text(&label, if msrc.is_empty() { None } else { Some(msrc) });
-                            p.flush();
+                        if let Some((kind, msrc, poster, mw, mh)) = p.media.take() {
+                            if !p.hidden() {
+                                p.media_card(&kind, msrc, poster, mw, mh);
+                            }
                         }
                         continue;
                     }
@@ -1991,7 +2015,9 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc
                     let srcv = attr(t, "srcset").map(|v| first_srcset(&v)).or_else(|| attr(t, "src"));
                     if let Some(sv) = srcv {
                         if let Some(m) = p.media.as_mut() {
-                            if m.1.is_empty() {
+                            // birinçi qöllanadigan manba (audio uçun WAV afzal)
+                            let wav = m.0 == "audio" && (sv.to_ascii_lowercase().split('?').next().unwrap_or("").ends_with(".wav") || attr(t, "type").is_some_and(|v| v.contains("wav")));
+                            if m.1.is_empty() || wav && !m.1.to_ascii_lowercase().contains(".wav") {
                                 m.1 = sv;
                             }
                         } else if p.pic_src.is_empty() && p.stack.iter().any(|o| o.tag == "picture") {
@@ -2000,7 +2026,8 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc
                     }
                 }
                 "video" | "audio" => {
-                    p.media = Some((name.clone(), attr(t, "src").unwrap_or_default()));
+                    let num = |k: &str| attr(t, k).and_then(|v| v.trim().trim_end_matches("px").trim().parse().ok()).unwrap_or(0);
+                    p.media = Some((name.clone(), attr(t, "src").unwrap_or_default(), attr(t, "poster").unwrap_or_default(), num("width"), num("height")));
                     if let Some(o) = p.stack.last_mut() {
                         o.sty.hidden = true; // içidagi zaxira matn körinmasin
                     }
@@ -2324,6 +2351,30 @@ fn find_in(d: &Doc, t: &str) -> Option<u8> {
 }
 
 /// <iframe>: srcdoc ichki hujjati alohida CSS bilan ramkada chiziladi; bir xil manbali src yuklanadi.
+/// <audio>/<video>: ijro havolasi (WAV manbasi afzal), video poster rasmi, zaxira matn yaşirin.
+pub fn self_test_av() -> Result<usize, &'static str> {
+    let d = parse("<p>A</p><audio controls><source src=k.mp3 type=audio/mpeg><source src=\"s/n.wav\" type=audio/wav>zaxira1</audio>\
+        <video src=v.avi poster=\"p.png\" width=320 height=180>zaxira2</video><video src=w.mp4></video><p id=z>Z</p>");
+    let links: Vec<&str> = d.blocks.iter().flat_map(|b| b.spans.iter()).filter_map(|s| s.link.as_deref()).collect();
+    if !links.contains(&"zamin-play:s/n.wav") {
+        return Err("audio: WAV ijro havolasi yöq");
+    }
+    if !links.contains(&"s/n.wav") || !links.contains(&"w.mp4") {
+        return Err("audio/video: yuklab oliş havolasi yöq");
+    }
+    let posters: Vec<&Block> = d.blocks.iter().filter(|b| b.kind == Kind::Img).collect();
+    if posters.len() != 1 || posters[0].src != "p.png" || posters[0].iw != 320 || posters[0].ih != 180 || posters[0].spans.first().and_then(|s| s.link.as_deref()) != Some("v.avi") {
+        return Err("video: poster rasmi notöğri");
+    }
+    if d.blocks.iter().any(|b| !b.hidden && b.spans.iter().any(|s| s.text.contains("zaxira"))) {
+        return Err("audio/video: zaxira matn körindi");
+    }
+    if d.find_id("z").is_none() {
+        return Err("audio/video: keyingi element yöq");
+    }
+    Ok(links.len() + posters.len())
+}
+
 pub fn self_test_iframe() -> Result<usize, &'static str> {
     let blk = |d: &Doc, t: &str| d.blocks.iter().position(|b| b.spans.iter().any(|s| s.text.trim() == t));
     let src = "<p>Oldin</p><iframe width=\"300\" srcdoc=\"<style>p{color:#ff0000} body{background:#fafafa}</style><p class=x id=ich onclick='y()'>Ichki <b>matn</b></p><img src='r.png' alt=rasm>\" \

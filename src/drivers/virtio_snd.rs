@@ -252,6 +252,10 @@ pub fn play(samples: &[i16], rate: u32, channels: u16, from_ms: u32) {
     // Fon oqimi bir marta ishga tuşiriladi (init da)
 }
 
+pub fn playing() -> bool {
+    PLAYING.load(Ordering::Acquire)
+}
+
 pub fn stop() {
     STOP.store(true, Ordering::Release);
     PLAYING.store(false, Ordering::Release);
