@@ -1,6 +1,6 @@
 {
   "claude_bin": "claude",
-  "max_cycles": 20,
+  "max_cycles": 40,
   "max_consecutive_failures": 3,
   "cycle_timeout_s": 3600,
   "max_est_usd_per_cycle": 15.0,
@@ -10,5 +10,9 @@
   "disallowed_tools": "WebSearch Bash(git push:*) Bash(git commit:*) Bash(git reset:*) Bash(claude:*)",
   "push": true,
   "branch": "main",
-  "verify_mode": "full"
+  "verify_mode": "full",
+  "auto_plan": true,
+  "max_plans_per_run": 10,
+  "plan_size": 6,
+  "plan_tools": "Read Glob Grep Bash(git log:*) Bash(ls:*) Bash(wc:*)"
 }

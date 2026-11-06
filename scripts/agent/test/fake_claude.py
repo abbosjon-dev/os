@@ -8,6 +8,13 @@ if a[:2] == ["auth", "status"]:
     print(json.dumps({"loggedIn": True, "authMethod": m, "apiProvider": "firstParty"})); sys.exit(0)
 with open(os.environ.get("FAKE_TRACE", "/dev/null"), "a") as f:
     f.write(json.dumps({"argv": [x[:40] for x in a], "pid": os.getpid()}) + "\n")
+prompt = a[a.index("-p") + 1] if "-p" in a else ""
+if "rejalashtiruvchisi" in prompt:
+    if os.environ.get("FAKE_PLAN") == "bad":
+        print(json.dumps({"type": "result", "is_error": False, "result": "kechirasiz, JSON yo'q"})); sys.exit(0)
+    plan = {"bosqich": "Sinov bosqichi", "tasks": [{"title": "Yangi A", "detail": "a"}, {"title": "Yangi B", "detail": "b"}]}
+    print(json.dumps({"type": "result", "is_error": False, "result": "```json\n" + json.dumps(plan) + "\n```", "total_cost_usd": 0.0}))
+    sys.exit(0)
 if mode == "slow":
     time.sleep(120)
 if mode == "limit":

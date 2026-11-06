@@ -48,6 +48,11 @@ DEFAULT_CFG = {
     "push": True,
     "branch": "main",
     "verify_mode": "full",
+    # vazifalar tugasa — agent o'zi yangi to'plam rejalashtiradi
+    "auto_plan": True,
+    "max_plans_per_run": 10,
+    "plan_size": 6,
+    "plan_tools": "Read Glob Grep Bash(git log:*) Bash(ls:*) Bash(wc:*)",
 }
 
 RUNNING = {"child": None, "stop": False}
@@ -165,19 +170,19 @@ def build_prompt(task, state, recovering, fail_log):
     return "\n".join(p)
 
 
-def run_claude(cfg, prompt, state, cyc):
+def run_claude(cfg, prompt, state, cyc, tag="cycle", tools=None, perm=None):
     cmd = [cfg["claude_bin"], "-p", prompt, "--output-format", "json",
-           "--permission-mode", cfg["permission_mode"],
-           "--allowedTools", cfg["allowed_tools"],
+           "--permission-mode", perm or cfg["permission_mode"],
+           "--allowedTools", tools or cfg["allowed_tools"],
            "--disallowedTools", cfg["disallowed_tools"],
            "--max-budget-usd", str(cfg["max_est_usd_per_cycle"])]
-    if state.get("session_id") and state.get("resume_session"):
+    if tag == "cycle" and state.get("session_id") and state.get("resume_session"):
         cmd += ["--resume", state["session_id"]]
     errs = guard.check(REPO, cfg["claude_bin"], cmd)
     if errs:
         return None, "guard:" + "; ".join(errs)
-    out_p = os.path.join(LOGS, f"cycle-{cyc:04d}.json")
-    err_p = os.path.join(LOGS, f"cycle-{cyc:04d}.stderr")
+    out_p = os.path.join(LOGS, f"{tag}-{cyc:04d}.json")
+    err_p = os.path.join(LOGS, f"{tag}-{cyc:04d}.stderr")
     with open(out_p, "w") as fo, open(err_p, "w") as fe:
         ch = subprocess.Popen(cmd, cwd=REPO, stdout=fo, stderr=fe, env=guard.sanitized_env(),
                               start_new_session=True)
@@ -237,6 +242,77 @@ def commit_and_push(cfg, task, cyc):
     return True
 
 
+PLAN_PROMPT = """Sen Zamin OS loyihasining bosh rejalashtiruvchisisan. Vazifang — keyingi
+ish to'plamini rejalashtirish. FAQAT o'qi, hech narsa o'zgartirma.
+
+1. README.md (ayniqsa "Yöl xaritasi", "Versiyalaş", brauzer/GUI bo'limlari),
+   .agent/tasks.json (bajarilganlar), `git log --oneline -30` va kerakli kodni ko'rib chiq.
+2. Eng foydali, bitta siklda (≤1 soat) bajariladigan, `scripts/agent/verify.sh full`
+   bilan tekshiriladigan {n} ta aniq vazifa tanla. Ustuvorlik: ko'ringan xatolar va
+   nuqsonlar → foydalanuvchi muhiti (yo'l xaritasi 10-band: ilovalar, terminal, panel)
+   → brauzer/veb mosligi → yadro mustahkamligi. Allaqachon bajarilganlarni takrorlama.
+3. Har vazifa uchun aniq fayllar va qabul mezonini (self-test yoki skrinshot) yoz.
+
+Javobing FAQAT bitta JSON obyekt bo'lsin, boshqa matn yo'q:
+{{"bosqich": "<to'plamning qisqa nomi>", "tasks": [{{"title": "...", "detail": "..."}}]}}
+Qo'shimcha eslatmalar:
+{extra}
+"""
+
+
+def plan_tasks(cfg, state, tasks, n_plan):
+    done = [t["title"] for t in tasks.get("tasks", [])]
+    extra = "\n".join(tasks.get("plan_notes", [])) or "-"
+    prompt = PLAN_PROMPT.format(n=cfg["plan_size"], extra=extra)
+    prompt += "\nOldin bajarilgan vazifalar:\n" + "\n".join("- " + t for t in done[-60:])
+    res, stderr = run_claude(cfg, prompt, state, n_plan, tag="plan",
+                             tools=cfg["plan_tools"], perm="default")
+    if res is None:
+        return None, stderr, 0.0
+    lim = guard.limit_hit(stderr + "\n" + str(res.get("result", "")), res)
+    if lim:
+        return "LIMIT", lim, 0.0
+    est = float(res.get("total_cost_usd") or 0)
+    text = str(res.get("result", ""))
+    try:
+        obj = json.loads(text[text.index("{"):text.rindex("}") + 1])
+        new = obj["tasks"]
+        assert isinstance(new, list) and 1 <= len(new) <= 12
+        seen = {t.lower() for t in done}
+        out = []
+        for t in new:
+            title = str(t["title"]).strip()[:140]
+            detail = str(t.get("detail", "")).strip()[:2000]
+            if title and title.lower() not in seen:
+                out.append({"title": title, "detail": detail})
+                seen.add(title.lower())
+        assert out
+        return {"bosqich": str(obj.get("bosqich", ""))[:100], "tasks": out}, "", est
+    except Exception as e:
+        return False, f"reja JSON xato: {e}; matn: {text[:300]}", est
+
+
+def add_plan(tasks, plan):
+    ids = [int(t["id"][1:]) for t in tasks.get("tasks", []) if t.get("id", "T")[1:].isdigit()]
+    nid = max(ids or [0]) + 1
+    batch = tasks.get("batch", 0) + 1
+    tasks["batch"] = batch
+    for t in plan["tasks"]:
+        tasks["tasks"].append({"id": f"T{nid}", "title": t["title"], "detail": t["detail"],
+                               "batch": batch})
+        nid += 1
+    tasks["tasks"].append({
+        "id": f"T{nid}", "batch": batch,
+        "title": f"Bosqich yakuni: versiyani oshirish ({plan['bosqich'] or 'to‘plam ' + str(batch)})",
+        "detail": ("Shu to'plamda (batch " + str(batch) + ") bajarilgan vazifalarni .agent/tasks.json "
+                   "dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot "
+                   "(scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga "
+                   "oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator "
+                   "(o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. "
+                   "Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz."),
+    })
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=os.path.join(AG, "config.json"))
@@ -267,6 +343,7 @@ def loop(cfg, state):
     if recovering:
         log(f"uzilgan sikl topildi (#{state['cycle']}) — tiklash rejimi")
     done_this_run = 0
+    plans_this_run = 0
     while True:
         if RUNNING["stop"] or os.path.exists(STOP):
             log("STOP — muloyim to'xtadim")
@@ -291,10 +368,45 @@ def loop(cfg, state):
         tasks = jload(TASKS, {"tasks": []})
         task = next_task(tasks)
         if not task:
-            log("barcha vazifalar bajarildi")
-            state["status"] = "complete"
+            if not cfg.get("auto_plan") or plans_this_run >= cfg["max_plans_per_run"]:
+                log("barcha vazifalar bajarildi")
+                state["status"] = "complete"
+                jsave(STATE, state)
+                return 0
+            errs = guard.check(REPO, cfg["claude_bin"])
+            if errs:
+                halt(state, "billing himoyasi: " + "; ".join(errs))
+                return 2
+            state["plans"] = state.get("plans", 0) + 1
+            plans_this_run += 1
+            state["status"] = "planning"
             jsave(STATE, state)
-            return 0
+            log(f"vazifalar tugadi — rejalashtirish #{state['plans']}")
+            plan, err, est = plan_tasks(cfg, state, tasks, state["plans"])
+            state["est_usd_total"] = round(state["est_usd_total"] + est, 4)
+            if plan is None:
+                halt(state, err)
+                return 2
+            if plan == "LIMIT":
+                halt(state, f"obuna limiti / to'lov belgisi: '{err}'")
+                return 7
+            if plan is False:
+                log(err)
+                state["consecutive_failures"] += 1
+                jsave(STATE, state)
+                continue
+            add_plan(tasks, plan)
+            jsave(TASKS, tasks)
+            state["consecutive_failures"] = 0
+            jsave(STATE, state)
+            log(f"yangi bosqich '{plan['bosqich']}': " + "; ".join(t["title"] for t in plan["tasks"]))
+            git("add", ".agent/tasks.json")
+            subprocess.run(["git", "commit", "-q", "-m",
+                            f"Agent reja: {plan['bosqich']} ({len(plan['tasks'])} vazifa)\n\n"
+                            "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n"
+                            "Claude-Session: https://claude.ai/code/session_01XP37bWy7eR4Ndmx7yhzNeM"],
+                           cwd=REPO, capture_output=True)
+            continue
         # Har sikl oldidan billing himoyasi
         errs = guard.check(REPO, cfg["claude_bin"])
         if errs:

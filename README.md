@@ -913,6 +913,10 @@ yöq. Bola jarayon tozalangan muhitda işlaydi. Birorta şart noaniq bölsa — 
 boşlanmaydi. Obuna limiti belgisi çiqsa — darhol `.agent/HALT` yoziladi, qayta urinmaydi,
 faqat qölda `start.sh --clear-halt` bilan davom etadi. Billing sozlamalari hech qaçon özgartirilmaydi.
 
+Vazifalar tugasa, agent özi loyihani (yöl xaritasi, git tarixi, kod) faqat öqib
+keyingi to'plamni rejalaştiradi (`plan_size` ta vazifa + "Bosqich yakuni: versiyani oşiriş");
+reja JSON tekşiriladi, takrorlar rad etiladi. `.agent/tasks.json` dagi `plan_notes` — reja uçun eslatmalar.
+
 Vazifa bajarilgan deb faqat `verify.sh full` ötsa va özgariş bölsa hisoblanadi
 (agentning "TASK_DONE" deyişi yetarli emas); keyin supervisor commit va `main` ga push qiladi.
 
