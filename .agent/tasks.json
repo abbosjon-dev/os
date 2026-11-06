@@ -64,9 +64,51 @@
       "status": "done",
       "done_at": "2026-11-06 11:58:47",
       "batch": 1
+    },
+    {
+      "id": "T9",
+      "title": "zamin://matn: blok chetidagi qora 'tishchalar' (yumaloq burchak chizish xatosi) ni tuzatish",
+      "detail": "Fayllar: src/gfx/mod.rs (corner_cov, fill_round_rect, fill_round_rect_a, round_ring/round_outline), src/gui.rs ~8216-8232 (web deco chizish sikli). Avval scripts/screenshot.py bilan zamin://matn ni suratga ol va kattalashtirib, qora piksellar qayerda ekanini aniqla. Tekshiriladigan sabablar: (a) corner_cov da piksel markazi siljigan (r-1-dx va ±1/4 namunalar), shuning uchun yoy chizig'ida 0 qamrovli piksellar teshik qoldiradi; (b) blend() fon sifatida page_bg emas, hali chizilmagan/qora framebufferni o'qiydi (masalan, deco set_clip yoki page_bg fill dan oldin chizilyapti yoki flex qatorida qo'shni quti burchagini qoplaydi); (c) dh/2 yoki d.w/2 da r toq bo'lsa burchak zonalari kesishadi; (d) rtl/flex quti uchun d.x/d.w noto'g'ri. Qo'shimcha: quti yuqoriga qisman aylantirilganda (d.y < sc) pastki burchaklar ham to'g'ri burchakka aylanib qolmasin — faqat yuqori burchaklar kesilsin. Qabul mezoni: (1) gfx::self_test_round() (main.rs self_tests ga ulangan, '[ok]' chiqaradi): corner_cov uchun r=1..30 da yoy ichidagi har piksel >0, to'liq ichkaridagi 255, tashqaridagi 0, va qamrov markazdan uzoqlashganda monoton kamayadi; (2) fill_round_rect ni yorug' fon ustida kichik ofscreen buferga (yoki FB nusxasiga) chizib, hech bir piksel ikkala rangdan ham to'qroq emasligini tekshiruvchi test; (3) docs/web-text-align.png skrinshotida .q bloklari (shu jumladan rtl va flex ichidagilar) burchaklarida qora piksel yo'q; verify.sh full o'tadi.",
+      "batch": 2
+    },
+    {
+      "id": "T10",
+      "title": "Terminal: buyruqlar tarixi (↑/↓) va Tab bilan to'ldirish",
+      "detail": "Fayllar: user/src/bin/terminal.rs (qator o'qish sikli, find()/COMMANDS jadvali, find_program), user/src/lib.rs (stdin/qator o'qish yordamchisi bo'lsa), src/gui.rs (Terminal oynasiga klaviatura yuborish — strelka va Tab uchun ESC [A / ESC [B / 0x09 baytlarini quvurga yozish; feed() dagi ANSI tahlili qatorni qayta chizish uchun \\r va ESC[K ni tushunsin). Tarix: oxirgi 100 buyruq xotirada, ~/.zamin/terminal_tarix ga saqlanadi va keyingi ochilishda yuklanadi; bo'sh/takroriy ketma-ket qatorlar qo'shilmaydi. Tab: birinchi so'zda ichki buyruqlar (uz/ru/en nomlari) va /dasturlar dagi dasturlar, keyingi so'zlarda joriy papkadagi fayl/papka nomlari (papkaga '/' qo'shiladi); bir nechta moslik bo'lsa umumiy prefiks to'ldiriladi, ikkinchi Tab variantlarni ro'yxat qilib chiqaradi. Qabul mezoni: terminal.rs ichida mantiqni sof funksiyalarga ajrat (complete(prefix, candidates) -> (to'ldirish, variantlar), History::push/prev/next) va ularni yadro self-testi bilan emas, `sinov` dasturi yoki terminal ishga tushishidagi --self-test rejimi orqali '[ok] terminal tarix/tab' chiqaradigan qilib tekshir (yoki shu mantiqni src/ dagi umumiy modulga qo'yib main.rs self_tests ga ula); skrinshot docs/apps/terminal-tab.png da 'ki' + Tab -> 'kir ' va variantlar ro'yxati ko'rinadi; verify.sh full o'tadi.",
+      "batch": 2
+    },
+    {
+      "id": "T11",
+      "title": "Terminal oynasi: aylantirish tarixi (scrollback) va uzun qatorlarni o'rash",
+      "detail": "Fayl: src/gui.rs — feed() (hozir 'while win.lines.len() > max { remove(0) }' ekrandan chiqqan qatorlarni butunlay o'chiradi), push_line, term_rows, terminal oynasini chizish funksiyasi va sichqoncha g'ildiragi/PageUp/PageDown ishlovi. O'zgarishlar: (1) Window ga term_scroll maydoni; lines 2000 qatorgacha saqlanadi (eskilari VecDeque yoki bitta drain bilan kesiladi, har baytda remove(0) emas); (2) g'ildirak va Shift+PageUp/PageDown bilan yuqoriga aylantirish, yangi chiqish kelganda yoki tugma bosilganda pastga qaytish; o'ng chetda ingichka aylantirish chizig'i; (3) oyna enidan uzun qatorlar so'z/belgi bo'yicha keyingi vizual qatorga o'raladi (oyna o'lchami o'zgarganda qayta hisoblanadi), kesilib ketmaydi. Qabul mezoni: sof funksiya wrap_lines(lines, cols) -> Vec<(qator_idx, boshlanish, tugash)> va scrollback cheklovi uchun self-test (gui yoki alohida modul, main.rs self_tests da '[ok] terminal scrollback'): 3000 qator qo'shilganda 2000 qoladi, 250 belgili qator 80 ustunda 4 vizual qatorga bo'linadi, UTF-8 (o'zbek/rus harflari) o'rtasidan kesilmaydi; skrinshot: `jurnal 200` dan keyin yuqoriga aylantirilgan terminal; verify.sh full o'tadi.",
+      "batch": 2
+    },
+    {
+      "id": "T12",
+      "title": "Matn muharriri: bekor qilish/qaytarish (Alt+Z / Alt+Shift+Z) va qidiruv (Alt+F)",
+      "detail": "Fayl: src/gui.rs — Kind::Editor oynasining klaviatura ishlovi va chizish funksiyasi (qator raqamlari bor joy), Window dagi muharrir holati. Alt yorliqlari loyiha uslubiga mos (Alt+V, Alt+W kabi), Alt+F global yorliq bilan to'qnashsa muharrir fokusda bo'lganda muharrirga ustunlik ber yoki Alt+K (Qidir) ishlat va README dagi 'Klaviatura yorliqlari' bo'limiga yoz. Undo: tahrirlar guruhlanadi (ketma-ket yozilgan so'z — bitta qadam, Enter/o'chirish/joylash — alohida qadam), 200 qadamgacha, kursor o'rni bilan birga tiklanadi; har yangi tahrir redo stekini tozalaydi. Qidiruv: pastki qatorda kiritish maydoni, mosliklar sariq fon bilan belgilanadi, Enter — keyingisi (oxiridan boshiga aylanadi), Esc — yopish; holat qatorida 'k/n moslik'. Qabul mezoni: undo/redo va qidiruv mantiqi sof struct (EditHistory, find_all(text, query) -> Vec<(qator, ustun)>) sifatida, main.rs self_tests ga ulangan '[ok] muharrir undo/qidiruv' testi (yozish→undo→redo matnni aynan tiklaydi; UTF-8 bilan 'ö' qidiruvi to'g'ri ustun beradi); skrinshot docs/apps/editor-find.png; verify.sh full o'tadi.",
+      "batch": 2
+    },
+    {
+      "id": "T13",
+      "title": "CSS: background linear-gradient va box-shadow",
+      "detail": "Fayllar: src/css.rs (background / background-image da linear-gradient(to bottom|to right|<deg>, rang1, rang2[, ...]) ni o'qish — kamida 2-3 rang to'xtashi, burchak 0/90/180/270deg va 'to <tomon>'; box-shadow: offset-x offset-y blur [spread] rang, 'none'), src/html.rs (Block ga gradient va shadow maydonlari, tmpl/t dan nusxa olinadigan joylarda — 254-260 va 393-398 qatorlarga o'xshash — ko'chirish), src/gui.rs (Deco ga gradient/shadow, ~8216 dagi chizish siklida soyani avval gfx::shadow bilan, so'ng gradientni border-radius ni hisobga olib chizish; gfx/mod.rs dagi gradient va gradient_round_rect dan foydalan, gorizontal gradient yo'q bo'lsa qo'sh). Yangi zamin://bezak sinov sahifasi (bosh sahifadagi havolalar ro'yxatiga qo'shiladi): vertikal/gorizontal/45deg gradientli, yumaloq burchakli va soyali kartalar. Qabul mezoni: html::self_test_decor() — CSS satridan to'g'ri gradient to'xtashlari va soya parametrlari olinishi, noto'g'ri qiymatlar (masalan, 'linear-gradient(' yopilmagan) panic qilmasdan e'tiborsiz qoldirilishi; skrinshot docs/web-gradient.png; verify.sh full o'tadi.",
+      "batch": 2
+    },
+    {
+      "id": "T14",
+      "title": "CSS: height/min-height, line-height va text-transform",
+      "detail": "Fayllar: src/css.rs (hozir faqat @media da min-height/height bor, xossa sifatida yo'q; qo'shiladi: height, min-height (px/em/%), line-height (raqam, px, em, %, 'normal'), text-transform (uppercase/lowercase/capitalize/none) — o'zbek lotin va kirill harflari uchun to'g'ri katta/kichik harf, masalan ö/Ö, ğ/Ğ, ş/Ş, ç/Ç va kirill), src/html.rs (Block maydonlari, meros: line-height va text-transform bolalarga o'tadi, height o'tmaydi), src/gui.rs web_layout (quti balandligi kamida min-height/height; height kontentdan kichik bo'lsa kontent toshib chiqadi, lekin keyingi blok belgilangan balandlikdan keyin boshlanadi; qator oralig'i line-height asosida). zamin://matn sahifasiga misollar qo'sh (bu xossalar uchun alohida bo'lim). Qabul mezoni: html::self_test_box_height() — 'min-height:120px' li bo'sh div keyingi blokni ≥120px pastga suradi, 'line-height:2' paragraf balandligi line-height:1 ga nisbatan ~2 baravar, 'text-transform:uppercase' 'şahar öy' -> 'ŞAHAR ÖY'; skrinshot; verify.sh full o'tadi.",
+      "batch": 2
+    },
+    {
+      "id": "T15",
+      "batch": 2,
+      "title": "Bosqich yakuni: versiyani oshirish (Sayqal: yumaloq burchak tuzatishi, terminal va muharrir qulayligi, CSS bezaklari)",
+      "detail": "Shu to'plamda (batch 2) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz."
     }
   ],
-  "batch": 1,
+  "batch": 2,
   "plan_notes": [
     "Ma'lum nuqson: zamin://matn sahifasida bloklar chetida kichik qora 'tishchalar' (yumaloq burchak chizish xatosi) — birinchi navbatda tuzat.",
     "Har to'plamda kamida bitta vazifa veb/brauzerdan tashqari bo'lsin (ilovalar, terminal, fayl menejeri, sozlamalar, yadro)."
