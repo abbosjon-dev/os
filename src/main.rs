@@ -40,6 +40,7 @@ mod setup;
 mod shell;
 mod sync;
 mod task;
+mod termbuf;
 mod time;
 mod timer;
 mod uart;
@@ -539,6 +540,10 @@ fn self_tests() {
     match html::self_test_iframe() {
         Ok(n) => println!("  [ok] <iframe>: srcdoc va bir xil manbali src ichki hujjat chizilişi ({} sinov)", n),
         Err(e) => panic!("iframe tekşiruvi yiqildi: {}", e),
+    }
+    match termbuf::self_test() {
+        Ok(n) => println!("  [ok] terminal scrollback: {} qator çegarasi, söz/belgi böyiça öraş, UTF-8 ({} sinov)", termbuf::MAX_LINES, n),
+        Err(e) => panic!("terminal scrollback tekşiruvi yiqildi: {}", e),
     }
     match net::webstore::self_test() {
         Ok(n) => println!("  [ok] localStorage/cookie diskka saqlaş (~/.zamin): kodlaş ({} yozuv)", n),

@@ -172,6 +172,7 @@ struct Window {
     crow: usize,        // Muharrir: kursor qatori
     ccol: usize,        // Muharrir: kursor ustuni (belgilarda)
     scroll: usize,      // Muharrir: birinçi körinadigan qator
+    term_scroll: usize, // Terminal: pastdan necha vizual qator yuqoriga aylantirilgan (0 — eng past)
     dirty: bool,        // Muharrir: saqlanmagan özgarişlar
     tiles: Vec<u8>,     // Boşqotirma: 16 ta katak (0 — böş)
     web: Option<Box<Web>>, // Brauzer holati (faol tab)
@@ -347,6 +348,7 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         crow: 0,
         ccol: 0,
         scroll: 0,
+        term_scroll: 0,
         dirty: false,
         tiles: Vec::new(),
         web: None,
@@ -810,10 +812,11 @@ fn feed(win: &mut Window, bytes: &[u8]) {
             _ => win.cur.push(b),
         }
     }
-    let max = term_rows(win);
-    while win.lines.len() > max {
-        win.lines.remove(0);
+    // yangi çiqiş — pastga qaytamiz; tarix çegarasi (eskilar bitta drain bilan kesiladi)
+    if !bytes.is_empty() {
+        win.term_scroll = 0;
     }
+    crate::termbuf::trim(&mut win.lines);
 }
 
 fn push_line(win: &mut Window) {
@@ -821,9 +824,36 @@ fn push_line(win: &mut Window) {
     win.lines.push(line);
 }
 
-fn term_rows(win: &Window) -> usize {
-    let lh = gfx::line_height(small(), Font::Mono).max(1);
-    win.h.saturating_sub(title_h() + body()) / lh
+/// Terminal joylaşuvi: (ustunlar soni, körinadigan vizual qatorlar soni).
+fn term_geom(win: &Window) -> (usize, usize) {
+    let px = small();
+    let lh = gfx::line_height(px, Font::Mono).max(px + 3);
+    let pad = body() * 3 / 4;
+    let avail = win.h.saturating_sub(title_h() + pad * 2);
+    let adv = gfx::mono_advance(px).max(1);
+    // öng çetda aylantiriş çiziği va kursor uçun joy
+    let cols = win.w.saturating_sub(pad * 2 + 6 + adv) / adv;
+    (cols.max(1), (avail / lh).max(1))
+}
+
+/// Terminalning barça vizual qatorlari: tarix + joriy (tugamagan çiqiş + kiriş) qator.
+fn term_text(win: &Window) -> (String, Vec<(usize, usize, usize)>) {
+    let (cols, _) = term_geom(win);
+    let full = alloc::format!("{}{}", String::from_utf8_lossy(&win.cur), win.input);
+    let mut rows = crate::termbuf::wrap_lines(&win.lines, cols);
+    let mut tmp = Vec::new();
+    crate::termbuf::wrap_line(&full, cols, &mut tmp);
+    let li = win.lines.len();
+    rows.extend(tmp.into_iter().map(|(a, b)| (li, a, b)));
+    (full, rows)
+}
+
+/// Terminalni `d` vizual qatorga aylantiradi (musbat — yuqoriga, tarixga).
+fn term_scroll_by(win: &mut Window, d: isize) {
+    let (_, vis) = term_geom(win);
+    let total = term_text(win).1.len();
+    let max = total.saturating_sub(vis) as isize;
+    win.term_scroll = (win.term_scroll.min(max as usize) as isize + d).clamp(0, max) as usize;
 }
 
 /// Terminal oynalaridan çiqişni öqib, satrlarga qoşadi. Bola tugasa — qaytadan işga tuşiradi.
@@ -846,6 +876,7 @@ fn pump(windows: &mut [Window]) -> bool {
                     close_terminal(win);
                     push_line(win);
                     win.lines.push(String::from("[terminal tugadi — qaytadan oçildi]"));
+                    crate::termbuf::trim(&mut win.lines);
                     spawn_terminal(win);
                     changed = true;
                     break;
@@ -1442,6 +1473,9 @@ fn desktop() {
                         if w.kind == Kind::Browser {
                             web_scroll(w, -(v as isize) * body() as isize * 3);
                             changed = true;
+                        } else if w.kind == Kind::Terminal {
+                            term_scroll_by(w, v as isize * 3);
+                            changed = true;
                         }
                     }
                 }
@@ -1625,7 +1659,13 @@ fn type_key(w: &mut Window, code: u16, shift: bool) {
         editor_key(w, code, shift);
         return;
     }
-    // Terminal
+    // Terminal: Shift+PageUp/PageDown — tarixni aylantiriş; boşqa tugma — pastga qaytiş
+    if shift && (code == 104 || code == 109) {
+        let step = (term_geom(w).1.saturating_sub(1)).max(1) as isize;
+        term_scroll_by(w, if code == 104 { step } else { -step });
+        return;
+    }
+    w.term_scroll = 0;
     match code {
         28 => {
             // Enter: qatorni bola stdin iga yuboramiz; ekranda özimiz aks ettiramiz (bola qaytarmaydi)
@@ -1637,10 +1677,7 @@ fn type_key(w: &mut Window, code: u16, shift: bool) {
                 data.push(b'\n');
                 let _ = pipe::try_write(w.pin, &data);
             }
-            let max = term_rows(w);
-            while w.lines.len() > max {
-                w.lines.remove(0);
-            }
+            crate::termbuf::trim(&mut w.lines);
         }
         // ↑ / ↓ / Tab (va böş qatorda Backspace): terminalning özi qatorni tahrirlaydi —
         // terilgan matn + boşqaruv baytlarini quvurga yuboramiz, u \r + qator + ESC[K bilan qayta çizadi.
@@ -3937,20 +3974,35 @@ fn draw_terminal(win: &Window) {
     let bottom = win.y + win.h;
     fill_rect(win.x + 1, top, win.w.saturating_sub(2), bottom.saturating_sub(top + r), 0x0e121a);
     gfx::fill_round_rect(win.x + 1, bottom.saturating_sub(2 * r + 1), win.w.saturating_sub(2), 2 * r, r, 0x0e121a);
-    let avail = (win.y + win.h).saturating_sub(top + pad * 2);
-    let max_lines = (avail / lh).max(1);
-    // faqat oxirgi satrlar (pastga yopişgan)
-    let total = win.lines.len() + 1;
-    let skip = total.saturating_sub(max_lines);
+    let (_, vis) = term_geom(win);
+    let (full, rows) = term_text(win);
+    let total = rows.len();
+    let max = total.saturating_sub(vis);
+    let sc = win.term_scroll.min(max);
+    // pastga yopişgan; `sc` vizual qator yuqoriga aylantirilgan bölişi mumkin
+    let first = total - vis.min(total) - sc;
+    let li_cur = win.lines.len();
     let mut ty = top + pad;
-    for line in win.lines.iter().skip(skip) {
-        draw_term_line(win.x + pad, ty, line, px);
+    let mut ex = win.x + pad;
+    for &(li, a, b) in &rows[first..(first + vis).min(total)] {
+        let src: &str = if li == li_cur { &full } else { &win.lines[li] };
+        ex = draw_term_line(win.x + pad, ty, &src[a..b], px);
         ty += lh;
     }
-    let cur = String::from_utf8_lossy(&win.cur);
-    let full = alloc::format!("{}{}", cur, win.input);
-    let ex = draw_term_line(win.x + pad, ty, &full, px);
-    gfx::blend_rect(ex, ty, gfx::mono_advance(px), px + 2, 0x5be37d, 190);
+    if sc == 0 {
+        // kursor — oxirgi vizual qator oxirida
+        gfx::blend_rect(ex, ty - lh, gfx::mono_advance(px), px + 2, 0x5be37d, 190);
+    }
+    // öng çetda ingiçka aylantiriş çiziği
+    if total > vis {
+        let track_y = top + pad;
+        let track_h = vis * lh;
+        let thumb_h = (track_h * vis / total).max(px);
+        let pos = (track_h - thumb_h) * first / max;
+        let bx = (win.x + win.w).saturating_sub(pad / 2 + 4);
+        gfx::blend_rect(bx, track_y, 3, track_h, 0xffffff, 28);
+        gfx::blend_rect(bx, track_y + pos, 3, thumb_h, 0xc8d2e0, 170);
+    }
 }
 
 /// Soat oynasi: analog siferblat + raqamli vaqt va sana.

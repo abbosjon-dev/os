@@ -85,7 +85,9 @@
       "id": "T11",
       "title": "Terminal oynasi: aylantirish tarixi (scrollback) va uzun qatorlarni o'rash",
       "detail": "Fayl: src/gui.rs — feed() (hozir 'while win.lines.len() > max { remove(0) }' ekrandan chiqqan qatorlarni butunlay o'chiradi), push_line, term_rows, terminal oynasini chizish funksiyasi va sichqoncha g'ildiragi/PageUp/PageDown ishlovi. O'zgarishlar: (1) Window ga term_scroll maydoni; lines 2000 qatorgacha saqlanadi (eskilari VecDeque yoki bitta drain bilan kesiladi, har baytda remove(0) emas); (2) g'ildirak va Shift+PageUp/PageDown bilan yuqoriga aylantirish, yangi chiqish kelganda yoki tugma bosilganda pastga qaytish; o'ng chetda ingichka aylantirish chizig'i; (3) oyna enidan uzun qatorlar so'z/belgi bo'yicha keyingi vizual qatorga o'raladi (oyna o'lchami o'zgarganda qayta hisoblanadi), kesilib ketmaydi. Qabul mezoni: sof funksiya wrap_lines(lines, cols) -> Vec<(qator_idx, boshlanish, tugash)> va scrollback cheklovi uchun self-test (gui yoki alohida modul, main.rs self_tests da '[ok] terminal scrollback'): 3000 qator qo'shilganda 2000 qoladi, 250 belgili qator 80 ustunda 4 vizual qatorga bo'linadi, UTF-8 (o'zbek/rus harflari) o'rtasidan kesilmaydi; skrinshot: `jurnal 200` dan keyin yuqoriga aylantirilgan terminal; verify.sh full o'tadi.",
-      "batch": 2
+      "batch": 2,
+      "status": "done",
+      "done_at": "2026-11-06 15:10:00"
     },
     {
       "id": "T12",

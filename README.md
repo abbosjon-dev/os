@@ -689,6 +689,21 @@ abbosjon@zamin:~> çiqiş                                    # çiqiş (qayta ki
 
 ![Terminal: Tab bilan töldiriş](docs/apps/terminal-tab.png)
 
+### Aylantiriş tarixi (scrollback) va qatorlarni öraş
+
+- Grafik terminal oxirgi **2000 qator**ni saqlaydi (eskilari har baytda emas, bitta
+  `drain` bilan kesiladi) — ekrandan çiqqan çiqiş yöqolmaydi.
+- **Siçqon ğildiragi** yoki **Shift+PageUp / Shift+PageDown** — tarixni aylantiriş;
+  yangi çiqiş kelganda yoki boşqa tugma bosilganda terminal pastga qaytadi.
+  Öng çetda ingiçka aylantiriş çiziği körinadi.
+- Oyna enidan uzun qatorlar keyingi vizual qatorga **söz böyiça** (böşliq bölmasa —
+  belgi böyiça) öraladi, kesilib ketmaydi; oyna ölçami özgarganda qayta hisoblanadi.
+- Sof funksiyalar `termbuf::wrap_lines(lines, cols)` → `(qator, boşlanış, tugaş)` va
+  `termbuf::trim` — yuklanişda tekşiriladi: `[ok] terminal scrollback` (3000 → 2000 qator,
+  250 belgi / 80 ustun = 4 vizual qator, UTF-8 özbek/rus harflari örtasidan kesilmaydi).
+
+![Terminal: yuqoriga aylantirilgan tarix](docs/apps/terminal-scroll.png)
+
 ## Oqimlar
 
 Bitta jarayon içida bir neçta oqim parallel (turli yadrolarda) işlaydi. Ular jarayonning
@@ -819,6 +834,7 @@ src/gfx/mod.rs        Çiziş: piksel, töğriburçak, matn, gradient
 src/gfx_font.rs       8×16 bitmap şrift
 src/drivers/virtio_input.rs  Klaviatura/planşet drayveri
 src/gui.rs            Oynalar menejeri (oynalar, terminal, vazifalar paneli)
+src/termbuf.rs        Grafik terminal: scrollback çegarasi va qatorlarni öraş (sof funksiyalar)
 user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 ```
 
@@ -875,7 +891,8 @@ GPU va kiriş (virtio-input) bölsa, to'liq grafik muhit işga tuşadi:
   yopiş tugmasi), old plan/fokus, pastda vazifalar paneli.
 - **Grafik terminal:** oyna ichida haqiqiy EL0 foydalanuvçi terminali
   (`/dasturlar/terminal`) quvurlar orqali işlaydi — oddiy terminal emulyatori
-  (bola stdin/stdout quvurlarga ulanadi, GUI I/O ni haydaydi, ANSI tozalaşni tuşunadi).
+  (bola stdin/stdout quvurlarga ulanadi, GUI I/O ni haydaydi, ANSI tozalaşni tuşunadi);
+  2000 qatorlik aylantiriş tarixi va uzun qatorlarni öraş.
 - **Ilovalar:** Matn muharriri (`~/qaydlar.txt` ni saqlaydi), Soat (jonli vaqt),
   Rasm köruvçi (namunaviy "Zamin" manzarasi), Fayllar, Haqida.
 
