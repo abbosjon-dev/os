@@ -6537,6 +6537,9 @@ fn builtin_page(url: &str) -> Option<&'static str> {
 <video src="/videolar/zamin.avi" controls>Brauzer videoni qöllamaydi</video>
 <audio controls><source src="/musiqa/kuy.mp3" type="audio/mpeg">audio yöq</audio>
 <iframe src="https://example.com/"></iframe>
+<h2 id="iframe">Ichki hujjat (iframe)</h2>
+<iframe width="80%" srcdoc="<style>body{background:#fff8e1;color:#4e342e} h3{color:#d84315}</style><h3>srcdoc hujjati</h3><p>Bu matn <b>alohida</b> hujjatda — öz CSS i bilan.</p><ul><li>bir</li><li>ikki</li></ul>"></iframe>
+<iframe src="zamin://haqida" width="90%"></iframe>
 <h2 id="canvas">Canvas 2D</h2>
 <canvas id="kanvas" width="320" height="120">canvas yöq</canvas>
 <script>
@@ -6743,6 +6746,7 @@ document.getElementById("qs").textContent = location.search;
 <li><a href="zamin://veb">Flex, grid, jadval, async/await sinovi</a></li>
 <li><a href="zamin://html">Barça HTML elementlari sinovi</a></li>
 <li><a href="zamin://joylasuv">CSS position va float sinovi</a></li>
+<li><a href="zamin://ramka">iframe: ichki hujjatlar sinovi</a></li>
 <li><a href="zamin://matn">text-align va dir=rtl sinovi</a></li>
 <li><a href="zamin://tarix">Tarix</a> — körilgan sahifalar</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
@@ -6804,6 +6808,14 @@ function nol() { jami = 0; document.getElementById("natija").textContent = "0"; 
 document.write("<p>Bu qator <b>document.write</b> bilan qöşildi. Sana: " + new Date().toLocaleDateString() + "</p>");
 console.log("Sinov sahifasi:", s.length, "ta Fibonaçi soni");
 </script>
+<p><a href="zamin://bosh">Bosh sahifa</a></p>"##,
+        "zamin://ramka" => r##"<title>iframe sinovi</title>
+<h1>Ichki hujjatlar (iframe)</h1>
+<p>Quyidagi ramkalar — alohida hujjatlar: öz CSS i, öz foni.</p>
+<iframe width="80%" srcdoc="<style>body{background:#fff8e1;color:#4e342e} h3{color:#d84315}</style><h3>srcdoc hujjati</h3><p>Bu matn <b>alohida</b> hujjatda — öz CSS i bilan.</p><ul><li>bir</li><li>ikki</li></ul>"></iframe>
+<p>Bir xil manbali <code>src</code> (zamin://haqida):</p>
+<iframe src="zamin://haqida" width="90%"></iframe>
+<p>Boşqa manbali — havola: <iframe src="https://example.com/"></iframe></p>
 <p><a href="zamin://bosh">Bosh sahifa</a></p>"##,
         "zamin://haqida" => r##"<title>Brauzer haqida</title>
 <h1>Brauzer haqida</h1>
@@ -6916,6 +6928,39 @@ fn web_raw(method: &str, url: &str, body: Option<&str>) -> Result<(u16, String, 
     Ok((r.status, String::from_utf8_lossy(&r.body).into_owned(), r.url))
 }
 
+/// Manba (origin): "sxema://xost[:port]"; ichki (zamin:) va mahalliy fayllar — öz guruhi.
+fn web_origin(url: &str) -> String {
+    match url.split_once("://") {
+        Some((sch, rest)) if !sch.eq_ignore_ascii_case("zamin") => {
+            let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+            alloc::format!("{}://{}", sch.to_ascii_lowercase(), host.to_ascii_lowercase())
+        }
+        Some(_) => String::from("zamin:"),
+        None => String::from("file:"),
+    }
+}
+
+/// Bir xil manbali `<iframe src>` larni (4 tagaça, `depth` daraja ichma-ich) srcdoc ga aylantiradi.
+/// Boşqa manbali iframe lar havola-kartoçka bölib qoladi.
+fn inline_frames(text: &str, base: &str, depth: u8) -> String {
+    if depth == 0 {
+        return String::from(text);
+    }
+    let me = web_origin(base);
+    crate::html::inline_iframes(text, 4, |src| {
+        let full = crate::net::http::join(base, src);
+        if web_origin(&full) != me || full.trim_end_matches('/') == base.trim_end_matches('/') {
+            return None; // boşqa manba yoki özini özi
+        }
+        let (d, ct, fu) = web_bytes(&full, None).ok()?;
+        if !ct.contains("html") || d.len() > 256 * 1024 || web_origin(&fu) != me {
+            return None;
+        }
+        let inner = crate::html::decode_bytes(&d, &ct);
+        Some(inline_frames(&inner, &fu, depth - 1))
+    })
+}
+
 fn web_load(url: &str, post: Option<&str>) -> WebRes {
     let t0 = crate::timer::uptime_ms();
     let (bytes, ct, final_url) = match web_bytes(url, post) {
@@ -6929,6 +6974,8 @@ fn web_load(url: &str, post: Option<&str>) -> WebRes {
     let mut scripts = Vec::new();
     let doc = if ct.contains("html") {
         let text = crate::html::decode_bytes(&bytes, &ct);
+        // Bir xil manbali <iframe src> — ichki hujjat yuklanib srcdoc sifatida qöşiladi
+        let text = inline_frames(&text, &final_url, 2);
         // Tashqi CSS
         let mut css = String::new();
         for href in crate::html::stylesheet_links(&text).into_iter().take(4) {

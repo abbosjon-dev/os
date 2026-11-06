@@ -930,6 +930,7 @@ struct P {
     rs_new: bool,                    // oxirgi katak rowspan qöşdi (kengligini yozib qöyiş uçun)
     media: Option<(String, String)>, // <video>/<audio>: (turi, manba)
     pic_src: String,                 // <picture><source srcset>
+    depth: u8,                       // iframe ichma-ichligi
 }
 
 impl P {
@@ -1052,6 +1053,98 @@ impl P {
             blk.rdy += st.ins[0].unwrap_or(-st.ins[2].unwrap_or(0.0));
         }
         blk.clear = st.clear;
+    }
+    /// `<iframe srcdoc>` (yoki yuklangan bir xil manbali `src`): ichki hujjat alohida — öz CSS i
+    /// bilan — tahlil qilinadi va ramka-quti içida ota hujjat bloklari orasiga joylanadi.
+    /// Ichki elementlar ota JS dan ajratilgan (id/klass/onclick yöq), ichki skriptlar bajarilmaydi.
+    fn embed_frame(&mut self, html: &str, tag: &str, fel: u16) {
+        self.flush();
+        if self.depth >= 3 {
+            return;
+        }
+        let inner = parse_doc(html, "", self.depth + 1);
+        let tmpl = self.new_block(Kind::P);
+        let parse_w = |w: &str| -> Option<(f32, bool)> {
+            let w = w.trim();
+            match w.strip_suffix('%') {
+                Some(p) => p.trim().parse::<f32>().ok().map(|v| (v.clamp(1.0, 100.0), true)),
+                None => w.trim_end_matches("px").trim().parse::<f32>().ok().filter(|&v| v > 0.0).map(|v| (v, false)),
+            }
+        };
+        let own = self.stack.last().filter(|o| o.tag == "iframe").map(|o| o.sty);
+        let width = attr(tag, "width").and_then(|w| parse_w(&w)).or(own.and_then(|s| s.maxw)).or(Some((100.0, true)));
+        let border = if attr(tag, "frameborder").is_some_and(|v| v.trim() == "0") { 0.0 } else { own.map(|s| s.bw).filter(|&v| v > 0.0).unwrap_or(2.0) };
+        let bc = own.and_then(|s| s.bc).unwrap_or(0x8a94a6);
+        let fbg = inner.bg.unwrap_or(0xffffff);
+        let fcol = inner.color.unwrap_or(if ((fbg >> 16 & 255) * 3 + (fbg >> 8 & 255) * 6 + (fbg & 255)) / 10 > 128 { 0x1d1d1f } else { 0xe8ecf2 });
+        // Raqamlar (element, maydon, svg, canvas, details, konteyner seriyalari) — siljitiladi
+        let eoff = self.doc.elems.len();
+        let keep = eoff + inner.elems.len() < 60_000;
+        let remap = |v: u16| if v == NO_EL || !keep { fel } else { v + eoff as u16 };
+        for e in &inner.elems {
+            const KEEP: [&str; 5] = ["input", "textarea", "select", "button", "label"];
+            let tag = if KEEP.contains(&e.tag.as_str()) { e.tag.clone() } else { String::from("#frame") };
+            if keep {
+                self.doc.elems.push(ElInfo { id: String::new(), tag, onclick: None, classes: Vec::new(), parent: remap(e.parent), label_for: String::new(), style: String::new() });
+            }
+        }
+        let ioff = self.doc.inputs.len() as u16;
+        for mut inp in inner.inputs {
+            inp.form = NO_EL;
+            inp.el = remap(inp.el);
+            self.doc.inputs.push(inp);
+        }
+        let soff = self.doc.svgs.len();
+        self.doc.svgs.extend(inner.svgs);
+        let coff = self.doc.canvases.len();
+        for mut c in inner.canvases {
+            c.el = remap(c.el);
+            self.doc.canvases.push(c);
+        }
+        let doff = self.doc.details.len() as u16;
+        self.doc.details.extend(inner.details);
+        let base = self.serial;
+        let mut top = 0u32;
+        let sh = |v: u32| if v == 0 { 0 } else { v + base };
+        let mut blocks = inner.blocks;
+        if blocks.is_empty() {
+            blocks.push(Block { kind: Kind::P, spans: Vec::new(), ..tmpl.clone() });
+        }
+        for b in blocks.iter_mut() {
+            top = top.max(b.flex).max(b.fcol).max(b.oser).max(b.pk).max(b.aser).max(b.bgk);
+            b.el = remap(b.el);
+            for sp in b.spans.iter_mut() {
+                sp.el = remap(sp.el);
+                if sp.input != NO_EL {
+                    sp.input += ioff;
+                }
+            }
+            if let Some(n) = b.src.strip_prefix("svg:").and_then(|n| n.parse::<usize>().ok()) {
+                b.src = alloc::format!("svg:{}", n + soff);
+            } else if let Some(n) = b.src.strip_prefix("canvas:").and_then(|n| n.parse::<usize>().ok()) {
+                b.src = alloc::format!("canvas:{}", n + coff);
+            }
+            b.det = if b.det == NO_EL { tmpl.det } else { b.det + doff };
+            b.hidden |= tmpl.hidden;
+            if tmpl.flex != 0 {
+                // iframe ning özi flex/grid ustunida — ichki flex tekislanadi
+                (b.flex, b.fcol, b.fmode, b.fgap, b.gcols, b.fjust, b.fw, b.fgrow, b.rspan) = (tmpl.flex, tmpl.fcol, tmpl.fmode, tmpl.fgap, tmpl.gcols, tmpl.fjust, tmpl.fw, tmpl.fgrow, tmpl.rspan);
+            } else {
+                (b.flex, b.fcol) = (sh(b.flex), sh(b.fcol));
+            }
+            (b.oser, b.pk, b.aser) = (sh(b.oser), sh(b.pk), sh(b.aser));
+            b.copy_pos(&tmpl);
+            if b.color.is_none() {
+                b.color = Some(fcol);
+            }
+        }
+        self.serial = base + top + 1;
+        let key = self.serial;
+        for b in blocks.iter_mut() {
+            // Bitta ramka-quti: ichki hujjat foni, çegara, iframe kengligi
+            (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.center, b.bmt, b.bmb) = (Some(fbg), key, 8.0, border, Some(bc), 2.0, width, false, 6.0, 6.0);
+        }
+        self.doc.blocks.extend(blocks);
     }
     fn start(&mut self, k: Kind) {
         self.flush();
@@ -1462,12 +1555,124 @@ pub fn stylesheet_links(src: &str) -> Vec<String> {
 }
 
 /// Hujjatdagi <style> mazmunlari.
+/// Teg oxiri ('>' indeksi) — tirnoq içidagi '>' hisobga olinmaydi (`i` — '<' ning öçni).
+fn tag_end_quoted(src: &str, i: usize) -> Option<usize> {
+    let b = src.as_bytes();
+    let mut q: Option<u8> = None;
+    let mut prev = 0u8; // oxirgi böşliq bölmagan bayt
+    for (k, &c) in b.iter().enumerate().skip(i + 1) {
+        match q {
+            Some(qc) if c == qc => q = None,
+            Some(_) => {}
+            None if (c == b'"' || c == b'\'') && prev == b'=' => q = Some(c),
+            None if c == b'>' => return Some(k),
+            None => {}
+        }
+        if !c.is_ascii_whitespace() {
+            prev = c;
+        }
+    }
+    None
+}
+
+/// `<iframe` teg boşimi (bayt indeksi `i` dagi '<')?
+fn is_iframe_at(b: &[u8], i: usize) -> bool {
+    b.get(i + 1..i + 7).is_some_and(|s| s.eq_ignore_ascii_case(b"iframe")) && b.get(i + 7).is_none_or(|c| !c.is_ascii_alphanumeric())
+}
+
+/// Teg matnidan `srcdoc="…"` atributini ajratadi: (qolgan teg, yeçilgan qiymat).
+/// Qiymat içidagi `src=`, `style=` kabilar iframe ning özi atributlari deb öqilmasligi uçun.
+pub fn split_srcdoc(tag: &str) -> (String, Option<String>) {
+    let low = tag.to_ascii_lowercase();
+    let lb = low.as_bytes();
+    let mut from = 0;
+    while let Some(p) = low[from..].find("srcdoc") {
+        let i = from + p;
+        let before_ok = i > 0 && lb[i - 1].is_ascii_whitespace();
+        let mut k = i + 6;
+        while k < lb.len() && lb[k].is_ascii_whitespace() {
+            k += 1;
+        }
+        if before_ok && lb.get(k) == Some(&b'=') {
+            k += 1;
+            while k < lb.len() && lb[k].is_ascii_whitespace() {
+                k += 1;
+            }
+            let (vs, ve, end) = match lb.get(k) {
+                Some(&q) if q == b'"' || q == b'\'' => {
+                    let e = low[k + 1..].find(q as char).map(|j| k + 1 + j).unwrap_or(lb.len());
+                    (k + 1, e, (e + 1).min(lb.len()))
+                }
+                _ => {
+                    let e = low[k..].find(|c: char| c.is_whitespace()).map(|j| k + j).unwrap_or(lb.len());
+                    (k, e, e)
+                }
+            };
+            let mut rest = String::from(&tag[..i]);
+            rest.push(' ');
+            rest.push_str(&tag[end..]);
+            return (rest, Some(decode_entities(&tag[vs..ve])));
+        }
+        from = i + 6;
+    }
+    (String::from(tag), None)
+}
+
+/// HTML matnini `srcdoc` atributi qiymati sifatida xavfsiz yozadi.
+pub fn escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Bir xil manbali `<iframe src>` lar: `fetch(src)` HTML qaytarsa, u `srcdoc` sifatida tegga
+/// qöşiladi (keyin tahlilçi uni ichki hujjat sifatida chizadi; @media qayta tahlilida ham saqlanadi).
+pub fn inline_iframes(src: &str, max: usize, mut fetch: impl FnMut(&str) -> Option<String>) -> String {
+    let b = src.as_bytes();
+    let mut out = String::with_capacity(src.len());
+    let (mut last, mut i, mut n) = (0, 0, 0);
+    while let Some(p) = src[i..].find('<') {
+        let st = i + p;
+        if src[st..].starts_with("<!--") {
+            i = src[st..].find("-->").map(|j| st + j + 3).unwrap_or(b.len());
+            continue;
+        }
+        if !is_iframe_at(b, st) {
+            i = st + 1;
+            continue;
+        }
+        let Some(end) = tag_end_quoted(src, st) else { break };
+        let tag = &src[st + 1..end];
+        let (_, sd) = split_srcdoc(tag);
+        if sd.is_none() && n < max {
+            if let Some(u) = attr(tag, "src").filter(|u| !u.trim().is_empty()) {
+                n += 1;
+                if let Some(html) = fetch(u.trim()) {
+                    out.push_str(&src[last..end]);
+                    out.push_str(" srcdoc=\"");
+                    out.push_str(&escape_attr(&html));
+                    out.push('"');
+                    last = end;
+                }
+            }
+        }
+        i = end + 1;
+    }
+    out.push_str(&src[last..]);
+    out
+}
+
 fn inline_css(src: &str) -> String {
     let low = src.to_ascii_lowercase();
     let mut out = String::new();
     let mut from = 0;
     while let Some(i) = low[from..].find("<style") {
         let st = from + i;
+        // iframe srcdoc içidagi <style> — ota hujjatga tegişli emas
+        if let Some(f) = low[from..st].rfind("<iframe").map(|j| from + j) {
+            if let Some(e) = tag_end_quoted(src, f).filter(|&e| e > st) {
+                from = e + 1;
+                continue;
+            }
+        }
         let Some(gt) = low[st..].find('>') else { break };
         let body = st + gt + 1;
         let end = low[body..].find("</style").map(|j| body + j).unwrap_or(low.len());
@@ -1484,11 +1689,15 @@ pub fn parse(src: &str) -> Doc {
 
 /// HTML + tashqi CSS (<link> orqali yuklangan) → hujjat.
 pub fn parse_with(src: &str, extra_css: &str) -> Doc {
+    parse_doc(src, extra_css, 0)
+}
+
+fn parse_doc(src: &str, extra_css: &str, depth: u8) -> Doc {
     let mut sheet = String::from(UA_CSS);
     sheet.push_str(extra_css);
     sheet.push_str(&inline_css(src));
     let rules = css::parse_sheet(&sheet);
-    let mut d = parse_inner(src, &rules, true);
+    let mut d = parse_inner(src, &rules, true, depth);
     d.media_on = css::media_state(&rules);
     if !d.media_on.is_empty() {
         d.src = String::from(src);
@@ -1498,9 +1707,9 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
     d
 }
 
-fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool) -> Doc {
+fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc {
     let rules: Vec<Rule> = rules.to_vec();
-    let mut p = P { doc: Doc::empty(), rules, stack: Vec::new(), cur: None, pre: 0, lists: Vec::new(), in_title: false, serial: 0, form: NO_EL, dets: Vec::new(), tborder: Vec::new(), tgrid: Vec::new(), rs_new: false, media: None, pic_src: String::new() };
+    let mut p = P { doc: Doc::empty(), rules, stack: Vec::new(), cur: None, pre: 0, lists: Vec::new(), in_title: false, serial: 0, form: NO_EL, dets: Vec::new(), tborder: Vec::new(), tgrid: Vec::new(), rs_new: false, media: None, pic_src: String::new(), depth };
     // Yaşirin <html> va <body> (teglar bölmasa ham uslublari qöllanadi)
     if implicit_body {
         p.open("html", "html");
@@ -1514,7 +1723,8 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool) -> Doc {
                 i = src[i..].find("-->").map(|j| i + j + 3).unwrap_or(b.len());
                 continue;
             }
-            let Some(end) = src[i..].find('>').map(|j| i + j) else { break };
+            let qend = if is_iframe_at(b, i) { tag_end_quoted(src, i) } else { None };
+            let Some(end) = qend.or_else(|| src[i..].find('>').map(|j| i + j)) else { break };
             let tag = &src[i + 1..end];
             i = end + 1;
             let closing = tag.starts_with('/');
@@ -1523,6 +1733,9 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool) -> Doc {
             if name.is_empty() {
                 continue;
             }
+            // <iframe srcdoc="…">: qiymat ajratiladi, qolgan atributlar odatdagiday öqiladi
+            let (t_own, srcdoc) = if !closing && name == "iframe" { split_srcdoc(t) } else { (String::new(), None) };
+            let t: &str = if srcdoc.is_some() { &t_own } else { t };
             if !closing && name == "svg" {
                 // Ichki SVG — butunligiça olinadi, keyin SVG dekoderimiz bilan rasmga aylanadi
                 let low = src[i..].to_ascii_lowercase();
@@ -1792,6 +2005,16 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool) -> Doc {
                         o.sty.hidden = true; // içidagi zaxira matn körinmasin
                     }
                 }
+                "iframe" if srcdoc.is_some() => {
+                    let fel = p.stack.last().filter(|o| o.tag == "iframe").map(|o| o.el).unwrap_or(NO_EL);
+                    let hidden = p.stack.len() >= 2 && p.stack[p.stack.len() - 2].sty.hidden;
+                    if !hidden {
+                        p.embed_frame(srcdoc.as_deref().unwrap_or(""), t, fel);
+                    }
+                    if let Some(o) = p.stack.last_mut().filter(|o| o.tag == name) {
+                        o.sty.hidden = true; // zaxira matn körinmasin
+                    }
+                }
                 "iframe" | "embed" | "object" => {
                     let u = attr(t, "src").or_else(|| attr(t, "data")).unwrap_or_default();
                     if !u.is_empty() {
@@ -1969,7 +2192,7 @@ fn strip_tags(s: &str) -> String {
 
 /// HTML bölagi (innerHTML / appendChild) — hujjatning uslub qoidalari bilan.
 fn parse_frag(src: &str, rules: &[Rule]) -> Doc {
-    let mut d = parse_inner(src, rules, false);
+    let mut d = parse_inner(src, rules, false, 0);
     d.title.clear();
     d
 }
@@ -2098,6 +2321,62 @@ pub fn self_test_dir() -> Result<usize, &'static str> {
 
 fn find_in(d: &Doc, t: &str) -> Option<u8> {
     d.blocks.iter().find(|b| b.spans.iter().any(|s| s.text.trim() == t)).map(|b| b.align)
+}
+
+/// <iframe>: srcdoc ichki hujjati alohida CSS bilan ramkada chiziladi; bir xil manbali src yuklanadi.
+pub fn self_test_iframe() -> Result<usize, &'static str> {
+    let blk = |d: &Doc, t: &str| d.blocks.iter().position(|b| b.spans.iter().any(|s| s.text.trim() == t));
+    let src = "<p>Oldin</p><iframe width=\"300\" srcdoc=\"<style>p{color:#ff0000} body{background:#fafafa}</style><p class=x id=ich onclick='y()'>Ichki <b>matn</b></p><img src='r.png' alt=rasm>\" \
+        src=\"tashqi.html\"><p>zaxira</p></iframe><p id=keyin>Keyin</p>";
+    let d = parse(src);
+    let i = blk(&d, "Ichki").ok_or("iframe: srcdoc matni chizilmadi")?;
+    let b = &d.blocks[i];
+    if b.spans.first().and_then(|s| s.color) != Some(0xff0000) && b.color != Some(0xff0000) {
+        return Err("iframe: ichki <style> qöllanmadi");
+    }
+    if b.bgk == 0 || b.bg != Some(0xfafafa) || b.maxw != Some((300.0, false)) || b.bw <= 0.0 {
+        return Err("iframe: ramka (fon / kenglik / çegara) notöğri");
+    }
+    let o = &d.blocks[blk(&d, "Oldin").ok_or("iframe: oldingi matn yöq")?];
+    if o.color == Some(0xff0000) || o.spans.iter().any(|s| s.color == Some(0xff0000)) {
+        return Err("iframe: ichki CSS ota hujjatga oqib çiqdi");
+    }
+    let k = &d.blocks[blk(&d, "Keyin").ok_or("iframe: keyingi matn yöq")?];
+    if k.bgk == b.bgk || blk(&d, "zaxira").is_some_and(|z| !d.blocks[z].hidden) {
+        return Err("iframe: ramka yopilmadi yoki zaxira matn körindi");
+    }
+    if d.find_id("ich").is_some() || d.find_id("keyin").is_none() || d.elems.iter().any(|e| e.onclick.as_deref() == Some("y()")) {
+        return Err("iframe: ichki elementlar ota JS dan ajratilmadi");
+    }
+    if !d.blocks.iter().any(|x| x.kind == Kind::Img && x.src == "r.png" && x.bgk == b.bgk) {
+        return Err("iframe: ichki rasm yöq");
+    }
+    if d.blocks.iter().flat_map(|x| x.spans.iter()).any(|s| s.text.contains("Ichki sahifa")) {
+        return Err("iframe: srcdoc bilan ham havola-kartoçka chiqdi");
+    }
+    // Belgilar bilan kodlangan srcdoc va ichma-ich iframe (çuqurlik çegarasi)
+    let d = parse("<iframe srcdoc=\"&lt;h1&gt;Sarlavha&lt;/h1&gt;&lt;iframe srcdoc='&amp;lt;p&amp;gt;Chuqur&amp;lt;/p&amp;gt;'&gt;&lt;/iframe&gt;\"></iframe>");
+    let h = blk(&d, "Sarlavha").ok_or("iframe: kodlangan srcdoc yeçilmadi")?;
+    if d.blocks[h].kind != Kind::H(1) || blk(&d, "Chuqur").is_none() {
+        return Err("iframe: ichki sarlavha / ichma-ich iframe chizilmadi");
+    }
+    // Bir xil manbali src → srcdoc (yuklaş qayta çaqiruv orqali)
+    let mut calls = 0;
+    let t = inline_iframes("<iframe src=\"a.html\" width=50%></iframe><iframe src=\"b.html\" srcdoc=\"x\"></iframe>", 4, |u| {
+        calls += 1;
+        (u == "a.html").then(|| String::from("<p>\"Q\" &amp; R</p>"))
+    });
+    let d = parse(&t);
+    let q = blk(&d, "\"Q\" & R").ok_or("iframe: yuklangan src chizilmadi")?;
+    if calls != 1 || d.blocks[q].maxw != Some((50.0, true)) {
+        return Err("iframe: src yuklaş / kenglik notöğri");
+    }
+    // Boşqa manbali — havola-kartoçka qoladi
+    let d = parse("<iframe src=\"https://example.com/\"></iframe>");
+    if !d.blocks.iter().flat_map(|x| x.spans.iter()).any(|s| s.text.contains("Ichki sahifa") && s.link.is_some()) {
+        return Err("iframe: boşqa manbali havola-kartoçka yöqoldi");
+    }
+    Ok(8)
 }
 
 /// CSS @media va :hover tekşiruvi: kö'riş maydoni eniga qarab qoidalar, siçqonça ostidagi element uslubi.

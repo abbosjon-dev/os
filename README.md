@@ -120,8 +120,8 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   `rowspan` — katak pastki qatorlarga çoziladi (ramkasi birlaşadi), keyingi qatorlarda uning ustuni
   böş joy egallovçi bilan saqlanadi; yuklaniş self-testida tekşiriladi.
 - **Media**: `img width/height`, `srcset`, `picture/source`, lazy `data-src`, **`data:` URI**
-  (base64 va URL-kodlangan), **ichki `<svg>`** (SVG dekoderimiz bilan), `video/audio/iframe/embed/object`
-  kartochkalari (havola orqali yuklab olinadi), **`<canvas>` 2D** (pastda).
+  (base64 va URL-kodlangan), **ichki `<svg>`** (SVG dekoderimiz bilan), `video/audio/embed/object` va boshqa
+  manbali `iframe` kartochkalari (havola orqali yuklab olinadi), **`<iframe>` ichki hujjatlari** (pastda), **`<canvas>` 2D** (pastda).
 - **Formalar**: `radio` guruhlari, `label for` va o'rab turgan `label`, `email/number/date/url/tel/search`,
   `color`, `range`, `file`, `progress`, `meter`, `optgroup`.
 - **Hujjat**: `<base href>`, `<meta http-equiv=refresh>`, kodlashlar: UTF-8, **windows-1251**,
@@ -173,6 +173,18 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   o'ngdan chapga joylashadi. JS: `el.style.textAlign`/`direction`. Sinov: `zamin://matn`.
 
   ![text-align va dir=rtl](docs/web-rtl.png)
+- **`<iframe>` — ichki hujjat haqiqiy chiziladi** — `srcdoc="…"` (belgilar bilan kodlangan yoki
+  tirnoq ichida xom HTML) alohida hujjat sifatida **o'z CSS i bilan** tahlil qilinadi va ramka-quti
+  ichida chiziladi: fon — ichki `body` foni (bo'lmasa oq), `width` (px yoki %) yoki CSS `width`,
+  `frameborder="0"`. Ichki `<style>` ota sahifaga oqib chiqmaydi; ichki elementlar ota JS dan
+  ajratilgan (id/klass/onclick ko'rinmaydi), ichki rasmlar va SVG yuklanadi. **Bir xil manbali
+  `src`** (o'sha sxema+xost, ichki `zamin://` sahifalar yoki mahalliy fayllar) fonda yuklanadi va
+  `srcdoc` ga aylantiriladi (4 tagacha, 2 daraja ichma-ich; `@media` qayta tahlilida saqlanadi).
+  Boshqa manbali `src` — avvalgidek havola-kartochka. Cheklovlar: ichki skriptlar bajarilmaydi,
+  `height` hisobga olinmaydi (ramka mazmun bo'yicha cho'ziladi), ichki havolalar asosiy sahifani
+  ochadi. Sinov: `zamin://ramka`, yuklanish self-testida 8 tekshiruv.
+
+  ![iframe ichki hujjatlari](docs/web-iframe.png)
 - **JS** — `async function`, `async () =>`, `await` (fetch va taymerlarni kutadi),
   `localStorage`/`sessionStorage`, `document.cookie`.
 - **DOM** — har bir element ro'yxatda (ota-bolasi bilan): `innerHTML = "<b>…</b>"` (HTML

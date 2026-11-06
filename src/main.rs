@@ -523,6 +523,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] CSS @media (min/max-width) va :hover ({} sinov)", n),
         Err(e) => panic!("CSS @media/:hover tekşiruvi yiqildi: {}", e),
     }
+    match html::self_test_iframe() {
+        Ok(n) => println!("  [ok] <iframe>: srcdoc va bir xil manbali src ichki hujjat chizilişi ({} sinov)", n),
+        Err(e) => panic!("iframe tekşiruvi yiqildi: {}", e),
+    }
     match net::webstore::self_test() {
         Ok(n) => println!("  [ok] localStorage/cookie diskka saqlaş (~/.zamin): kodlaş ({} yozuv)", n),
         Err(e) => panic!("localStorage/cookie saqlaş tekşiruvi yiqildi: {}", e),
