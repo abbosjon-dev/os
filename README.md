@@ -183,6 +183,19 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   tekshiradi.
 
   ![Yumaloq burchaklar: zamin://matn](docs/web-text-align.png)
+- **CSS `linear-gradient` va `box-shadow`** — `background` / `background-image` da
+  `linear-gradient(<yo'nalish>, rang1 [joy%], rang2, …)`: yo'nalish — `to bottom|top|left|right`
+  (va burchaklar, masalan `to top right`), `<N>deg`, `turn`, `rad` (standart — pastga); 2–6 rang
+  to'xtashi (`#hex`, nomli, `rgb()`), joyi berilmaganlar teng taqsimlanadi. Ixtiyoriy burchakli
+  gradient piksel bo'yicha hisoblanadi va `border-radius` silliq burchaklari bilan chiziladi
+  (aylantirilganda rang chizig'i butun quti bo'yicha qoladi). `box-shadow: dx dy [blur [spread]]
+  rang` (`rgba` alfa bilan) — yumaloq to'g'riburchak masofa funksiyasi orqali yumshoq soya,
+  quti ostiga emas, atrofiga chiziladi; `none` — o'chiradi, `inset` hozircha e'tiborsiz. Yaroqsiz
+  qiymatlar (yopilmagan `linear-gradient(`, noma'lum yo'nalish, rangsiz soya) panic qilmasdan
+  tashlab yuboriladi va oldingi fon saqlanadi. JS: `el.style.background`/`boxShadow`. Sinov:
+  `zamin://bezak`, yuklanish self-testida `self_test_decor` (35 tekshiruv).
+
+  ![Gradient va soya: zamin://bezak](docs/web-gradient.png)
 - **`<iframe>` — ichki hujjat haqiqiy chiziladi** — `srcdoc="…"` (belgilar bilan kodlangan yoki
   tirnoq ichida xom HTML) alohida hujjat sifatida **o'z CSS i bilan** tahlil qilinadi va ramka-quti
   ichida chiziladi: fon — ichki `body` foni (bo'lmasa oq), `width` (px yoki %) yoki CSS `width`,

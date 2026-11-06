@@ -101,7 +101,9 @@
       "id": "T13",
       "title": "CSS: background linear-gradient va box-shadow",
       "detail": "Fayllar: src/css.rs (background / background-image da linear-gradient(to bottom|to right|<deg>, rang1, rang2[, ...]) ni o'qish — kamida 2-3 rang to'xtashi, burchak 0/90/180/270deg va 'to <tomon>'; box-shadow: offset-x offset-y blur [spread] rang, 'none'), src/html.rs (Block ga gradient va shadow maydonlari, tmpl/t dan nusxa olinadigan joylarda — 254-260 va 393-398 qatorlarga o'xshash — ko'chirish), src/gui.rs (Deco ga gradient/shadow, ~8216 dagi chizish siklida soyani avval gfx::shadow bilan, so'ng gradientni border-radius ni hisobga olib chizish; gfx/mod.rs dagi gradient va gradient_round_rect dan foydalan, gorizontal gradient yo'q bo'lsa qo'sh). Yangi zamin://bezak sinov sahifasi (bosh sahifadagi havolalar ro'yxatiga qo'shiladi): vertikal/gorizontal/45deg gradientli, yumaloq burchakli va soyali kartalar. Qabul mezoni: html::self_test_decor() — CSS satridan to'g'ri gradient to'xtashlari va soya parametrlari olinishi, noto'g'ri qiymatlar (masalan, 'linear-gradient(' yopilmagan) panic qilmasdan e'tiborsiz qoldirilishi; skrinshot docs/web-gradient.png; verify.sh full o'tadi.",
-      "batch": 2
+      "batch": 2,
+      "status": "done",
+      "done_at": "2026-11-06 15:39:14"
     },
     {
       "id": "T14",

@@ -207,6 +207,176 @@ pub fn gradient_rect(x: usize, y: usize, w: usize, h: usize, top: Color, bottom:
     }
 }
 
+/// Berilgan sohada gorizontal gradient (çapdan öngga).
+pub fn gradient_rect_h(x: usize, y: usize, w: usize, h: usize, left: Color, right: Color) {
+    gradient_round_rect(x, y, w, h, 0, 0, 90, &[(left, 0), (right, 1000)], 0);
+}
+
+/// sin / cos (butun gradus) — no_std: çorakka keltirib, Teylor qatori (xato < 1e-4).
+fn sin_cos_deg(a: u16) -> (f32, f32) {
+    let s = |d: u32| -> f32 {
+        // d — 0..=360, natija sin(d°)
+        let (q, r) = (d / 90 % 4, d % 90);
+        let r = if q % 2 == 1 { 90 - r } else { r };
+        let x = r as f32 * 0.017453292;
+        let x2 = x * x;
+        let v = x * (1.0 - x2 / 6.0 * (1.0 - x2 / 20.0 * (1.0 - x2 / 42.0 * (1.0 - x2 / 72.0))));
+        if q >= 2 { -v } else { v }
+    };
+    let a = a as u32 % 360;
+    (s(a), s((a + 90) % 360))
+}
+
+#[inline]
+fn absf(v: f32) -> f32 {
+    if v < 0.0 { -v } else { v }
+}
+
+/// Kvadrat ildiz (no_std): bit taxmini + 3 Nyuton qadami.
+fn sqrtf(v: f32) -> f32 {
+    if v <= 0.0 {
+        return 0.0;
+    }
+    let mut y = f32::from_bits((v.to_bits() >> 1) + 0x1fbd_1df5);
+    for _ in 0..3 {
+        y = 0.5 * (y + v / y);
+    }
+    y
+}
+
+/// Rang töxtaşlari böyiça t (0..=1000) nuqtadagi rang.
+fn stop_color(stops: &[(Color, u16)], t: u32) -> Color {
+    let first = stops[0];
+    if t <= first.1 as u32 {
+        return first.0;
+    }
+    for w in stops.windows(2) {
+        let ((c0, p0), (c1, p1)) = (w[0], w[1]);
+        if t <= p1 as u32 {
+            let span = (p1 as u32).saturating_sub(p0 as u32).max(1);
+            let k = (t - p0 as u32).min(span) * 255 / span;
+            let mix = |a: u32, b: u32| (a * (255 - k) + b * k) / 255;
+            return mix(c0 >> 16 & 0xff, c1 >> 16 & 0xff) << 16 | mix(c0 >> 8 & 0xff, c1 >> 8 & 0xff) << 8 | mix(c0 & 0xff, c1 & 0xff);
+        }
+    }
+    stops[stops.len() - 1].0
+}
+
+/// Ixtiyoriy burçakli (CSS gradus: 0 — yuqoriga, 90 — öngga, 180 — pastga) chiziqli
+/// gradient, yumaloq burçaklar (rt — yuqori, rb — pastki) bilan. `stops` — (rang, joy 0..=1000).
+/// `skip` — gradient qutisining yuqoridan körinmaydigan (aylantirilgan) qatorlari:
+/// rang chizigʻi (h + skip) balandlikdagi butun quti böyiça hisoblanadi.
+pub fn gradient_round_rect(x: usize, y: usize, w: usize, h: usize, rt: usize, rb: usize, angle: u16, stops: &[(Color, u16)], skip: usize) {
+    if w == 0 || h == 0 || stops.is_empty() {
+        return;
+    }
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return };
+    let rt = rt.min(w / 2).min(h / 2);
+    let rb = rb.min(w / 2).min(h / 2);
+    // 256 rangli jadval (har piksel uçun töxtaş qidirmaslik uçun)
+    let mut lut = [0u32; 256];
+    for (i, c) in lut.iter_mut().enumerate() {
+        *c = stop_color(stops, i as u32 * 1000 / 255);
+    }
+    let (sn, cs) = sin_cos_deg(angle);
+    let (dxv, dyv) = (sn, -cs); // yönaliş vektori (ekran: y pastga)
+    let full_h = (h + skip) as f32;
+    let len = (absf(w as f32 * dxv) + absf(full_h * dyv)).max(1.0);
+    let (cx, cy) = (w as f32 / 2.0, full_h / 2.0);
+    for dy in 0..h {
+        let py = (dy + skip) as f32 + 0.5 - cy;
+        for dx in 0..w {
+            let cov = match corner_at(dx, dy, w, h, rt, rb) {
+                Some((ox, oy, r)) => corner_cov(ox, oy, r),
+                None => 255,
+            };
+            if cov == 0 {
+                continue;
+            }
+            let px = dx as f32 + 0.5 - cx;
+            let t = ((px * dxv + py * dyv) / len + 0.5).clamp(0.0, 1.0);
+            blend(f, x + dx, y + dy, lut[(t * 255.0 + 0.5) as usize], cov);
+        }
+    }
+}
+
+/// Yumaloq töğriburçakning işorali masofasi (manfiy — içkarida). (cx, cy) — markaz,
+/// (hw, hh) — yarim ölçamlar, r — burçak radiusi.
+#[inline]
+fn rrect_sdf(px: f32, py: f32, cx: f32, cy: f32, hw: f32, hh: f32, r: f32) -> f32 {
+    let qx = absf(px - cx) - (hw - r);
+    let qy = absf(py - cy) - (hh - r);
+    let (mx, my) = (qx.max(0.0), qy.max(0.0));
+    sqrtf(mx * mx + my * my) + qx.max(qy).min(0.0) - r
+}
+
+/// CSS box-shadow: element (ex, ey, ew, eh, burçak radiusi er) soyasi — (dx, dy) ga
+/// surilgan, spread ga kengaygan, blur bilan yumşatilgan; rang c, eng katta alfa `alpha`.
+/// Elementning öz (töliq qoplangan) sohasiga çizilmaydi.
+#[allow(clippy::too_many_arguments)]
+pub fn box_shadow(ex: i32, ey: i32, ew: usize, eh: usize, er: usize, dx: i32, dy: i32, blur: usize, spread: i32, c: Color, alpha: u32) {
+    if ew == 0 || eh == 0 || alpha == 0 {
+        return;
+    }
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return };
+    let (sw, sh) = (ew as i32 + spread * 2, eh as i32 + spread * 2);
+    if sw <= 0 || sh <= 0 {
+        return;
+    }
+    let (sx, sy) = (ex + dx - spread, ey + dy - spread);
+    let sr = (er as i32 + spread).clamp(0, sw.min(sh) / 2) as f32;
+    let er = (er.min(ew / 2).min(eh / 2)) as f32;
+    let bl = blur as i32;
+    let (scx, scy) = (sx as f32 + sw as f32 / 2.0, sy as f32 + sh as f32 / 2.0);
+    let (ecx, ecy) = (ex as f32 + ew as f32 / 2.0, ey as f32 + eh as f32 / 2.0);
+    let x0 = (sx - bl).max(0);
+    let y0 = (sy - bl).max(0);
+    let x1 = (sx + sw + bl).min(f.w as i32);
+    let y1 = (sy + sh + bl).min(f.h as i32);
+    let alpha = alpha.min(255) as f32;
+    for py in y0..y1 {
+        for px in x0..x1 {
+            let (fx, fy) = (px as f32 + 0.5, py as f32 + 0.5);
+            // element ostida (töliq qoplangan) — chizmaymiz
+            if rrect_sdf(fx, fy, ecx, ecy, ew as f32 / 2.0, eh as f32 / 2.0, er) < -1.0 {
+                continue;
+            }
+            let d = rrect_sdf(fx, fy, scx, scy, sw as f32 / 2.0, sh as f32 / 2.0, sr);
+            let k = if bl == 0 {
+                (0.5 - d).clamp(0.0, 1.0)
+            } else {
+                let t = ((bl as f32 - d) / (2.0 * bl as f32)).clamp(0.0, 1.0);
+                t * t * (3.0 - 2.0 * t)
+            };
+            let a = (k * alpha) as u32;
+            if a > 0 {
+                blend(f, px as usize, py as usize, c, a);
+            }
+        }
+    }
+}
+
+/// Gradient/soya tekşiruvi: burçak trigonometriyasi, töxtaş ranglari, SDF.
+pub fn self_test_decor() -> Result<usize, &'static str> {
+    let near = |a: f32, b: f32| absf(a - b) < 0.002;
+    for (a, s, c) in [(0u16, 0.0, 1.0), (90, 1.0, 0.0), (180, 0.0, -1.0), (270, -1.0, 0.0), (45, 0.70711, 0.70711)] {
+        let (ss, cc) = sin_cos_deg(a);
+        if !near(ss, s) || !near(cc, c) {
+            return Err("gradient: sin/cos notöğri");
+        }
+    }
+    let st = [(0xff0000, 0u16), (0x00ff00, 500), (0x0000ff, 1000)];
+    if stop_color(&st, 0) != 0xff0000 || stop_color(&st, 500) != 0x00ff00 || stop_color(&st, 1000) != 0x0000ff || stop_color(&st, 250) & 0xff != 0 {
+        return Err("gradient: töxtaş rangi notöğri");
+    }
+    if !near(sqrtf(2.0), 1.41421) || rrect_sdf(5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 2.0) >= 0.0 || !near(rrect_sdf(13.0, 5.0, 5.0, 5.0, 5.0, 5.0, 0.0), 3.0) {
+        return Err("soya: masofa funksiyasi notöğri");
+    }
+    Ok(4)
+}
+
 // --- Yumaloq burçakli shakllar (mac uslubi) ---
 
 /// Burçak qamrovi (0..255). (ox, oy) — aylana markazidan hisoblangan piksel

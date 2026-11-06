@@ -6971,6 +6971,33 @@ document.getElementById("qs").textContent = location.search;
 <div style="display:flex;gap:8px"><p class="q">1</p><p class="q">2</p><p class="q">3</p></div>
 </div>
 "##,
+        "zamin://bezak" => r##"<title>CSS bezak: gradient va soya</title>
+<style>
+body{background:#f3f5f9;color:#1a2233}
+.k{padding:14px;border-radius:14px;color:#ffffff;box-shadow:0 6px 16px rgba(0,0,0,.30)}
+.v{background:linear-gradient(to bottom,#4f8cff,#1e3a8a)}
+.g{background:linear-gradient(to right,#ff5f6d,#ffc371)}
+.d{background-image:linear-gradient(45deg,#11998e,#38ef7d 60%,#d4fc79)}
+.u{background:linear-gradient(90deg,#8e2de2,#4a00e0,#00c6ff);border-radius:4px;margin:20px 0}
+.s{background:#ffffff;color:#1a2233;border-radius:10px;box-shadow:4px 4px 0 #1e3a8a}
+.y{background:#ffffff;color:#1a2233;border-radius:18px;box-shadow:0 0 20px 2px rgba(79,140,255,.6)}
+.x{background:linear-gradient(#ff0000;color:#1a2233;box-shadow:bad}
+</style>
+<h1>Gradient va box-shadow</h1>
+<p>linear-gradient (to bottom / to right / burçak), border-radius va box-shadow — noldan çiziladi.</p>
+<div style="display:flex;gap:14px">
+<div class="k v"><b>to bottom</b><p>Vertikal gradient</p></div>
+<div class="k g"><b>to right</b><p>Gorizontal gradient</p></div>
+<div class="k d"><b>45deg</b><p>Uç töxtaş, diagonal</p></div>
+</div>
+<div class="k u"><b>90deg, 3 rang</b> — kenglik böyiça binafşadan havoranggaça.</div>
+<h2>box-shadow</h2>
+<div style="display:flex;gap:18px">
+<div class="s"><b>Qattiq soya</b><p>4px 4px 0</p></div>
+<div class="y"><b>Yorug'lik</b><p>0 0 20px 2px</p></div>
+<div class="x"><b>Yaroqsiz CSS</b><p>e'tiborsiz qoldirildi</p></div>
+</div>
+"##,
         "zamin://bosh" => r##"<title>Bosh sahifa</title>
 <style>
 .hero{background:#1e3a8a;color:#ffffff;text-align:center}
@@ -6992,6 +7019,7 @@ document.getElementById("qs").textContent = location.search;
 <li><a href="zamin://joylasuv">CSS position va float sinovi</a></li>
 <li><a href="zamin://ramka">iframe: ichki hujjatlar sinovi</a></li>
 <li><a href="zamin://matn">text-align va dir=rtl sinovi</a></li>
+<li><a href="zamin://bezak">CSS gradient va box-shadow sinovi</a></li>
 <li><a href="zamin://tarix">Tarix</a> — körilgan sahifalar</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
 <li><a href="https://example.com/">example.com</a> (HTTPS, haqiqiy internet)</li>
@@ -7786,10 +7814,13 @@ struct Deco {
     radius: usize,
     bw: usize,
     bc: Color,
+    grad: Option<crate::css::Grad>,
+    // box-shadow (ekran px): dx, dy, blur, spread, rang, alfa
+    shadow: Option<(i32, i32, usize, i32, Color, u8)>,
 }
 
 fn dfill(x: usize, y: usize, w: usize, h: usize, c: Color) -> Deco {
-    Deco { x, y, w, h, fill: Some(c), radius: 0, bw: 0, bc: 0 }
+    Deco { x, y, w, h, fill: Some(c), radius: 0, bw: 0, bc: 0, grad: None, shadow: None }
 }
 
 /// Sahifa joylaşuvi: elementlar, bezaklar va toʻliq balandlik.
@@ -7820,6 +7851,7 @@ fn out_of_flow(run: &[&crate::html::Block]) -> Vec<crate::html::Block> {
             if c.bgk != 0 && c.bgk < c.oser {
                 // quti tasqaridagi ajdodniki — bu yerda çizilmaydi
                 (c.bg, c.bgk, c.pad, c.bw, c.bc, c.radius) = (None, 0, 0.0, 0.0, None, 0.0);
+                (c.grad, c.shadow) = (None, None);
             }
             if c.bgk == c.oser || c.bgk == 0 {
                 (c.maxw, c.center) = (None, false);
@@ -8067,7 +8099,8 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
             let inset = padp + bwp;
             if open_box.map(|o| o.0) != Some(b.bgk) {
                 y += lpx(b.bmt);
-                deco.push(Deco { x: cx, y, w: cw, h: 0, fill: b.bg, radius: lpx(b.radius), bw: bwp, bc: b.bc.unwrap_or(0x808080) });
+                let shadow = b.shadow.map(|s| (spx(s.dx) as i32, spx(s.dy) as i32, lpx(s.blur), spx(s.spread) as i32, s.color, s.alpha));
+                deco.push(Deco { x: cx, y, w: cw, h: 0, fill: b.bg, radius: lpx(b.radius), bw: bwp, bc: b.bc.unwrap_or(0x808080), grad: b.grad, shadow });
                 open_box = Some((b.bgk, deco.len() - 1, inset));
                 if b.bdx != 0.0 || b.bdy != 0.0 {
                     box_shifts.push((deco.len() - 1, spx(b.bdx), spx(b.bdy)));
@@ -8465,7 +8498,14 @@ fn draw_browser(win: &Window) {
             // pastkilari yumaloq qoladi.
             let rb = d.radius.min(d.w / 2).min(dh / 2);
             let rt = if d.y >= sc { rb } else { 0 };
-            if let Some(c) = d.fill {
+            if let Some((sx, sy, blur, spread, c, a)) = d.shadow {
+                // soya — butun quti böyiça (yuqorisi aylantirilgan bölsa ham), qirqiş sohasi çeklaydi
+                let ey = py0 as i32 + d.y as i32 - sc as i32;
+                gfx::box_shadow(dx as i32, ey, d.w, d.h, d.radius.min(d.w / 2).min(d.h / 2), sx, sy, blur, spread, c, a as u32);
+            }
+            if let Some(g) = d.grad.filter(|g| g.n >= 2) {
+                gfx::gradient_round_rect(dx, dy, d.w, dh, rt, rb, g.angle, &g.stops[..g.n as usize], top - d.y);
+            } else if let Some(c) = d.fill {
                 if rb > 0 {
                     gfx::fill_round_rect_tb(dx, dy, d.w, dh, rt, rb, c);
                 } else {

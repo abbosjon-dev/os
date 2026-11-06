@@ -62,6 +62,8 @@ pub struct Block {
     pub bw: f32,
     pub bc: Option<u32>,
     pub radius: f32,
+    pub grad: Option<css::Grad>,     // konteyner foni: linear-gradient
+    pub shadow: Option<css::Shadow>, // konteyner soyasi: box-shadow
     pub maxw: Option<(f32, bool)>,
     pub center: bool,
     pub mt: f32,
@@ -244,7 +246,9 @@ impl Doc {
                         if b.bg.is_none() {
                             b.bg = tmpl.bg;
                             b.bgk = tmpl.bgk;
+                            b.grad = tmpl.grad;
                         }
+                        b.shadow = tmpl.shadow;
                         b.flex = tmpl.flex;
                         b.fcol = tmpl.fcol;
                         b.fmode = tmpl.fmode;
@@ -320,7 +324,18 @@ impl Doc {
             if whole {
                 match prop.as_str() {
                     "display" => b.hidden = low == "none",
-                    "background" | "background-color" if owner => b.bg = css::parse_color(val),
+                    "background" | "background-color" | "background-image" if owner => {
+                        if low.contains("gradient(") {
+                            if let Some(g) = css::parse_gradient(&low) {
+                                (b.grad, b.bg) = (Some(g), Some(g.stops[0].0));
+                            }
+                        } else if prop != "background-image" {
+                            (b.grad, b.bg) = (None, css::parse_color(val));
+                        } else if low.trim() == "none" {
+                            b.grad = None;
+                        }
+                    }
+                    "box-shadow" if owner => b.shadow = css::parse_shadow(&low),
                     "text-align" if owner => {
                         let mut st = Sty::root();
                         st.rtl = b.rtl;
@@ -389,7 +404,9 @@ impl Doc {
                 if b.bg.is_none() {
                     b.bg = t.bg;
                     b.bgk = t.bgk;
+                    b.grad = t.grad;
                 }
+                b.shadow = t.shadow;
                 b.pad = t.pad;
                 b.bw = t.bw;
                 b.bc = t.bc;
@@ -1020,7 +1037,7 @@ impl P {
         }
         Block {
             kind: k, spans: Vec::new(), bg, align: css::resolve_align(st.align, st.rtl), rtl: st.rtl, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: st.hidden, bgk,
-            pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, maxw: cs.maxw, center: cs.center, mt: st.mt, mb: st.mb,
+            pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, grad: cs.grad, shadow: cs.shadow, maxw: cs.maxw, center: cs.center, mt: st.mt, mb: st.mb,
             bmt: cs.mt, bmb: cs.mb,
             flex: fl.0, fcol: fl.1, fmode: fl.2, fgap: fl.3, gcols: fl.4, fjust: fl.5, fw: fl.6, fgrow: fl.7,
             mark: String::new(), det, summary, iw: 0, ih: 0, rspan: fl.8,
@@ -1143,6 +1160,7 @@ impl P {
         for b in blocks.iter_mut() {
             // Bitta ramka-quti: ichki hujjat foni, çegara, iframe kengligi
             (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.center, b.bmt, b.bmb) = (Some(fbg), key, 8.0, border, Some(bc), 2.0, width, false, 6.0, 6.0);
+            (b.grad, b.shadow) = (None, None);
         }
         self.doc.blocks.extend(blocks);
     }
@@ -1440,6 +1458,7 @@ impl P {
             b.fgrow = grow;
             b.rspan = 0; // joy egallovçi
             (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.center) = (None, 0, 0.0, 0.0, None, 0.0, None, false);
+            (b.grad, b.shadow) = (None, None);
             b.spans.push(Span { text: String::from("\u{2007}"), link: None, bold: false, code: false, br: false, color: None, size: b.size, el: NO_EL, button: false, underline: false, input: NO_EL, fx: 0 });
             self.doc.blocks.push(b);
         }
@@ -2239,7 +2258,7 @@ pub fn plain(text: &str) -> Doc {
         src: String::new(),
         hidden: false,
         bgk: 0,
-        pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false, mt: 0.0, mb: 0.0, bmt: 0.0, bmb: 0.0,
+        pad: 0.0, bw: 0.0, bc: None, radius: 0.0, grad: None, shadow: None, maxw: None, center: false, mt: 0.0, mb: 0.0, bmt: 0.0, bmb: 0.0,
         flex: 0, fcol: 0, fmode: 0, fgap: 0.0, gcols: 0, fjust: 0, fw: None, fgrow: 0.0,
         mark: String::new(), det: NO_EL, summary: false, iw: 0, ih: 0, rspan: 1,
         oser: 0, okind: 0, ow: None, oins: [None; 4], pk: 0, aser: 0, rdx: 0.0, rdy: 0.0, bdx: 0.0, bdy: 0.0, clear: 0,
@@ -2481,4 +2500,80 @@ fn media_checks() -> Result<usize, &'static str> {
         return Err(":hover: ajdod (.k:hover .c) qöllanmadi");
     }
     Ok(8)
+}
+
+/// CSS bezak: linear-gradient töxtaşlari / yönalişi va box-shadow parametrlari;
+/// yaroqsiz qiymatlar panic qilmasdan e'tiborsiz qoldiriladi.
+pub fn self_test_decor() -> Result<usize, &'static str> {
+    let mut n = crate::gfx::self_test_decor()?;
+    let g = |s: &str| css::parse_gradient(s);
+    // yönalişlar
+    for (src, ang) in [
+        ("linear-gradient(red, blue)", 180u16),
+        ("linear-gradient(to bottom, red, blue)", 180),
+        ("linear-gradient(to right, red, blue)", 90),
+        ("linear-gradient(to top, red, blue)", 0),
+        ("linear-gradient(to left, red, blue)", 270),
+        ("linear-gradient(to top right, red, blue)", 45),
+        ("linear-gradient(0deg, red, blue)", 0),
+        ("linear-gradient(90deg, red, blue)", 90),
+        ("linear-gradient(270deg, red, blue)", 270),
+        ("linear-gradient(-90deg, red, blue)", 270),
+        ("linear-gradient(0.5turn, red, blue)", 180),
+    ] {
+        if g(src).map(|x| x.angle) != Some(ang) {
+            return Err("linear-gradient: yönaliş notöğri");
+        }
+        n += 1;
+    }
+    // to'xtaşlar: 3 rang, joylar, rgb() içidagi vergullar
+    let x = g("linear-gradient(45deg, #ff0000, rgb(0, 255, 0) 30%, #0000ff)").ok_or("linear-gradient: 3 töxtaş öqilmadi")?;
+    if x.angle != 45 || x.n != 3 || x.stops[..3] != [(0xff0000, 0), (0x00ff00, 300), (0x0000ff, 1000)] {
+        return Err("linear-gradient: töxtaşlar notöğri");
+    }
+    let x = g("linear-gradient(to right, #111 10%, #222 5%, #333)").ok_or("linear-gradient: joylar")?;
+    if x.stops[..3] != [(0x111111, 100), (0x222222, 100), (0x333333, 1000)] {
+        return Err("linear-gradient: kamayuvçi joy tuzatilmadi");
+    }
+    n += 2;
+    // yaroqsizlar — None
+    for bad in ["linear-gradient(", "linear-gradient(red, blue", "linear-gradient(red)", "linear-gradient(to middle, red, blue)", "linear-gradient(90deg, xyz, blue)", "linear-gradient()", "radial-gradient(red, blue)", "linear-gradient(((,,))"] {
+        if g(bad).is_some() {
+            return Err("linear-gradient: yaroqsiz qiymat qabul qilindi");
+        }
+        n += 1;
+    }
+    // box-shadow
+    let s = css::parse_shadow("2px 4px 8px 1px rgba(0, 0, 0, .5)").ok_or("box-shadow: öqilmadi")?;
+    if (s.dx, s.dy, s.blur, s.spread, s.color) != (2.0, 4.0, 8.0, 1.0, 0) || !(126..=129).contains(&s.alpha) {
+        return Err("box-shadow: parametrlar notöğri");
+    }
+    let s = css::parse_shadow("#1e3a8a -3px 5px").ok_or("box-shadow: rang boşda")?;
+    if (s.dx, s.dy, s.blur, s.spread, s.color, s.alpha) != (-3.0, 5.0, 0.0, 0.0, 0x1e3a8a, 255) {
+        return Err("box-shadow: rang boşdagi variant notöğri");
+    }
+    for bad in ["none", "", "5px", "1px 2px 3px 4px 5px red", "foo bar", "inset 0 0 4px red", "1px 2px transparent"] {
+        if css::parse_shadow(bad).is_some() {
+            return Err("box-shadow: yaroqsiz qiymat qabul qilindi");
+        }
+        n += 1;
+    }
+    // Hujjat orqali: blok (konteyner) ga ötadi; yaroqsizlari fonni buzmaydi
+    let d = parse("<style>.a{background:linear-gradient(to right,#ff0000,#0000ff);box-shadow:0 2px 6px #000;border-radius:8px}\
+        .b{background:#00ff00;background:linear-gradient(#ff0000;box-shadow:bad}</style>\
+        <div class=a><p>A</p></div><div class=b><p>B</p></div><div style=\"background-image:linear-gradient(0deg,#000,#fff)\"><p>C</p></div>");
+    let blk = |t: &str| d.blocks.iter().find(|b| b.spans.iter().any(|s| s.text.trim() == t));
+    let a = blk("A").ok_or("bezak: A bloki yöq")?;
+    if a.grad.map(|g| (g.angle, g.n)) != Some((90, 2)) || a.bg != Some(0xff0000) || a.shadow.map(|s| (s.dy, s.blur)) != Some((2.0, 6.0)) || a.bgk == 0 {
+        return Err("bezak: .a gradient/soya blokka ötmadi");
+    }
+    let b = blk("B").ok_or("bezak: B bloki yöq")?;
+    if b.grad.is_some() || b.shadow.is_some() || b.bg != Some(0x00ff00) {
+        return Err("bezak: yaroqsiz gradient fonni buzdi");
+    }
+    let c = blk("C").ok_or("bezak: C bloki yöq")?;
+    if c.grad.map(|g| g.angle) != Some(0) {
+        return Err("bezak: inline background-image öqilmadi");
+    }
+    Ok(n + 3)
 }

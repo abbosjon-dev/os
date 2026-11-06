@@ -41,6 +41,32 @@ pub struct Sty {
     pub ins: [Option<f32>; 4],   // top, right, bottom, left (CSS px)
     pub float: u8,               // 0 — yöq, 1 — çap, 2 — öng
     pub clear: u8,               // 1 — left, 2 — right, 3 — both
+    // Bezak (meros bölib ötmaydi)
+    pub grad: Option<Grad>,      // background(-image): linear-gradient(...)
+    pub shadow: Option<Shadow>,  // box-shadow
+}
+
+/// Gradient rang töxtaşlari soni çegarasi.
+pub const GRAD_MAX: usize = 6;
+
+/// linear-gradient: burçak (CSS gradus: 0 — yuqoriga, 90 — öngga, 180 — pastga) va
+/// rang töxtaşlari (rang, joy 0..=1000 — promille). `n` — haqiqiy töxtaşlar soni (2..=GRAD_MAX).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Grad {
+    pub angle: u16,
+    pub n: u8,
+    pub stops: [(u32, u16); GRAD_MAX],
+}
+
+/// box-shadow: siljiş, xiralik, kengayiş (CSS px), rang va uning shaffofligi (0..255).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Shadow {
+    pub dx: f32,
+    pub dy: f32,
+    pub blur: f32,
+    pub spread: f32,
+    pub color: u32,
+    pub alpha: u8,
 }
 
 impl Sty {
@@ -49,7 +75,7 @@ impl Sty {
             color: None, bg: None, size: 16.0, bold: false, italic: false, align: 0, rtl: false, hidden: false, underline: None, strike: false, block: None,
             mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
-            pos: 0, ins: [None; 4], float: 0, clear: 0,
+            pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None,
         }
     }
     /// Meros: rang, ölçam, qalinlik, tekislaş, yaşiriş — bolaga ötadi; fon — ötmaydi.
@@ -57,13 +83,13 @@ impl Sty {
         Sty {
             bg: None, block: None, mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
-            pos: 0, ins: [None; 4], float: 0, clear: 0,
+            pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None,
             ..*self
         }
     }
     /// Konteynermi (fon, çegara yoki kenglik çeklovi bor)?
     pub fn is_box(&self) -> bool {
-        self.bg.is_some() || self.bw > 0.0 || self.maxw.is_some() || self.pad > 0.0
+        self.bg.is_some() || self.bw > 0.0 || self.maxw.is_some() || self.pad > 0.0 || self.grad.is_some() || self.shadow.is_some()
     }
 }
 
@@ -541,6 +567,171 @@ const NAMED: [(&str, u32); 30] = [
 ];
 
 /// Rang: #rgb, #rrggbb, rgb(r,g,b), rgba(...), nom bilan.
+/// Qavslarni hisobga olib, yuqori darajadagi `sep` belgisi böyiça bölaydi.
+fn split_top(s: &str, sep: char) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut depth, mut start) = (0i32, 0usize);
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            c if depth == 0 && (c == sep || sep == ' ' && c.is_whitespace()) => {
+                out.push(&s[start..i]);
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    out.push(&s[start..]);
+    out.into_iter().map(|x| x.trim()).filter(|x| !x.is_empty()).collect()
+}
+
+/// Rang + shaffoflik (rgba/hsla 4-qiymat, #rrggbbaa, #rgba, transparent).
+pub fn parse_color_a(v: &str) -> Option<(u32, u8)> {
+    let v = v.trim();
+    let low = v.to_ascii_lowercase();
+    if low == "transparent" {
+        return Some((0, 0));
+    }
+    let c = parse_color(v)?;
+    let mut a = 255u8;
+    if let Some(h) = low.strip_prefix('#') {
+        let h: String = h.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+        if h.len() == 8 {
+            a = u8::from_str_radix(&h[6..8], 16).unwrap_or(255);
+        } else if h.len() == 4 {
+            a = (h[3..4].chars().next().and_then(|c| c.to_digit(16)).unwrap_or(15) * 17) as u8;
+        }
+    } else if let Some(r) = low.strip_prefix("rgba(").or_else(|| low.strip_prefix("rgb(")) {
+        let parts: Vec<&str> = r.trim_end_matches(')').split([',', ' ', '/']).filter(|x| !x.is_empty()).collect();
+        if let Some(x) = parts.get(3) {
+            let f = if let Some(p) = x.strip_suffix('%') { parse_f(p).map(|f| f / 100.0) } else { parse_f(x) };
+            a = (f.unwrap_or(1.0).clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+        }
+    }
+    Some((c, a))
+}
+
+/// `linear-gradient(to bottom|to right|<N>deg|<N>turn, rang [joy%], ...)` — kamida 2 rang.
+/// Yaroqsiz (yopilmagan qavs, rang yöq, nomaʼlum yönaliş) — None (panic qilmaydi).
+pub fn parse_gradient(v: &str) -> Option<Grad> {
+    let low = v.trim().to_ascii_lowercase();
+    let i = low.find("linear-gradient(")?;
+    let body = &low[i + "linear-gradient(".len()..];
+    // mos yopuvçi qavs
+    let mut depth = 1i32;
+    let mut end = None;
+    for (k, c) in body.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(k);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body = &body[..end?];
+    let mut args = split_top(body, ',');
+    if args.is_empty() {
+        return None;
+    }
+    let mut angle = 180u16;
+    let first = args[0];
+    if let Some(dir) = first.strip_prefix("to ") {
+        let (mut x, mut y) = (0i32, 0i32);
+        for w in dir.split_whitespace() {
+            match w {
+                "top" => y = -1,
+                "bottom" => y = 1,
+                "left" => x = -1,
+                "right" => x = 1,
+                _ => return None,
+            }
+        }
+        angle = match (x, y) {
+            (0, -1) => 0,
+            (1, -1) => 45,
+            (1, 0) => 90,
+            (1, 1) => 135,
+            (0, 1) => 180,
+            (-1, 1) => 225,
+            (-1, 0) => 270,
+            (-1, -1) => 315,
+            _ => return None,
+        };
+        args.remove(0);
+    } else if first.ends_with("deg") || first.ends_with("turn") || first.ends_with("rad") {
+        let n = parse_f(first)?;
+        let deg = if first.ends_with("turn") { n * 360.0 } else if first.ends_with("rad") { n * 57.29578 } else { n };
+        let d = deg % 360.0;
+        angle = (if d < 0.0 { d + 360.0 } else { d } + 0.5) as u16 % 360;
+        args.remove(0);
+    }
+    if args.len() < 2 {
+        return None;
+    }
+    let mut stops: Vec<(u32, Option<u16>)> = Vec::new();
+    for a in args.iter().take(GRAD_MAX) {
+        let toks = split_top(a, ' ');
+        let (c, _) = parse_color_a(toks.first()?)?;
+        let pos = toks.get(1).and_then(|p| p.strip_suffix('%')).and_then(parse_f).map(|f| (f.clamp(0.0, 100.0) * 10.0) as u16);
+        stops.push((c, pos));
+    }
+    // joyi berilmaganlar teng taqsimlanadi; kamaymaydigan qilib tuzatiladi
+    let n = stops.len();
+    let mut out = [(0u32, 0u16); GRAD_MAX];
+    let mut prev = 0u16;
+    for (k, (c, p)) in stops.iter().enumerate() {
+        let auto = (k * 1000 / (n - 1)) as u16;
+        let p = p.unwrap_or(auto).max(prev);
+        out[k] = (*c, p);
+        prev = p;
+    }
+    Some(Grad { angle, n: n as u8, stops: out })
+}
+
+/// `box-shadow: [inset] dx dy [blur [spread]] rang` (birinçi soya; `none` — None).
+pub fn parse_shadow(v: &str) -> Option<Shadow> {
+    let low = v.trim().to_ascii_lowercase();
+    if low.is_empty() || low == "none" {
+        return None;
+    }
+    let first = *split_top(&low, ',').first()?;
+    let mut nums: Vec<f32> = Vec::new();
+    let mut col = None;
+    for t in split_top(first, ' ') {
+        if t == "inset" {
+            return None; // içki soya qöllab-quvvatlanmaydi
+        }
+        if let Some(c) = parse_color_a(t) {
+            col = Some(c);
+        } else if let Some(n) = length(t, 16.0) {
+            nums.push(n);
+        } else {
+            return None;
+        }
+    }
+    if nums.len() < 2 || nums.len() > 4 {
+        return None;
+    }
+    let (color, alpha) = col.unwrap_or((0, 255));
+    if alpha == 0 {
+        return None;
+    }
+    Some(Shadow {
+        dx: nums[0].clamp(-60.0, 60.0),
+        dy: nums[1].clamp(-60.0, 60.0),
+        blur: nums.get(2).copied().unwrap_or(0.0).clamp(0.0, 60.0),
+        spread: nums.get(3).copied().unwrap_or(0.0).clamp(-30.0, 30.0),
+        color,
+        alpha,
+    })
+}
+
 pub fn parse_color(v: &str) -> Option<u32> {
     let v = v.trim().to_ascii_lowercase();
     if let Some(h) = v.strip_prefix('#') {
@@ -665,11 +856,32 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
                 s.color = Some(c);
             }
         }
+        "background-image" => {
+            if low.trim() == "none" {
+                s.grad = None;
+            } else if let Some(g) = parse_gradient(&low) {
+                s.grad = Some(g);
+                s.bg = Some(g.stops[0].0);
+            }
+        }
+        "box-shadow" => s.shadow = parse_shadow(&low),
         "background-color" | "background" => {
-            if low == "none" || low == "transparent" {
+            if prop == "background" && low.contains("gradient(") {
+                // yaroqsiz gradient — e'tiborsiz (fon özgarmaydi)
+                if let Some(g) = parse_gradient(&low) {
+                    s.grad = Some(g);
+                    s.bg = Some(g.stops[0].0);
+                }
+            } else if low == "none" || low == "transparent" {
                 s.bg = None;
+                if prop == "background" {
+                    s.grad = None;
+                }
             } else if let Some(c) = parse_color(val).or_else(|| val.split_whitespace().find_map(parse_color)) {
                 s.bg = Some(c);
+                if prop == "background" {
+                    s.grad = None;
+                }
             }
         }
         "font-size" => {
