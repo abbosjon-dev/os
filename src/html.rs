@@ -81,6 +81,7 @@ pub struct Block {
     pub summary: bool,  // <summary> qatori
     pub iw: u16,        // rasm: width/height atributlari (0 — yöq)
     pub ih: u16,
+    pub rspan: u8,      // jadval katagi: rowspan (1 — oddiy)
 }
 
 /// Forma maydoni.
@@ -756,6 +757,26 @@ struct Open {
     link: Option<String>,
     serial: u32,
     input: u16,
+    rspan: u8,
+}
+
+/// rowspan bilan pastki qatorlarga çozilgan katak.
+struct Pend {
+    start: usize,
+    n: usize,
+    left: u8,
+    row: u32,
+    fw: Option<(f32, bool)>,
+    grow: f32,
+}
+
+/// Bitta <table> ning qator holati.
+#[derive(Default)]
+struct TGrid {
+    row: u32,
+    col: usize,
+    in_row: bool,
+    pend: Vec<Pend>,
 }
 
 struct P {
@@ -770,6 +791,8 @@ struct P {
     form: u16,
     dets: Vec<(u16, bool)>,          // oçiq <details> steki
     tborder: Vec<bool>,              // <table border> steki
+    tgrid: Vec<TGrid>,               // jadval qatorlari: rowspan egallagan ustunlar
+    rs_new: bool,                    // oxirgi katak rowspan qöşdi (kengligini yozib qöyiş uçun)
     media: Option<(String, String)>, // <video>/<audio>: (turi, manba)
     pic_src: String,                 // <picture><source srcset>
 }
@@ -811,13 +834,13 @@ impl P {
         let fl = match self.stack.iter().rposition(|o| o.sty.flex == 1 || o.sty.flex == 3) {
             Some(k) => {
                 let c = &self.stack[k];
-                let (col, fw, grow) = match self.stack.get(k + 1) {
-                    Some(ch) => (ch.serial, ch.sty.maxw, ch.sty.grow),
-                    None => (c.serial, None, 0.0),
+                let (col, fw, grow, rs) = match self.stack.get(k + 1) {
+                    Some(ch) => (ch.serial, ch.sty.maxw, ch.sty.grow, ch.rspan),
+                    None => (c.serial, None, 0.0, 1),
                 };
-                (c.serial, col, c.sty.flex, c.sty.gap, c.sty.gcols, c.sty.justify, fw, grow)
+                (c.serial, col, c.sty.flex, c.sty.gap, c.sty.gcols, c.sty.justify, fw, grow, rs)
             }
-            None => (0, 0, 0, 0.0, 0, 0, None, 0.0),
+            None => (0, 0, 0, 0.0, 0, 0, None, 0.0, 1),
         };
         // Quti: flex konteynerdan içkaridagisi (aks holda butun qator bitta qutiga tuşib qoladi)
         let fk = self.stack.iter().rposition(|o| o.sty.flex == 1 || o.sty.flex == 3).map(|k| k + 1).unwrap_or(0);
@@ -831,7 +854,7 @@ impl P {
             pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, maxw: cs.maxw, center: cs.center, mt: st.mt, mb: st.mb,
             bmt: cs.mt, bmb: cs.mb,
             flex: fl.0, fcol: fl.1, fmode: fl.2, fgap: fl.3, gcols: fl.4, fjust: fl.5, fw: fl.6, fgrow: fl.7,
-            mark: String::new(), det, summary, iw: 0, ih: 0,
+            mark: String::new(), det, summary, iw: 0, ih: 0, rspan: fl.8,
         }
     }
     fn start(&mut self, k: Kind) {
@@ -1050,7 +1073,69 @@ impl P {
         let link = if name == "a" { attr(tag, "href") } else { None };
         self.serial += 1;
         let serial = self.serial;
-        self.stack.push(Open { tag: String::from(name), id, classes, sty: st, el, link, serial, input: NO_EL });
+        let rspan = if name == "td" || name == "th" { attr(tag, "rowspan").and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(1).clamp(1, 64) } else { 1 };
+        self.stack.push(Open { tag: String::from(name), id, classes, sty: st, el, link, serial, input: NO_EL, rspan });
+    }
+    /// rowspan: joriy qatorda yuqoridan çozilgan kataklar uçun bo'ş joy egallovçi kataklar.
+    /// `all` — qator oxiri (qolgan hamma ustunlar), aks holda faqat joriy ustundagilar.
+    fn rs_fill(&mut self, all: bool) {
+        let Some(tr) = self.stack.iter().rposition(|o| o.tag == "tr") else { return };
+        let Some(g) = self.tgrid.last_mut() else { return };
+        if !g.in_row {
+            return;
+        }
+        let mut out: Vec<(Option<(f32, bool)>, f32)> = Vec::new();
+        loop {
+            let (row, col) = (g.row, g.col);
+            let hit = g.pend.iter_mut().filter(|p| p.left > 0 && p.row != row && (p.start == col || (all && p.start >= col))).min_by_key(|p| p.start);
+            match hit {
+                Some(p) => {
+                    p.left -= 1;
+                    p.row = row;
+                    g.col = p.start + p.n;
+                    out.push((p.fw, p.grow));
+                }
+                None => break,
+            }
+        }
+        g.pend.retain(|p| p.left > 0);
+        if out.is_empty() {
+            return;
+        }
+        self.flush();
+        let (tser, tsty) = (self.stack[tr].serial, self.stack[tr].sty);
+        for (fw, grow) in out {
+            self.serial += 1;
+            let mut b = self.new_block(Kind::P);
+            b.flex = tser;
+            b.fcol = self.serial;
+            b.fmode = tsty.flex;
+            b.fgap = tsty.gap;
+            b.fjust = tsty.justify;
+            b.fw = fw;
+            b.fgrow = grow;
+            b.rspan = 0; // joy egallovçi
+            (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.center) = (None, 0, 0.0, 0.0, None, 0.0, None, false);
+            b.spans.push(Span { text: String::from("\u{2007}"), link: None, bold: false, code: false, br: false, color: None, size: b.size, el: NO_EL, button: false, underline: false, input: NO_EL, fx: 0 });
+            self.doc.blocks.push(b);
+        }
+    }
+    /// Yangi katak: avval egallangan ustunlarni töldiradi, keyin rowspan ni yozib qöyadi.
+    fn rs_cell(&mut self, tag: &str) {
+        self.rs_fill(false);
+        let Some(g) = self.tgrid.last_mut() else { return };
+        if !g.in_row {
+            return;
+        }
+        let n = attr(tag, "colspan").and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(1).clamp(1, 12);
+        let r = attr(tag, "rowspan").and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(1).clamp(1, 64);
+        if r > 1 {
+            g.pend.push(Pend { start: g.col, n, left: r - 1, row: g.row, fw: None, grow: n as f32 });
+        }
+        g.col += n;
+        if r > 1 {
+            self.rs_new = true;
+        }
     }
     fn close(&mut self, name: &str) {
         if let Some(k) = self.stack.iter().rposition(|o| o.tag == name) {
@@ -1206,7 +1291,7 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
 
 fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool) -> Doc {
     let rules: Vec<Rule> = rules.to_vec();
-    let mut p = P { doc: Doc::empty(), rules, stack: Vec::new(), cur: None, pre: 0, lists: Vec::new(), in_title: false, serial: 0, form: NO_EL, dets: Vec::new(), tborder: Vec::new(), media: None, pic_src: String::new() };
+    let mut p = P { doc: Doc::empty(), rules, stack: Vec::new(), cur: None, pre: 0, lists: Vec::new(), in_title: false, serial: 0, form: NO_EL, dets: Vec::new(), tborder: Vec::new(), tgrid: Vec::new(), rs_new: false, media: None, pic_src: String::new() };
     // Yaşirin <html> va <body> (teglar bölmasa ham uslublari qöllanadi)
     if implicit_body {
         p.open("html", "html");
@@ -1340,15 +1425,24 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool) -> Doc {
                     }
                     "summary" | "caption" | "legend" | "figcaption" => p.flush(),
                     "table" => {
+                        p.rs_fill(true);
                         p.flush();
                         p.tborder.pop();
+                        p.tgrid.pop();
+                    }
+                    "tr" => {
+                        p.rs_fill(true);
+                        p.flush();
+                        if let Some(g) = p.tgrid.last_mut() {
+                            g.in_row = false;
+                        }
                     }
                     "form" => {
                         p.flush();
                         p.form = NO_EL;
                     }
                     "title" => p.in_title = false,
-                    "p" | "div" | "section" | "article" | "header" | "footer" | "nav" | "main" | "tr" | "td" | "th" | "center" | "aside" | "figure" | "dd" | "dt" | "dl" | "fieldset" | "address" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "blockquote" => p.flush(),
+                    "p" | "div" | "section" | "article" | "header" | "footer" | "nav" | "main" | "td" | "th" | "center" | "aside" | "figure" | "dd" | "dt" | "dl" | "fieldset" | "address" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "blockquote" => p.flush(),
                     "ul" | "ol" => {
                         p.flush();
                         p.lists.pop();
@@ -1367,8 +1461,28 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool) -> Doc {
                 p.stack.pop();
             }
             let void = VOID.contains(&name.as_str()) || t.ends_with('/');
+            // Jadval tarmoği (rowspan): qator / katak boşlanişi
+            match name.as_str() {
+                "tr" => {
+                    p.rs_fill(true);
+                    if let Some(g) = p.tgrid.last_mut() {
+                        g.row += 1;
+                        g.col = 0;
+                        g.in_row = true;
+                    }
+                }
+                "td" | "th" => p.rs_cell(t),
+                _ => {}
+            }
             if !void {
                 p.open(&name, t);
+            }
+            if p.rs_new {
+                p.rs_new = false;
+                let fw = p.top().maxw;
+                if let Some(pd) = p.tgrid.last_mut().and_then(|g| g.pend.last_mut()) {
+                    pd.fw = fw;
+                }
             }
             let blockish = p.top().block == Some(true);
             match name.as_str() {
@@ -1433,6 +1547,7 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool) -> Doc {
                     p.flush();
                     let bd = attr(t, "border").is_some_and(|v| v.trim() != "0") || t.split_whitespace().any(|w| w.eq_ignore_ascii_case("border"));
                     p.tborder.push(bd);
+                    p.tgrid.push(TGrid::default());
                 }
                 "q" => p.text("“"),
                 "base" => {
@@ -1660,7 +1775,7 @@ pub fn plain(text: &str) -> Doc {
         bgk: 0,
         pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false, mt: 0.0, mb: 0.0, bmt: 0.0, bmb: 0.0,
         flex: 0, fcol: 0, fmode: 0, fgap: 0.0, gcols: 0, fjust: 0, fw: None, fgrow: 0.0,
-        mark: String::new(), det: NO_EL, summary: false, iw: 0, ih: 0,
+        mark: String::new(), det: NO_EL, summary: false, iw: 0, ih: 0, rspan: 1,
     });
     d
 }
@@ -1694,3 +1809,18 @@ Fayl: <code>~/Hujjatlar/zamin.html</code>.</p>
 <p>Havolalar: <a href="zamin://bosh">Bosh sahifa</a> · <a href="zamin://haqida">Brauzer haqida</a></p>
 </body></html>
 "#;
+
+/// Jadval rowspan tekşiruvi: çozilgan kataklar pastki qatorlarda joy egallovçi oladi.
+pub fn self_test_rowspan() -> Result<usize, &'static str> {
+    let d = parse("<table border=1><tr><td rowspan=2>A</td><td>B</td></tr><tr><td>C</td></tr><tr><td>D</td><td rowspan=2>E</td><td>F</td></tr><tr><td>G</td><td>H</td></tr></table>");
+    let txt = |b: &Block| b.spans.iter().map(|s| s.text.as_str()).collect::<String>();
+    let seq: Vec<String> = d.blocks.iter().map(|b| if b.rspan == 0 { String::from("_") } else { txt(b) }).collect();
+    let got = seq.join(",");
+    if got != "A,B,_,C,D,E,F,G,_,H" {
+        return Err("rowspan: kataklar tartibi notöğri");
+    }
+    if d.blocks[0].rspan != 2 || d.blocks[5].rspan != 2 || d.blocks[2].flex != d.blocks[3].flex || d.blocks[2].fcol == d.blocks[3].fcol {
+        return Err("rowspan: qator/ustun bog'lanişi notöğri");
+    }
+    Ok(seq.len())
+}

@@ -6496,6 +6496,14 @@ fn builtin_page(url: &str) -> Option<&'static str> {
 <tr><td>Brauzer</td><td>Rust</td><td>tayyor</td></tr>
 <tr><td colspan="2">Ikki ustunli katak (colspan)</td><td>ok</td></tr></tbody>
 </table>
+<table border="1">
+<caption>Haftalik jadval (rowspan)</caption>
+<tr><th>Kun</th><th>Vaqt</th><th>Dars</th></tr>
+<tr><td rowspan="2">Duşanba</td><td>09:00</td><td>Rust</td></tr>
+<tr><td>11:00</td><td>Tarmoq</td></tr>
+<tr><td>Seşanba</td><td rowspan="2">14:00</td><td>Grafika</td></tr>
+<tr><td>Çorşanba</td><td>Fayl tizimi</td></tr>
+</table>
 <h2 id="forma">Forma maydonlari</h2>
 <fieldset><legend>Anketa</legend>
 <p><label for="ism">Ism:</label> <input id="ism" name="ism" placeholder="Ismingiz"> <input type="email" placeholder="nom@pochta.uz"></p>
@@ -7389,6 +7397,8 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
     let dark = luma(page_bg) < 128;
     let mut y = y0;
     let mut open_box: Option<(u32, usize, usize)> = None;
+    // rowspan: pastki qatorlarga çoziladigan katak qutilari (deco raqami, qolgan qatorlar)
+    let mut rs_pend: Vec<(usize, u8)> = Vec::new();
     let mut bi = 0;
     while bi < vis.len() {
         let b = vis[bi];
@@ -7435,17 +7445,32 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
                     _ => (page_pad, 0),
                 };
                 let mut bottom = y;
+                let mut rs_new: Vec<(usize, u8)> = Vec::new();
                 for (c, w) in row.iter().zip(widths.iter()) {
+                    let d0 = deco.len();
                     let yy = lay(web, &c.1, x, *w, y, b.flex, items, deco);
                     bottom = bottom.max(yy);
+                    if c.1[0].rspan > 1 && deco.len() > d0 {
+                        rs_new.push((d0, c.1[0].rspan - 1));
+                    }
                     x += w + gap + step_extra;
                 }
+                // Yuqoridan kelayotgan rowspan kataklari shu qator pastigaça çoziladi
+                for (di, left) in rs_pend.iter_mut() {
+                    if let Some(d) = deco.get_mut(*di) {
+                        d.h = d.h.max(bottom.saturating_sub(d.y));
+                    }
+                    *left -= 1;
+                }
+                rs_pend.retain(|p| p.1 > 0);
+                rs_pend.extend(rs_new);
                 y = bottom + u / 4;
             }
             open_box = None;
             bi = j;
             continue;
         }
+        rs_pend.clear();
         bi += 1;
         let bi = bi - 1;
         let base_px = pxs(b.size);

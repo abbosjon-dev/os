@@ -116,7 +116,9 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
 - **Bloklar**: `h1`–`h6`, `dl/dt/dd`, `ol type="1|a|A|i|I"` + `start`/`reversed`/`li value`,
   ichma-ich `ul` belgilari (• ◦ ▪), `figure/figcaption`, `fieldset/legend`,
   **`details/summary`** (bosilsa ochiladi), `<a name>` va **`#yakor`** havolalari.
-- **Jadvallar**: `caption`, `thead/tbody/tfoot`, `table border`, `cellpadding`, `colspan`, `td width`.
+- **Jadvallar**: `caption`, `thead/tbody/tfoot`, `table border`, `cellpadding`, `colspan`, `rowspan`, `td width`.
+  `rowspan` — katak pastki qatorlarga çoziladi (ramkasi birlaşadi), keyingi qatorlarda uning ustuni
+  böş joy egallovçi bilan saqlanadi; yuklaniş self-testida tekşiriladi.
 - **Media**: `img width/height`, `srcset`, `picture/source`, lazy `data-src`, **`data:` URI**
   (base64 va URL-kodlangan), **ichki `<svg>`** (SVG dekoderimiz bilan), `video/audio/iframe/embed/object`
   kartochkalari (havola orqali yuklab olinadi), `canvas` joyi.

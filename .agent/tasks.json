@@ -1,12 +1,46 @@
 {
   "tasks": [
-    {"id": "T1", "title": "HTML jadval: rowspan qo'llab-quvvatlash", "detail": "src/html.rs va src/gui.rs dagi jadval maketida rowspan atributini hisobga ol; zamin://html sahifasiga misol qo'sh; verify.sh full o'tsin."},
-    {"id": "T2", "title": "CSS position: relative/absolute va float: left/right (asosiy)", "detail": "src/css.rs da position, top/left, float xossalarini o'qish; lay() da oddiy joylashtirish."},
-    {"id": "T3", "title": "CSS @media (max-width/min-width) va :hover", "detail": "Media so'rovlarini oyna eniga qarab baholash; :hover uchun sichqoncha ostidagi element."},
-    {"id": "T4", "title": "<canvas> 2D: fillRect, strokeRect, fillText, beginPath/lineTo/stroke", "detail": "js.rs da getContext('2d') obyekti; gui.rs da canvas bufferini chizish."},
-    {"id": "T5", "title": "dir=rtl va text-align: right/center ni bloklarda to'liq hisobga olish", "detail": ""},
-    {"id": "T6", "title": "localStorage va cookie larni diskka saqlash (~/.zamin/)", "detail": "Qayta yuklangandan keyin ham saqlanib qolsin; fs moduli orqali."},
-    {"id": "T7", "title": "<iframe> ichki hujjatni haqiqiy chizish (srcdoc va bir xil manbali src)", "detail": ""},
-    {"id": "T8", "title": "<audio>/<video> elementlari: WAV audio ijro (virtio-sound), video uchun poster", "detail": ""}
+    {
+      "id": "T1",
+      "title": "HTML jadval: rowspan qo'llab-quvvatlash",
+      "detail": "src/html.rs va src/gui.rs dagi jadval maketida rowspan atributini hisobga ol; zamin://html sahifasiga misol qo'sh; verify.sh full o'tsin.",
+      "status": "done",
+      "done_at": "2026-11-06 10:12:38"
+    },
+    {
+      "id": "T2",
+      "title": "CSS position: relative/absolute va float: left/right (asosiy)",
+      "detail": "src/css.rs da position, top/left, float xossalarini o'qish; lay() da oddiy joylashtirish."
+    },
+    {
+      "id": "T3",
+      "title": "CSS @media (max-width/min-width) va :hover",
+      "detail": "Media so'rovlarini oyna eniga qarab baholash; :hover uchun sichqoncha ostidagi element."
+    },
+    {
+      "id": "T4",
+      "title": "<canvas> 2D: fillRect, strokeRect, fillText, beginPath/lineTo/stroke",
+      "detail": "js.rs da getContext('2d') obyekti; gui.rs da canvas bufferini chizish."
+    },
+    {
+      "id": "T5",
+      "title": "dir=rtl va text-align: right/center ni bloklarda to'liq hisobga olish",
+      "detail": ""
+    },
+    {
+      "id": "T6",
+      "title": "localStorage va cookie larni diskka saqlash (~/.zamin/)",
+      "detail": "Qayta yuklangandan keyin ham saqlanib qolsin; fs moduli orqali."
+    },
+    {
+      "id": "T7",
+      "title": "<iframe> ichki hujjatni haqiqiy chizish (srcdoc va bir xil manbali src)",
+      "detail": ""
+    },
+    {
+      "id": "T8",
+      "title": "<audio>/<video> elementlari: WAV audio ijro (virtio-sound), video uchun poster",
+      "detail": ""
+    }
   ]
 }

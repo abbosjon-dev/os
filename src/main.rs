@@ -502,6 +502,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] JavaScript: {} ta sinov (funksiyalar, yopilmalar, massivlar, shablonlar); çaqiruv ~{} bayt stek", n, js::stack_per_call()),
         Err(e) => panic!("JavaScript interpretatori yiqildi: {}", e),
     }
+    match html::self_test_rowspan() {
+        Ok(n) => println!("  [ok] HTML jadval: rowspan ({} katak, joy egallovçilar bilan)", n),
+        Err(e) => panic!("HTML jadval tekşiruvi yiqildi: {}", e),
+    }
     // Audio dekoderi: WAV
     audio::self_test().expect("audio (WAV) dekoderi yiqildi");
     tprintln!(msg::TEST_AUDIO);
