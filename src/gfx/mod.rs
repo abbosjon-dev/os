@@ -209,119 +209,122 @@ pub fn gradient_rect(x: usize, y: usize, w: usize, h: usize, top: Color, bottom:
 
 // --- Yumaloq burçakli shakllar (mac uslubi) ---
 
-/// Burçak qamrovi: aylana markazidan (dx,dy) masofadagi piksel içidami (0..255).
+/// Burçak qamrovi (0..255). (ox, oy) — aylana markazidan hisoblangan piksel
+/// indeksi (0 — markazga eng yaqin piksel), piksel [ox, ox+1]×[oy, oy+1] sohani
+/// egallaydi. 4×4 namuna piksel içida teng taqsimlangan (markaz siljimagan).
+/// Yoy kesib ötgan har piksel kamida kiçik qamrov oladi (teşik qolmaydi).
 #[inline]
-fn corner_cov(dx: i32, dy: i32, r: i32) -> u32 {
-    // 4x supersample
-    let mut inside = 0;
-    let r2 = r * r;
-    for &sy in &[-1i32, 1] {
-        for &sx in &[-1i32, 1] {
-            let px = dx * 4 + sx; // chorak piksel
-            let py = dy * 4 + sy;
-            if px * px + py * py <= r2 * 16 {
+fn corner_cov(ox: i32, oy: i32, r: i32) -> u32 {
+    if r <= 0 || ox < 0 || oy < 0 {
+        return 0;
+    }
+    let rr = (r as i64 * 8) * (r as i64 * 8);
+    let d2 = |a: i64, b: i64| a * a + b * b;
+    let (x0, y0) = (ox as i64 * 8, oy as i64 * 8);
+    if d2(x0, y0) >= rr {
+        return 0; // yaqin burçak ham taşqarida
+    }
+    if d2(x0 + 8, y0 + 8) <= rr {
+        return 255; // uzoq burçak ham içkarida
+    }
+    let mut inside = 0u32;
+    for sy in [1i64, 3, 5, 7] {
+        for sx in [1i64, 3, 5, 7] {
+            if d2(x0 + sx, y0 + sy) <= rr {
                 inside += 1;
             }
         }
     }
-    inside * 255 / 4
+    (inside * 255 / 16).max(4)
+}
+
+/// Piksel (dx,dy) burçak zonasidami? Bölsa — (ox, oy, r). rt — yuqori, rb — pastki
+/// burçaklar radiusi (çaqiruvçi ularni w/2, h/2 bilan çeklagan bölişi şart).
+#[inline]
+fn corner_at(dx: usize, dy: usize, w: usize, h: usize, rt: usize, rb: usize) -> Option<(i32, i32, i32)> {
+    let (r, oy) = if dy < rt {
+        (rt, rt - 1 - dy)
+    } else if rb > 0 && dy >= h - rb {
+        (rb, dy - (h - rb))
+    } else {
+        return None;
+    };
+    let ox = if dx < r {
+        r - 1 - dx
+    } else if dx >= w - r {
+        dx - (w - r)
+    } else {
+        return None;
+    };
+    Some((ox as i32, oy as i32, r as i32))
+}
+
+fn round_rect_on(f: &Fb, x: usize, y: usize, w: usize, h: usize, rt: usize, rb: usize, c: Color, alpha: u32) {
+    if w == 0 || h == 0 || alpha == 0 {
+        return;
+    }
+    let rt = rt.min(w / 2).min(h / 2);
+    let rb = rb.min(w / 2).min(h / 2);
+    for dy in 0..h {
+        for dx in 0..w {
+            let cov = match corner_at(dx, dy, w, h, rt, rb) {
+                Some((ox, oy, r)) => corner_cov(ox, oy, r),
+                None => 255,
+            };
+            blend(f, x + dx, y + dy, c, cov * alpha.min(255) / 255);
+        }
+    }
 }
 
 /// Yumaloq burçakli töldirilgan töğriburçak (silliq chetlar).
 pub fn fill_round_rect(x: usize, y: usize, w: usize, h: usize, r: usize, c: Color) {
-    if w == 0 || h == 0 {
-        return;
-    }
-    let r = r.min(w / 2).min(h / 2);
+    fill_round_rect_tb(x, y, w, h, r, r, c);
+}
+
+/// Yuqori (rt) va pastki (rb) burçaklari har xil radiusli töldirilgan töğriburçak
+/// (masalan, yuqoridan qisman aylantirilgan quti: rt = 0, pastkisi yumaloq qoladi).
+pub fn fill_round_rect_tb(x: usize, y: usize, w: usize, h: usize, rt: usize, rb: usize, c: Color) {
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };
-    for dy in 0..h {
-        for dx in 0..w {
-            // Qaysi burçak zonasidamiz?
-            let cx = if dx < r {
-                Some((r - 1 - dx) as i32)
-            } else if dx >= w - r {
-                Some((dx - (w - r)) as i32)
-            } else {
-                None
-            };
-            let cy = if dy < r {
-                Some((r - 1 - dy) as i32)
-            } else if dy >= h - r {
-                Some((dy - (h - r)) as i32)
-            } else {
-                None
-            };
-            match (cx, cy) {
-                (Some(ox), Some(oy)) => {
-                    let a = corner_cov(ox, oy, r as i32);
-                    blend(f, x + dx, y + dy, c, a);
-                }
-                _ => put(f, x + dx, y + dy, c),
-            }
-        }
-    }
+    round_rect_on(f, x, y, w, h, rt, rb, c, 255);
 }
 
 /// Yumaloq burçakli shaffof töğriburçak (alfa 0..255).
 pub fn fill_round_rect_a(x: usize, y: usize, w: usize, h: usize, r: usize, c: Color, alpha: u32) {
-    if w == 0 || h == 0 || alpha == 0 {
-        return;
-    }
-    let r = r.min(w / 2).min(h / 2);
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };
-    for dy in 0..h {
-        for dx in 0..w {
-            let cx = if dx < r {
-                Some((r - 1 - dx) as i32)
-            } else if dx >= w - r {
-                Some((dx - (w - r)) as i32)
-            } else {
-                None
-            };
-            let cy = if dy < r {
-                Some((r - 1 - dy) as i32)
-            } else if dy >= h - r {
-                Some((dy - (h - r)) as i32)
-            } else {
-                None
-            };
-            let cov = match (cx, cy) {
-                (Some(ox), Some(oy)) => corner_cov(ox, oy, r as i32),
-                _ => 255,
-            };
-            let a = cov * alpha / 255;
-            blend(f, x + dx, y + dy, c, a);
-        }
-    }
+    round_rect_on(f, x, y, w, h, r, r, c, alpha);
 }
 
 /// Yumaloq burçakli ramka (ichi boʻsh).
 pub fn round_outline(x: usize, y: usize, w: usize, h: usize, r: usize, t: usize, c: Color) {
-    // Oddiy: toʻliq yumaloq töldirib, keyin içini kesib olmaymiz — chetga t piksel chizamiz.
+    round_outline_tb(x, y, w, h, r, r, t, c);
+}
+
+/// Ramka: yuqori va pastki burçaklar radiusi alohida.
+pub fn round_outline_tb(x: usize, y: usize, w: usize, h: usize, rt: usize, rb: usize, t: usize, c: Color) {
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return };
     for i in 0..t {
-        round_ring(x + i, y + i, w - 2 * i, h - 2 * i, r.saturating_sub(i), c);
+        if 2 * i >= w || 2 * i >= h {
+            break;
+        }
+        round_ring(f, x + i, y + i, w - 2 * i, h - 2 * i, rt.saturating_sub(i), rb.saturating_sub(i), c);
     }
 }
 
-fn round_ring(x: usize, y: usize, w: usize, h: usize, r: usize, c: Color) {
+fn round_ring(f: &Fb, x: usize, y: usize, w: usize, h: usize, rt: usize, rb: usize, c: Color) {
     if w < 2 || h < 2 {
         return;
     }
-    let r = r.min(w / 2).min(h / 2);
-    let g = FB.lock();
-    let Some(f) = g.as_ref() else { return };
+    let rt = rt.min(w / 2).min(h / 2);
+    let rb = rb.min(w / 2).min(h / 2);
     let edge = |dx: usize, dy: usize| dx == 0 || dy == 0 || dx == w - 1 || dy == h - 1;
     for dy in 0..h {
         for dx in 0..w {
-            let in_corner_x = dx < r || dx >= w - r;
-            let in_corner_y = dy < r || dy >= h - r;
-            if in_corner_x && in_corner_y {
-                let ox = if dx < r { (r - 1 - dx) as i32 } else { (dx - (w - r)) as i32 };
-                let oy = if dy < r { (r - 1 - dy) as i32 } else { (dy - (h - r)) as i32 };
-                let outer = corner_cov(ox, oy, r as i32);
-                let inner = corner_cov(ox, oy, r as i32 - 1);
+            if let Some((ox, oy, r)) = corner_at(dx, dy, w, h, rt, rb) {
+                let outer = corner_cov(ox, oy, r);
+                let inner = if r > 1 { corner_cov(ox, oy, r - 1) } else { 0 };
                 let a = outer.saturating_sub(inner);
                 if a > 0 {
                     blend(f, x + dx, y + dy, c, a);
@@ -331,6 +334,84 @@ fn round_ring(x: usize, y: usize, w: usize, h: usize, r: usize, c: Color) {
             }
         }
     }
+}
+
+/// Yumaloq burçak tekşiruvi: qamrov xossalari va yorugʻ fonga çizilganda
+/// hech bir piksel fon va quti rangidan töqroq emasligi. Sinovlar soni.
+pub fn self_test_round() -> Result<usize, &'static str> {
+    let mut n = 0;
+    for r in 1..=30i32 {
+        let rr = (r * r) as i64;
+        let d2 = |a: i32, b: i32| (a as i64) * (a as i64) + (b as i64) * (b as i64);
+        for oy in 0..r {
+            for ox in 0..r {
+                let c = corner_cov(ox, oy, r);
+                // markaz içkarida (4·(ox+½)²… ≤ 4r²) yoki yaqin burçak içkarida → > 0
+                let cx2 = (2 * ox + 1) as i64 * (2 * ox + 1) as i64 + (2 * oy + 1) as i64 * (2 * oy + 1) as i64;
+                if (cx2 <= 4 * rr || d2(ox, oy) < rr) && c == 0 {
+                    return Err("yoy içidagi piksel qamrovi 0");
+                }
+                if d2(ox + 1, oy + 1) <= rr && c != 255 {
+                    return Err("toʻliq içkaridagi piksel 255 emas");
+                }
+                if d2(ox, oy) >= rr && c != 0 {
+                    return Err("taşqaridagi piksel 0 emas");
+                }
+                if ox + 1 < r && corner_cov(ox + 1, oy, r) > c {
+                    return Err("qamrov x böyiça monoton emas");
+                }
+                if oy + 1 < r && corner_cov(ox, oy + 1, r) > c {
+                    return Err("qamrov y böyiça monoton emas");
+                }
+                n += 1;
+            }
+        }
+    }
+    // Ofscreen bufer: yorugʻ fon ustida turli radius/öçamdagi qutilar
+    let (bw, bh) = (64usize, 48usize);
+    let mut buf = alloc::vec![0u32; bw * bh];
+    let f = Fb { ptr: buf.as_mut_ptr() as usize, w: bw, h: bh, noclip: true };
+    let lum = |c: u32| (c >> 16 & 0xff) + (c >> 8 & 0xff) + (c & 0xff);
+    for &(bg, fg) in &[(0xeef2f8u32, 0x3a7bd5u32), (0xffffff, 0xeef2f8), (0x161b26, 0xeef2f8)] {
+        for &(w, h, rt, rb) in &[(40usize, 30usize, 6usize, 6usize), (21, 13, 7, 7), (50, 40, 30, 30), (9, 9, 4, 4), (30, 20, 0, 8), (17, 33, 5, 0)] {
+            for p in buf.iter_mut() {
+                *p = bg;
+            }
+            round_rect_on(&f, 3, 2, w, h, rt, rb, fg, 255);
+            round_ring(&f, 3, 2, w, h, rt, rb, fg);
+            let min = lum(bg).min(lum(fg));
+            for &p in buf.iter() {
+                if lum(p) + 3 < min {
+                    return Err("burçakda fon va rangdan töqroq piksel");
+                }
+            }
+            // toʻgʻri burçak (r = 0) toʻliq boʻyalgan, yumaloq burçakda fon qoladi
+            let tl = buf[2 * bw + 3];
+            let bl = buf[(2 + h - 1) * bw + 3];
+            if (rt == 0) != (tl == fg) || (rb == 0) != (bl == fg) {
+                return Err("yuqori/pastki radius notoʻgʻri qöllandi");
+            }
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+/// Doira qamrovi: markazi (cx,cy) piksel markazida bölgan doira uçun (dx,dy)
+/// pikselning 4×4 namunali qamrovi (0..255).
+#[inline]
+fn circle_cov(dx: i32, dy: i32, r: i32) -> u32 {
+    let rr = (r as i64 * 8) * (r as i64 * 8);
+    let mut inside = 0u32;
+    for sy in [-3i64, -1, 1, 3] {
+        for sx in [-3i64, -1, 1, 3] {
+            let (a, b) = (dx as i64 * 8 + sx, dy as i64 * 8 + sy);
+            if a * a + b * b <= rr {
+                inside += 1;
+            }
+        }
+    }
+    inside * 255 / 16
 }
 
 /// Silliq töldirilgan doira (ikona uçun).
@@ -343,7 +424,7 @@ pub fn fill_circle(cx: usize, cy: usize, r: usize, c: Color) {
     let ri = r as i32;
     for dy in -ri..=ri {
         for dx in -ri..=ri {
-            let a = corner_cov(dx.abs(), dy.abs(), ri);
+            let a = circle_cov(dx, dy, ri);
             if a > 0 {
                 let xx = cx as i32 + dx;
                 let yy = cy as i32 + dy;

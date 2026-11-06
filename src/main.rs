@@ -515,6 +515,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] CSS joylaşuv: position (relative/absolute) va float/clear ({} sinov)", n),
         Err(e) => panic!("CSS position/float tekşiruvi yiqildi: {}", e),
     }
+    match gfx::self_test_round() {
+        Ok(n) => println!("  [ok] yumaloq burçaklar: qamrov (r=1..30) va yorugʻ fonda töq piksel yöq ({} sinov)", n),
+        Err(e) => panic!("yumaloq burçak tekşiruvi yiqildi: {}", e),
+    }
     match html::self_test_dir() {
         Ok(n) => println!("  [ok] dir=rtl va text-align (start/end/left/justify) ({} sinov)", n),
         Err(e) => panic!("dir/text-align tekşiruvi yiqildi: {}", e),

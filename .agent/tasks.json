@@ -69,7 +69,9 @@
       "id": "T9",
       "title": "zamin://matn: blok chetidagi qora 'tishchalar' (yumaloq burchak chizish xatosi) ni tuzatish",
       "detail": "Fayllar: src/gfx/mod.rs (corner_cov, fill_round_rect, fill_round_rect_a, round_ring/round_outline), src/gui.rs ~8216-8232 (web deco chizish sikli). Avval scripts/screenshot.py bilan zamin://matn ni suratga ol va kattalashtirib, qora piksellar qayerda ekanini aniqla. Tekshiriladigan sabablar: (a) corner_cov da piksel markazi siljigan (r-1-dx va ±1/4 namunalar), shuning uchun yoy chizig'ida 0 qamrovli piksellar teshik qoldiradi; (b) blend() fon sifatida page_bg emas, hali chizilmagan/qora framebufferni o'qiydi (masalan, deco set_clip yoki page_bg fill dan oldin chizilyapti yoki flex qatorida qo'shni quti burchagini qoplaydi); (c) dh/2 yoki d.w/2 da r toq bo'lsa burchak zonalari kesishadi; (d) rtl/flex quti uchun d.x/d.w noto'g'ri. Qo'shimcha: quti yuqoriga qisman aylantirilganda (d.y < sc) pastki burchaklar ham to'g'ri burchakka aylanib qolmasin — faqat yuqori burchaklar kesilsin. Qabul mezoni: (1) gfx::self_test_round() (main.rs self_tests ga ulangan, '[ok]' chiqaradi): corner_cov uchun r=1..30 da yoy ichidagi har piksel >0, to'liq ichkaridagi 255, tashqaridagi 0, va qamrov markazdan uzoqlashganda monoton kamayadi; (2) fill_round_rect ni yorug' fon ustida kichik ofscreen buferga (yoki FB nusxasiga) chizib, hech bir piksel ikkala rangdan ham to'qroq emasligini tekshiruvchi test; (3) docs/web-text-align.png skrinshotida .q bloklari (shu jumladan rtl va flex ichidagilar) burchaklarida qora piksel yo'q; verify.sh full o'tadi.",
-      "batch": 2
+      "batch": 2,
+      "status": "done",
+      "done_at": "2026-11-06 14:53:07"
     },
     {
       "id": "T10",

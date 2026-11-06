@@ -173,6 +173,16 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   o'ngdan chapga joylashadi. JS: `el.style.textAlign`/`direction`. Sinov: `zamin://matn`.
 
   ![text-align va dir=rtl](docs/web-rtl.png)
+- **Yumaloq burchaklar (`border-radius`) — silliq va tishchasiz** — burchak qamrovi endi har
+  piksel ichida teng taqsimlangan 4×4 namuna bilan hisoblanadi (avval namunalar piksel markazidan
+  siljigan edi va yoy bo'ylab qirrali "tishchalar" chiqardi); yoy kesib o'tgan har piksel kamida
+  kichik qamrov oladi (teshik qolmaydi). Yuqoridan qisman aylantirilgan quti endi faqat yuqori
+  burchaklarini to'g'ri burchakka aylantiradi — pastki burchaklari yumaloq qoladi, yuqori chegara
+  chizig'i esa ko'rinmaydi. Yuklanishdagi `self_test_round` qamrovni (r=1..30: ichkarida 255,
+  tashqarida 0, monoton) va ofscreen buferda hech bir piksel fon/quti rangidan to'qroq emasligini
+  tekshiradi.
+
+  ![Yumaloq burchaklar: zamin://matn](docs/web-text-align.png)
 - **`<iframe>` — ichki hujjat haqiqiy chiziladi** — `srcdoc="…"` (belgilar bilan kodlangan yoki
   tirnoq ichida xom HTML) alohida hujjat sifatida **o'z CSS i bilan** tahlil qilinadi va ramka-quti
   ichida chiziladi: fon — ichki `body` foni (bo'lmasa oq), `width` (px yoki %) yoki CSS `width`,

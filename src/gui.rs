@@ -8217,16 +8217,24 @@ fn draw_browser(win: &Window) {
         if d.h > 0 && d.y + d.h >= sc && d.y < sc + ph {
             let top = d.y.max(sc);
             let (dx, dy, dh) = (px0 + d.x, py0 + top - sc, d.y + d.h - top);
-            let r = if d.y >= sc { d.radius.min(d.w / 2).min(dh / 2) } else { 0 };
+            // Yuqoridan qisman aylantirilgan quti: faqat yuqori burçaklar kesiladi,
+            // pastkilari yumaloq qoladi.
+            let rb = d.radius.min(d.w / 2).min(dh / 2);
+            let rt = if d.y >= sc { rb } else { 0 };
             if let Some(c) = d.fill {
-                if r > 0 {
-                    gfx::fill_round_rect(dx, dy, d.w, dh, r, c);
+                if rb > 0 {
+                    gfx::fill_round_rect_tb(dx, dy, d.w, dh, rt, rb, c);
                 } else {
                     fill_rect(dx, dy, d.w, dh, c);
                 }
             }
             if d.bw > 0 {
-                gfx::round_outline(dx, dy, d.w, dh, r, d.bw, d.bc);
+                if d.y >= sc {
+                    gfx::round_outline(dx, dy, d.w, dh, rb, d.bw, d.bc);
+                } else {
+                    // yuqori chegara körinmaydi: uni qirqiş sohasidan tepaga çiqaramiz
+                    gfx::round_outline_tb(dx, dy.saturating_sub(d.bw), d.w, dh + d.bw, 0, rb, d.bw, d.bc);
+                }
             }
         }
     }
