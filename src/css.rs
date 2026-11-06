@@ -17,15 +17,31 @@ pub struct Sty {
     pub hidden: bool,
     pub underline: Option<bool>,
     pub block: Option<bool>, // display: block / inline
+    // Quti modeli (meros bölib ötmaydi)
+    pub mt: f32,                      // margin-top (CSS px)
+    pub mb: f32,                      // margin-bottom
+    pub pad: f32,                     // padding (bir xil)
+    pub bw: f32,                      // border kengligi
+    pub bc: Option<u32>,              // border rangi
+    pub radius: f32,                  // border-radius
+    pub maxw: Option<(f32, bool)>,    // width / max-width: (qiymat, foizmi)
+    pub center: bool,                 // margin: auto — markazlaş
 }
 
 impl Sty {
     pub const fn root() -> Sty {
-        Sty { color: None, bg: None, size: 16.0, bold: false, italic: false, align: 0, hidden: false, underline: None, block: None }
+        Sty {
+            color: None, bg: None, size: 16.0, bold: false, italic: false, align: 0, hidden: false, underline: None, block: None,
+            mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
+        }
     }
     /// Meros: rang, ölçam, qalinlik, tekislaş, yaşiriş — bolaga ötadi; fon — ötmaydi.
     pub fn inherit(&self) -> Sty {
-        Sty { bg: None, block: None, ..*self }
+        Sty { bg: None, block: None, mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false, ..*self }
+    }
+    /// Konteynermi (fon, çegara yoki kenglik çeklovi bor)?
+    pub fn is_box(&self) -> bool {
+        self.bg.is_some() || self.bw > 0.0 || self.maxw.is_some() || self.pad > 0.0
     }
 }
 
@@ -312,6 +328,26 @@ fn font_size(v: &str, parent: f32) -> Option<f32> {
     })
 }
 
+/// Uzunlik: px, em, rem, pt (foiz — None; kenglik uçun alohida).
+fn length(v: &str, fsize: f32) -> Option<f32> {
+    let v = v.trim();
+    if v == "0" || v == "auto" {
+        return Some(0.0);
+    }
+    let n = parse_f(v)?;
+    Some(if v.ends_with("rem") {
+        n * 16.0
+    } else if v.ends_with("em") {
+        n * fsize
+    } else if v.ends_with("pt") {
+        n * 4.0 / 3.0
+    } else if v.ends_with('%') || v.ends_with("vw") || v.ends_with("vh") {
+        return None;
+    } else {
+        n
+    })
+}
+
 /// Bitta e'lonni uslubga qöllaydi. `parent` — ota shrift ölçami.
 pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
     let low = val.to_ascii_lowercase();
@@ -357,6 +393,55 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
             };
         }
         "visibility" => s.hidden = low == "hidden" || low == "collapse",
+        "margin" => {
+            let p: Vec<&str> = low.split_whitespace().collect();
+            let top = p.first().and_then(|x| length(x, s.size)).unwrap_or(0.0);
+            let bot = p.get(2).or(p.first()).and_then(|x| length(x, s.size)).unwrap_or(top);
+            s.mt = top.clamp(0.0, 200.0);
+            s.mb = bot.clamp(0.0, 200.0);
+            let horiz = if p.len() >= 2 { p[1] } else { p.first().copied().unwrap_or("") };
+            s.center = horiz == "auto";
+        }
+        "margin-top" => s.mt = length(&low, s.size).unwrap_or(0.0).clamp(0.0, 200.0),
+        "margin-bottom" => s.mb = length(&low, s.size).unwrap_or(0.0).clamp(0.0, 200.0),
+        "margin-left" | "margin-right" | "margin-inline" if low == "auto" => s.center = true,
+        "padding" | "padding-top" | "padding-left" | "padding-inline" | "padding-block" => {
+            if let Some(v) = low.split_whitespace().next().and_then(|x| length(x, s.size)) {
+                s.pad = s.pad.max(v.clamp(0.0, 80.0));
+            }
+        }
+        "border" | "border-top" | "border-bottom" => {
+            if low == "none" || low == "0" {
+                s.bw = 0.0;
+            } else {
+                for t in low.split_whitespace() {
+                    if let Some(c) = parse_color(t) {
+                        s.bc = Some(c);
+                    } else if let Some(w) = length(t, s.size) {
+                        s.bw = w.clamp(0.0, 12.0);
+                    } else if t == "solid" || t == "dashed" || t == "dotted" || t == "double" {
+                        if s.bw == 0.0 {
+                            s.bw = 1.0;
+                        }
+                    }
+                }
+                if s.bw > 0.0 && s.bc.is_none() {
+                    s.bc = Some(0x808080);
+                }
+            }
+        }
+        "border-width" => s.bw = length(&low, s.size).unwrap_or(1.0).clamp(0.0, 12.0),
+        "border-color" => s.bc = parse_color(val),
+        "border-radius" => s.radius = low.split_whitespace().next().and_then(|x| length(x, s.size)).unwrap_or(0.0).clamp(0.0, 60.0),
+        "width" | "max-width" => {
+            if let Some(p) = low.strip_suffix('%') {
+                if let Some(f) = parse_f(p) {
+                    s.maxw = Some((f.clamp(1.0, 100.0), true));
+                }
+            } else if let Some(px) = length(&low, s.size).filter(|v| *v > 0.0) {
+                s.maxw = Some((px, false));
+            }
+        }
         "text-decoration" | "text-decoration-line" => s.underline = Some(low.contains("underline")),
         _ => {}
     }

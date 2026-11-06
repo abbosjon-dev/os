@@ -30,6 +30,7 @@ pub struct Span {
     pub el: u16,   // eng yaqin ro'yxatdagi element (id / onclick) — JS uçun
     pub button: bool,
     pub underline: bool,
+    pub input: u16, // forma maydoni (Doc::inputs indeksi) yoki NO_EL
 }
 
 #[derive(Clone)]
@@ -44,6 +45,37 @@ pub struct Block {
     pub src: String, // rasm manzili (Img)
     pub hidden: bool,
     pub bgk: u32,    // fonni bergan element (qöşni bloklar bitta fon bilan birlaşadi)
+    // Quti modeli: konteynerdan (pad, çegara, radius, kenglik) va blokning özidan (chekinişlar)
+    pub pad: f32,
+    pub bw: f32,
+    pub bc: Option<u32>,
+    pub radius: f32,
+    pub maxw: Option<(f32, bool)>,
+    pub center: bool,
+    pub mt: f32,
+    pub mb: f32,
+    pub bmt: f32, // konteynerning öz chekinişlari
+    pub bmb: f32,
+}
+
+/// Forma maydoni.
+#[derive(Clone)]
+pub struct Input {
+    pub kind: u8, // 0 — matn, 1 — yuboriş tugmasi, 2 — belgilaş (checkbox), 3 — parol, 4 — yaşirin, 5 — <button>
+    pub name: String,
+    pub value: String,
+    pub placeholder: String,
+    pub form: u16,
+    pub el: u16,
+    pub size: u16,
+    pub checked: bool,
+}
+
+#[derive(Clone)]
+pub struct Form {
+    pub action: String,
+    pub method: String,
+    pub el: u16, // JS (onsubmit / addEventListener('submit')) uçun
 }
 
 /// JS körinadigan element (id yoki onclick bölganlar).
@@ -67,13 +99,19 @@ pub struct Doc {
     pub scripts: Vec<Script>,
     pub bg: Option<u32>,
     pub color: Option<u32>,
+    pub inputs: Vec<Input>,
+    pub forms: Vec<Form>,
 }
 
 pub const NO_EL: u16 = u16::MAX;
 
 impl Doc {
     pub fn empty() -> Doc {
-        Doc { title: String::new(), blocks: Vec::new(), elems: Vec::new(), scripts: Vec::new(), bg: None, color: None }
+        Doc { title: String::new(), blocks: Vec::new(), elems: Vec::new(), scripts: Vec::new(), bg: None, color: None, inputs: Vec::new(), forms: Vec::new() }
+    }
+    /// Elementga tegişli forma maydoni (input / textarea).
+    pub fn input_of(&self, el: usize) -> Option<usize> {
+        self.inputs.iter().position(|i| i.el as usize == el)
     }
     pub fn find_id(&self, id: &str) -> Option<usize> {
         self.elems.iter().position(|e| e.id == id)
@@ -101,7 +139,7 @@ impl Doc {
         for b in self.blocks.iter_mut() {
             if b.el == e {
                 let tmpl = b.spans.first().cloned().unwrap_or(Span {
-                    text: String::new(), link: None, bold: false, code: false, br: false, color: None, size: b.size, el: e, button: false, underline: false,
+                    text: String::new(), link: None, bold: false, code: false, br: false, color: None, size: b.size, el: e, button: false, underline: false, input: NO_EL,
                 });
                 b.spans = alloc::vec![Span { text: String::from(text), br: false, ..tmpl }];
                 return;
@@ -252,6 +290,7 @@ struct Open {
     el: u16,
     link: Option<String>,
     serial: u32,
+    input: u16,
 }
 
 struct P {
@@ -263,6 +302,7 @@ struct P {
     lists: Vec<(bool, u16)>,
     in_title: bool,
     serial: u32,
+    form: u16,
 }
 
 impl P {
@@ -277,7 +317,7 @@ impl P {
     }
     fn flush(&mut self) {
         if let Some(b) = self.cur.take() {
-            let has = b.spans.iter().any(|s| !s.text.trim().is_empty());
+            let has = b.spans.iter().any(|s| !s.text.trim().is_empty() || s.input != NO_EL);
             if has || b.kind == Kind::Hr || b.kind == Kind::Img {
                 self.doc.blocks.push(b);
             }
@@ -286,15 +326,16 @@ impl P {
     fn new_block(&self, k: Kind) -> Block {
         let st = self.top();
         // Fon: eng yaqin fonli ajdod (body/html dan taşqari) — butun konteyner bölib bo'yaladi
-        let (bg, bgk) = self
-            .stack
-            .iter()
-            .rev()
-            .take_while(|o| o.tag != "body" && o.tag != "html")
-            .find(|o| o.sty.bg.is_some())
-            .map(|o| (o.sty.bg, o.serial))
-            .unwrap_or((None, 0));
-        Block { kind: k, spans: Vec::new(), bg, align: st.align, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: false, bgk }
+        let cont = self.stack.iter().rev().take_while(|o| o.tag != "body" && o.tag != "html").find(|o| o.sty.is_box());
+        let (bg, bgk, cs) = match cont {
+            Some(o) => (o.sty.bg, o.serial, o.sty),
+            None => (None, 0, Sty::root()),
+        };
+        Block {
+            kind: k, spans: Vec::new(), bg, align: st.align, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: false, bgk,
+            pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, maxw: cs.maxw, center: cs.center, mt: st.mt, mb: st.mb,
+            bmt: cs.mt, bmb: cs.mb,
+        }
     }
     fn start(&mut self, k: Kind) {
         self.flush();
@@ -339,18 +380,57 @@ impl P {
         let link = self.stack.iter().rev().find_map(|o| o.link.clone());
         let code = self.pre > 0 || self.stack.iter().any(|o| matches!(o.tag.as_str(), "code" | "kbd" | "samp" | "tt"));
         let button = self.stack.iter().any(|o| o.tag == "button");
+        let input = self.stack.iter().rev().find(|o| o.input != NO_EL).map(|o| o.input).unwrap_or(NO_EL);
         let el = self.el();
         let b = self.cur.as_mut().unwrap();
         if b.spans.is_empty() && self.pre == 0 {
             s = String::from(s.trim_start());
         }
         let underline = st.underline.unwrap_or(false) && link.is_some();
-        b.spans.push(Span { text: s, link, bold: st.bold, code, br: false, color: st.color, size: st.size, el, button, underline });
+        b.spans.push(Span { text: s, link, bold: st.bold, code, br: false, color: st.color, size: st.size, el, button, underline, input });
+    }
+    /// Forma maydonini ro'yxatga oladi. `el` — tayyor element (yöq bölsa id/onclick dan yaratiladi).
+    fn add_input(&mut self, kind: u8, tag: &str, value: String, el: Option<u16>) -> u16 {
+        let el = el.unwrap_or_else(|| {
+            let id = attr(tag, "id").unwrap_or_default();
+            let onclick = attr(tag, "onclick");
+            if !id.is_empty() || onclick.is_some() {
+                self.doc.elems.push(ElInfo { id, tag: String::from("input"), onclick });
+                (self.doc.elems.len() - 1) as u16
+            } else {
+                NO_EL
+            }
+        });
+        let size = attr(tag, "size").and_then(|v| v.parse().ok()).unwrap_or(if kind == 0 || kind == 3 { 20 } else { 0 });
+        self.doc.inputs.push(Input {
+            kind,
+            name: attr(tag, "name").unwrap_or_default(),
+            value,
+            placeholder: attr(tag, "placeholder").unwrap_or_default(),
+            form: self.form,
+            el,
+            size,
+            checked: attr(tag, "checked").is_some() || tag.split_whitespace().any(|w| w.eq_ignore_ascii_case("checked")),
+        });
+        (self.doc.inputs.len() - 1) as u16
+    }
+    /// Maydonni joriy blokka qöyadi.
+    fn input_span(&mut self, idx: u16) {
+        if self.hidden() || self.doc.inputs[idx as usize].kind == 4 {
+            return;
+        }
+        if self.cur.is_none() {
+            self.cur = Some(self.new_block(Kind::P));
+        }
+        let st = self.top();
+        let el = self.doc.inputs[idx as usize].el;
+        let b = self.cur.as_mut().unwrap();
+        b.spans.push(Span { text: String::from("\u{2007}"), link: None, bold: false, code: false, br: false, color: st.color, size: st.size, el, button: false, underline: false, input: idx });
     }
     fn br(&mut self) {
         if let Some(b) = self.cur.as_mut() {
             let size = b.size;
-            b.spans.push(Span { text: String::new(), link: None, bold: false, code: false, br: true, color: None, size, el: NO_EL, button: false, underline: false });
+            b.spans.push(Span { text: String::new(), link: None, bold: false, code: false, br: true, color: None, size, el: NO_EL, button: false, underline: false, input: NO_EL });
         }
     }
     fn open(&mut self, name: &str, tag: &str) {
@@ -400,7 +480,7 @@ impl P {
         let link = if name == "a" { attr(tag, "href") } else { None };
         self.serial += 1;
         let serial = self.serial;
-        self.stack.push(Open { tag: String::from(name), id, classes, sty: st, el, link, serial });
+        self.stack.push(Open { tag: String::from(name), id, classes, sty: st, el, link, serial, input: NO_EL });
     }
     fn close(&mut self, name: &str) {
         if let Some(k) = self.stack.iter().rposition(|o| o.tag == name) {
@@ -454,7 +534,7 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
     let mut sheet = String::from(UA_CSS);
     sheet.push_str(extra_css);
     sheet.push_str(&inline_css(src));
-    let mut p = P { doc: Doc::empty(), rules: css::parse_sheet(&sheet), stack: Vec::new(), cur: None, pre: 0, lists: Vec::new(), in_title: false, serial: 0 };
+    let mut p = P { doc: Doc::empty(), rules: css::parse_sheet(&sheet), stack: Vec::new(), cur: None, pre: 0, lists: Vec::new(), in_title: false, serial: 0, form: NO_EL };
     // Yaşirin <html> va <body> (teglar bölmasa ham uslublari qöllanadi)
     p.open("html", "html");
     p.open("body", "body");
@@ -473,6 +553,16 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
             let t = tag.trim_start_matches('/');
             let name: String = t.chars().take_while(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
             if name.is_empty() {
+                continue;
+            }
+            if !closing && name == "textarea" {
+                let low = src[i..].to_ascii_lowercase();
+                let e = low.find("</textarea").map(|j| i + j).unwrap_or(b.len());
+                let v = decode_entities(&src[i..e]);
+                let k = p.add_input(0, t, v, None);
+                p.doc.inputs[k as usize].size = attr(t, "cols").and_then(|v| v.parse().ok()).unwrap_or(40);
+                p.input_span(k);
+                i = e;
                 continue;
             }
             if !closing && (name == "script" || name == "style" || name == "noscript" || name == "template") {
@@ -503,8 +593,12 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
             }
             if closing {
                 match name.as_str() {
+                    "form" => {
+                        p.flush();
+                        p.form = NO_EL;
+                    }
                     "title" => p.in_title = false,
-                    "p" | "div" | "section" | "article" | "header" | "footer" | "nav" | "main" | "tr" | "table" | "form" | "center" | "aside" | "figure" | "dd" | "dt" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "blockquote" => p.flush(),
+                    "p" | "div" | "section" | "article" | "header" | "footer" | "nav" | "main" | "tr" | "table" | "center" | "aside" | "figure" | "dd" | "dt" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "blockquote" => p.flush(),
                     "ul" | "ol" => {
                         p.flush();
                         p.lists.pop();
@@ -532,7 +626,7 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
                 "h1" => p.start(Kind::H(1)),
                 "h2" => p.start(Kind::H(2)),
                 "h3" | "h4" | "h5" | "h6" => p.start(Kind::H(3)),
-                "p" | "div" | "section" | "article" | "header" | "footer" | "nav" | "main" | "tr" | "dt" | "dd" | "figcaption" | "table" | "form" | "center" | "aside" | "figure" | "body" => p.flush(),
+                "p" | "div" | "section" | "article" | "header" | "footer" | "nav" | "main" | "tr" | "dt" | "dd" | "figcaption" | "table" | "center" | "aside" | "figure" | "body" => p.flush(),
                 "br" => p.br(),
                 "hr" => {
                     p.start(Kind::Hr);
@@ -563,15 +657,47 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
                         p.flush();
                         let mut blk = p.new_block(Kind::Img);
                         blk.src = src_url;
-                        blk.spans.push(Span { text: alt, link: p.stack.iter().rev().find_map(|o| o.link.clone()), bold: false, code: false, br: false, color: None, size: 14.0, el: p.el(), button: false, underline: false });
+                        blk.spans.push(Span { text: alt, link: p.stack.iter().rev().find_map(|o| o.link.clone()), bold: false, code: false, br: false, color: None, size: 14.0, el: p.el(), button: false, underline: false, input: NO_EL });
                         p.doc.blocks.push(blk);
                     }
                 }
                 "td" | "th" => p.text(" "),
                 "input" => {
-                    let v = attr(t, "value").or_else(|| attr(t, "placeholder")).unwrap_or_default();
-                    if !v.is_empty() {
-                        p.text(&alloc::format!("[{}]", v));
+                    let ty = attr(t, "type").unwrap_or_default().to_ascii_lowercase();
+                    let kind = match ty.as_str() {
+                        "submit" | "button" | "reset" | "image" => 1,
+                        "checkbox" | "radio" => 2,
+                        "password" => 3,
+                        "hidden" => 4,
+                        _ => 0,
+                    };
+                    let mut v = attr(t, "value").unwrap_or_default();
+                    if kind == 1 && v.is_empty() {
+                        v = String::from(if ty == "reset" { "Tozalaş" } else { "Yuboriş" });
+                    }
+                    let k = p.add_input(kind, t, v, None);
+                    if ty == "button" {
+                        p.doc.inputs[k as usize].form = NO_EL; // oddiy tugma — formani yubormaydi
+                    }
+                    p.input_span(k);
+                }
+                "form" => {
+                    p.flush();
+                    let action = attr(t, "action").unwrap_or_default();
+                    let method = attr(t, "method").unwrap_or_else(|| String::from("get")).to_ascii_lowercase();
+                    let el = p.stack.last().filter(|o| o.tag == "form").map(|o| o.el).unwrap_or(NO_EL);
+                    p.doc.forms.push(Form { action, method, el });
+                    p.form = (p.doc.forms.len() - 1) as u16;
+                }
+                "button" => {
+                    let ty = attr(t, "type").unwrap_or_default().to_ascii_lowercase();
+                    if p.form != NO_EL && ty != "button" {
+                        // id/onclick open() da ro'yxatga olingan — öşa elementni işlatamiz
+                        let el = p.stack.last().map(|o| o.el).unwrap_or(NO_EL);
+                        let k = p.add_input(5, t, attr(t, "value").unwrap_or_default(), Some(el));
+                        if let Some(o) = p.stack.last_mut() {
+                            o.input = k;
+                        }
                     }
                 }
                 _ if blockish => p.flush(),
@@ -594,7 +720,7 @@ pub fn plain(text: &str) -> Doc {
     let mut d = Doc::empty();
     d.blocks.push(Block {
         kind: Kind::Pre,
-        spans: alloc::vec![Span { text: String::from(text), link: None, bold: false, code: true, br: false, color: None, size: 14.0, el: NO_EL, button: false, underline: false }],
+        spans: alloc::vec![Span { text: String::from(text), link: None, bold: false, code: true, br: false, color: None, size: 14.0, el: NO_EL, button: false, underline: false, input: NO_EL }],
         bg: None,
         align: 0,
         size: 14.0,
@@ -603,6 +729,7 @@ pub fn plain(text: &str) -> Doc {
         src: String::new(),
         hidden: false,
         bgk: 0,
+        pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false, mt: 0.0, mb: 0.0, bmt: 0.0, bmb: 0.0,
     });
     d
 }

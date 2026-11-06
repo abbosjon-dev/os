@@ -834,6 +834,24 @@ pub enum Value {
     Elem(usize),
     Style(usize),
     Date(f64),
+    Promise(Rc<RefCell<Prom>>),
+}
+
+/// Promise holati va kutayotgan davomlar (then).
+pub struct Prom {
+    state: PState,
+    cbs: Vec<(Value, Value, Rc<RefCell<Prom>>)>,
+}
+
+#[derive(Clone)]
+enum PState {
+    Pending,
+    Ok(Value),
+    Err(Value),
+}
+
+fn new_prom() -> Rc<RefCell<Prom>> {
+    Rc::new(RefCell::new(Prom { state: PState::Pending, cbs: Vec::new() }))
 }
 
 type Env = Rc<RefCell<Scope>>;
@@ -902,6 +920,7 @@ impl Value {
             Value::Elem(_) => String::from("[object HTMLElement]"),
             Value::Style(_) => String::from("[object CSSStyleDeclaration]"),
             Value::Date(d) => date_str(*d, 0),
+            Value::Promise(_) => String::from("[object Promise]"),
         }
     }
     fn type_of(&self) -> &'static str {
@@ -978,6 +997,15 @@ pub struct Engine {
     steps: u32,
     now: u64,
     pub errors: usize,
+    /// Mikrovazifalar: (muvaffaqiyat işlovçisi, xato işlovçisi, keyingi promise, qiymat, muvaffaqiyatmi)
+    micro: Vec<(Value, Value, Rc<RefCell<Prom>>, Value, bool)>,
+    /// fetch() sörovlari: (raqam, usul, manzil, tana) — GUI ularni fonda yuklaydi
+    pub fetch_out: Vec<(u32, String, String, Option<String>)>,
+    fetch_wait: Vec<(u32, Rc<RefCell<Prom>>)>,
+    submit_handlers: Vec<(usize, Value)>,
+    prevented: bool,
+    /// Joriy sahifa manzili (location uçun)
+    pub url: String,
 }
 
 const MAX_STEPS: u32 = 3_000_000;
@@ -988,10 +1016,28 @@ impl Engine {
         for h in ["document", "console", "Math", "window", "JSON", "Object", "Array", "Date", "Number", "String", "navigator", "location"] {
             g.borrow_mut().vars.push((String::from(h), Value::Host(h)));
         }
-        for f in ["__sl", "alert", "setTimeout", "setInterval", "clearTimeout", "clearInterval", "parseInt", "parseFloat", "isNaN", "isFinite", "prompt", "confirm"] {
+        g.borrow_mut().vars.push((String::from("Promise"), Value::Host("Promise")));
+        g.borrow_mut().vars.push((String::from("URLSearchParams"), Value::Host("URLSearchParams")));
+        for f in ["fetch", "encodeURIComponent", "decodeURIComponent", "encodeURI", "decodeURI", "__sl", "alert", "setTimeout", "setInterval", "clearTimeout", "clearInterval", "parseInt", "parseFloat", "isNaN", "isFinite", "prompt", "confirm"] {
             g.borrow_mut().vars.push((String::from(f), Value::Native(f, Box::new(Value::Undef))));
         }
-        Engine { globals: g, timers: Vec::new(), handlers: Vec::new(), next_id: 1, log: Vec::new(), alerts: Vec::new(), steps: 0, now: 0, errors: 0 }
+        Engine {
+            globals: g,
+            timers: Vec::new(),
+            handlers: Vec::new(),
+            next_id: 1,
+            log: Vec::new(),
+            alerts: Vec::new(),
+            steps: 0,
+            now: 0,
+            errors: 0,
+            micro: Vec::new(),
+            fetch_out: Vec::new(),
+            fetch_wait: Vec::new(),
+            submit_handlers: Vec::new(),
+            prevented: false,
+            url: String::new(),
+        }
     }
 
     /// Kodni bajaradi. Xato bölsa — matni (konsolga ham yoziladi).
@@ -1003,7 +1049,9 @@ impl Engine {
             self.log.push(format!("Sintaksis xatosi: {}", e));
         })?;
         let g = self.globals.clone();
-        match self.exec_block(&prog, &g, doc) {
+        let r = self.exec_block(&prog, &g, doc);
+        self.drain(doc);
+        match r {
             Ok(_) | Err(Ctl::Ret(_)) => Ok(()),
             Err(Ctl::Throw(v)) => {
                 self.errors += 1;
@@ -1039,7 +1087,110 @@ impl Engine {
                 k += 1;
             }
         }
+        if ran {
+            self.drain(doc);
+        }
         ran
+    }
+
+    /// Promise davomlarini (then) bajaradi.
+    fn drain(&mut self, doc: &mut Doc) {
+        let mut n = 0;
+        while !self.micro.is_empty() && n < 10_000 {
+            n += 1;
+            let (fo, fe, next, v, ok) = self.micro.remove(0);
+            let h = if ok { fo } else { fe };
+            if matches!(h, Value::Func(..) | Value::Native(..)) {
+                self.steps = 0;
+                match self.call(&h, alloc::vec![v], Value::Undef, doc) {
+                    Ok(r) => self.resolve(&next, r),
+                    Err(Ctl::Throw(e)) => self.settle(&next, false, e),
+                    Err(_) => self.settle(&next, true, Value::Undef),
+                }
+            } else {
+                self.settle(&next, ok, v);
+            }
+        }
+    }
+
+    /// Promise ni qiymat bilan yeçadi (qiymat özi Promise bölsa — unga ulanadi).
+    fn resolve(&mut self, p: &Rc<RefCell<Prom>>, v: Value) {
+        if let Value::Promise(q) = &v {
+            if Rc::ptr_eq(p, q) {
+                return;
+            }
+            let st = q.borrow().state.clone();
+            match st {
+                PState::Ok(x) => self.settle(p, true, x),
+                PState::Err(x) => self.settle(p, false, x),
+                PState::Pending => q.borrow_mut().cbs.push((Value::Undef, Value::Undef, p.clone())),
+            }
+            return;
+        }
+        self.settle(p, true, v);
+    }
+
+    fn settle(&mut self, p: &Rc<RefCell<Prom>>, ok: bool, v: Value) {
+        let cbs = {
+            let mut b = p.borrow_mut();
+            if !matches!(b.state, PState::Pending) {
+                return;
+            }
+            b.state = if ok { PState::Ok(v.clone()) } else { PState::Err(v.clone()) };
+            core::mem::take(&mut b.cbs)
+        };
+        for (fo, fe, next) in cbs {
+            self.micro.push((fo, fe, next, v.clone(), ok));
+        }
+    }
+
+    fn then(&mut self, p: &Rc<RefCell<Prom>>, fo: Value, fe: Value) -> Value {
+        let next = new_prom();
+        let st = p.borrow().state.clone();
+        match st {
+            PState::Pending => p.borrow_mut().cbs.push((fo, fe, next.clone())),
+            PState::Ok(v) => self.micro.push((fo, fe, next.clone(), v, true)),
+            PState::Err(v) => self.micro.push((fo, fe, next.clone(), v, false)),
+        }
+        Value::Promise(next)
+    }
+
+    /// fetch() javobi keldi (GUI çaqiradi): javob obyekti bilan promise yeçiladi.
+    pub fn fetch_done(&mut self, id: u32, res: Result<(u16, String, String), String>, doc: &mut Doc) {
+        let Some(k) = self.fetch_wait.iter().position(|(i, _)| *i == id) else { return };
+        let (_, p) = self.fetch_wait.remove(k);
+        match res {
+            Ok((status, body, url)) => {
+                let b = Value::str(&body);
+                let o = alloc::vec![
+                    (String::from("status"), Value::Num(status as f64)),
+                    (String::from("ok"), Value::Bool((200..300).contains(&status))),
+                    (String::from("url"), Value::str(&url)),
+                    (String::from("text"), Value::Native("resp.text", Box::new(b.clone()))),
+                    (String::from("json"), Value::Native("resp.json", Box::new(b))),
+                ];
+                self.settle(&p, true, Value::Obj(Rc::new(RefCell::new(o))));
+            }
+            Err(e) => self.settle(&p, false, Value::str(&format!("TypeError: fetch: {}", e))),
+        }
+        self.drain(doc);
+    }
+
+    /// Forma yuborilyapti: submit işlovçilari. true — preventDefault() çaqirildi.
+    pub fn submit(&mut self, el: usize, doc: &mut Doc, now: u64) -> bool {
+        self.prevented = false;
+        let hs: Vec<Value> = self.submit_handlers.iter().filter(|(e, _)| *e == el).map(|(_, f)| f.clone()).collect();
+        let ev = Value::Obj(Rc::new(RefCell::new(alloc::vec![
+            (String::from("preventDefault"), Value::Native("ev.prevent", Box::new(Value::Undef))),
+            (String::from("target"), Value::Elem(el)),
+        ])));
+        for f in hs {
+            self.steps = 0;
+            self.now = now;
+            self.call_top(&f, alloc::vec![ev.clone()], doc);
+        }
+        self.drain(doc);
+        self.prevented
     }
 
     /// Element bosildi: onclick atributi va addEventListener işlovçilari.
@@ -1055,6 +1206,9 @@ impl Engine {
             self.now = now;
             self.call_top(&f, alloc::vec![Value::Undef], doc);
             ran = true;
+        }
+        if ran {
+            self.drain(doc);
         }
         ran
     }
@@ -1341,6 +1495,12 @@ impl Engine {
                 "toString" => nat("any.toString", obj),
                 _ => Value::Undef,
             },
+            Value::Promise(_) => match key {
+                "then" => nat("prom.then", obj),
+                "catch" => nat("prom.catch", obj),
+                "finally" => nat("prom.finally", obj),
+                _ => Value::Undef,
+            },
             Value::Date(_) => match key {
                 "getFullYear" | "getMonth" | "getDate" | "getDay" | "getHours" | "getMinutes" | "getSeconds" | "getTime" | "toLocaleTimeString" | "toLocaleDateString" | "toLocaleString" | "toString" | "toISOString" | "getMilliseconds" => {
                     Value::Native(date_method(key), Box::new(obj.clone()))
@@ -1369,6 +1529,10 @@ impl Engine {
                 ("window", "innerHeight") => Value::Num(gfx_h() as f64),
                 ("window", k) => self.lookup(&self.globals.clone(), k).unwrap_or(Value::Undef),
                 ("JSON", "stringify") => Value::Native("json.stringify", Box::new(Value::Undef)),
+                ("JSON", "parse") => Value::Native("json.parse", Box::new(Value::Undef)),
+                ("Promise", "resolve") => Value::Native("Promise.resolve", Box::new(Value::Undef)),
+                ("Promise", "reject") => Value::Native("Promise.reject", Box::new(Value::Undef)),
+                ("Promise", "all") => Value::Native("Promise.all", Box::new(Value::Undef)),
                 ("Object", "keys") => Value::Native("obj.keys", Box::new(Value::Undef)),
                 ("Object", "values") => Value::Native("obj.values", Box::new(Value::Undef)),
                 ("Object", "entries") => Value::Native("obj.entries", Box::new(Value::Undef)),
@@ -1380,7 +1544,12 @@ impl Engine {
                 ("Number", "parseInt") => Value::Native("parseInt", Box::new(Value::Undef)),
                 ("navigator", "userAgent") => Value::str(concat!("ZaminBrauzer/", env!("CARGO_PKG_VERSION"), " (Zamin OS; ARM64)")),
                 ("navigator", "language") => Value::str("uz"),
-                ("location", "href") => Value::str(""),
+                ("location", "href") | ("document", "URL") => Value::str(&self.url),
+                ("location", "search") => Value::str(self.url.find('?').map(|i| &self.url[i..]).unwrap_or("").split('#').next().unwrap_or("")),
+                ("location", "hash") => Value::str(self.url.find('#').map(|i| &self.url[i..]).unwrap_or("")),
+                ("location", "host") | ("location", "hostname") => Value::str(self.url.split("://").nth(1).and_then(|r| r.split('/').next()).unwrap_or("")),
+                ("location", "pathname") => Value::str(&format!("/{}", self.url.split("://").nth(1).and_then(|r| r.split_once('/')).map(|(_, p)| p.split('?').next().unwrap_or("")).unwrap_or(""))),
+                ("location", "protocol") => Value::str(&format!("{}:", self.url.split("://").next().unwrap_or(""))),
                 ("body", "style") => Value::Style(usize::MAX),
                 _ => Value::Undef,
             },
@@ -1390,7 +1559,8 @@ impl Engine {
                 "tagName" => Value::str(&doc.elems.get(*i).map(|e| e.tag.to_ascii_uppercase()).unwrap_or_default()),
                 "style" => Value::Style(*i),
                 "addEventListener" => nat("el.listen", obj),
-                "value" => Value::str(""),
+                "value" => Value::str(&doc.input_of(*i).map(|k| doc.inputs[k].value.clone()).unwrap_or_default()),
+                "checked" => Value::Bool(doc.input_of(*i).is_some_and(|k| doc.inputs[k].checked)),
                 _ => Value::Undef,
             },
             _ => Value::Undef,
@@ -1426,6 +1596,20 @@ impl Engine {
                     let s = v.to_string();
                     let text = if key == "innerHTML" { strip_tags(&s) } else { s };
                     doc.set_text(*i, &text);
+                }
+                "value" => {
+                    if let Some(k) = doc.input_of(*i) {
+                        doc.inputs[k].value = v.to_string();
+                    }
+                }
+                "checked" => {
+                    if let Some(k) = doc.input_of(*i) {
+                        doc.inputs[k].checked = v.truthy();
+                    }
+                }
+                "onsubmit" => {
+                    self.submit_handlers.retain(|(e, _)| e != i);
+                    self.submit_handlers.push((*i, v));
                 }
                 "onclick" => {
                     self.handlers.retain(|(e, _)| e != i);
@@ -1581,6 +1765,30 @@ impl Engine {
                         Some(v) => v.num(),
                         None => self.now_unix_ms(),
                     }),
+                    Expr::Id(n) if n == "Promise" => {
+                        let p = new_prom();
+                        let res = Value::Native("prom.res", Box::new(Value::Promise(p.clone())));
+                        let rej = Value::Native("prom.rej", Box::new(Value::Promise(p.clone())));
+                        if let Some(f) = av.first() {
+                            if let Err(Ctl::Throw(e)) = self.call(f, alloc::vec![res, rej], Value::Undef, doc) {
+                                self.settle(&p, false, e);
+                            }
+                        }
+                        Value::Promise(p)
+                    }
+                    Expr::Id(n) if n == "URLSearchParams" => {
+                        let q = av.first().map(|v| v.to_string()).unwrap_or_default();
+                        let mut o = Vec::new();
+                        for pair in q.trim_start_matches('?').split('&').filter(|x| !x.is_empty()) {
+                            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                            o.push((url_decode(k), Value::str(&url_decode(v))));
+                        }
+                        let obj = Value::Obj(Rc::new(RefCell::new(o)));
+                        Value::Obj(Rc::new(RefCell::new(alloc::vec![
+                            (String::from("get"), Value::Native("usp.get", Box::new(obj.clone()))),
+                            (String::from("has"), Value::Native("usp.has", Box::new(obj))),
+                        ])))
+                    }
                     Expr::Id(n) if n == "Array" => Value::Arr(Rc::new(RefCell::new(alloc::vec![Value::Undef; av.first().map(|v| v.num() as usize).unwrap_or(0).min(10000)]))),
                     Expr::Id(n) if n == "Object" => Value::Obj(Rc::new(RefCell::new(Vec::new()))),
                     Expr::Id(n) if n == "Error" => {
@@ -1647,6 +1855,113 @@ impl Engine {
         let new_arr = |v: Vec<Value>| Value::Arr(Rc::new(RefCell::new(v)));
         Ok(match name {
             "noop" => Value::Undef,
+            "ev.prevent" => {
+                self.prevented = true;
+                Value::Undef
+            }
+            "fetch" => {
+                let id = self.next_id;
+                self.next_id += 1;
+                let p = new_prom();
+                let url = arg(0).to_string();
+                let (mut method, mut body) = (String::from("GET"), None);
+                if let Value::Obj(o) = arg(1) {
+                    for (k, v) in o.borrow().iter() {
+                        match k.as_str() {
+                            "method" => method = v.to_string().to_ascii_uppercase(),
+                            "body" => body = Some(v.to_string()),
+                            _ => {}
+                        }
+                    }
+                }
+                if self.fetch_out.len() + self.fetch_wait.len() < 16 {
+                    self.fetch_out.push((id, method, url, body));
+                    self.fetch_wait.push((id, p.clone()));
+                } else {
+                    self.settle(&p, false, Value::str("TypeError: fetch: juda köp sörov"));
+                }
+                Value::Promise(p)
+            }
+            "resp.text" => {
+                let p = new_prom();
+                self.settle(&p, true, this.clone());
+                Value::Promise(p)
+            }
+            "resp.json" => {
+                let p = new_prom();
+                match json_parse(&this.to_string()) {
+                    Some(v) => self.settle(&p, true, v),
+                    None => self.settle(&p, false, Value::str("SyntaxError: JSON xato")),
+                }
+                Value::Promise(p)
+            }
+            "json.parse" => match json_parse(&arg(0).to_string()) {
+                Some(v) => v,
+                None => return Err(err("SyntaxError: JSON.parse: notöğri JSON")),
+            },
+            "prom.then" | "prom.catch" | "prom.finally" => {
+                let Value::Promise(p) = &this else { return Ok(Value::Undef) };
+                let (fo, fe) = match name {
+                    "prom.then" => (arg(0), arg(1)),
+                    "prom.catch" => (Value::Undef, arg(0)),
+                    _ => (arg(0), arg(0)),
+                };
+                self.then(p, fo, fe)
+            }
+            "prom.res" | "prom.rej" => {
+                if let Value::Promise(p) = &this {
+                    if name == "prom.res" {
+                        self.resolve(p, arg(0));
+                    } else {
+                        self.settle(p, false, arg(0));
+                    }
+                }
+                Value::Undef
+            }
+            "Promise.resolve" | "Promise.reject" => {
+                let p = new_prom();
+                if name == "Promise.resolve" {
+                    self.resolve(&p, arg(0));
+                } else {
+                    self.settle(&p, false, arg(0));
+                }
+                Value::Promise(p)
+            }
+            "Promise.all" => {
+                // Faqat allaqaçon yeçilganlar uçun sodda variant
+                let items = match arg(0) {
+                    Value::Arr(x) => x.borrow().clone(),
+                    _ => Vec::new(),
+                };
+                let p = new_prom();
+                let mut out = Vec::new();
+                let mut bad = None;
+                for it in items {
+                    match &it {
+                        Value::Promise(q) => match q.borrow().state.clone() {
+                            PState::Ok(v) => out.push(v),
+                            PState::Err(e) => bad = Some(e),
+                            PState::Pending => out.push(Value::Undef),
+                        },
+                        v => out.push(v.clone()),
+                    }
+                }
+                match bad {
+                    Some(e) => self.settle(&p, false, e),
+                    None => self.settle(&p, true, Value::Arr(Rc::new(RefCell::new(out)))),
+                }
+                Value::Promise(p)
+            }
+            "encodeURIComponent" | "encodeURI" => Value::str(&url_encode(&arg(0).to_string(), name == "encodeURI")),
+            "decodeURIComponent" | "decodeURI" => Value::str(&url_decode(&arg(0).to_string())),
+            "usp.get" | "usp.has" => {
+                let key = arg(0).to_string();
+                let v = match &this {
+                    Value::Obj(o) => o.borrow().iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone()),
+                    _ => None,
+                };
+                if name == "usp.has" { Value::Bool(v.is_some()) } else { v.unwrap_or(Value::Null) }
+            }
             "__sl" => Value::Num(stack_left() as f64),
             "console.log" => {
                 let s = a.iter().map(|v| match v {
@@ -1768,8 +2083,10 @@ impl Engine {
             }
             "el.listen" => {
                 if let Value::Elem(i) = this {
-                    if arg(0).to_string() == "click" {
-                        self.handlers.push((i, arg(1)));
+                    match arg(0).to_string().as_str() {
+                        "click" => self.handlers.push((i, arg(1))),
+                        "submit" => self.submit_handlers.push((i, arg(1))),
+                        _ => {}
                     }
                 }
                 Value::Undef
@@ -1940,6 +2257,172 @@ fn gfx_w() -> usize {
 }
 fn gfx_h() -> usize {
     crate::gfx::size().1
+}
+
+/// URL kodlaş (UTF-8 baytlar %XX).
+pub fn url_encode(s: &str, keep_reserved: bool) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        let c = b as char;
+        if c.is_ascii_alphanumeric() || "-_.!~*'()".contains(c) || (keep_reserved && ";,/?:@&=+$#".contains(c)) {
+            out.push(c);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
+/// URL dan yeçiş (%XX va + → bo'şliq).
+pub fn url_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(core::str::from_utf8(&b[i + 1..(i + 3).min(b.len())]).unwrap_or("zz"), 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(if b[i] == b'+' { b' ' } else { b[i] });
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// JSON tahlilçisi → JS qiymatlari.
+pub fn json_parse(src: &str) -> Option<Value> {
+    fn ws(b: &[u8], i: &mut usize) {
+        while *i < b.len() && b[*i].is_ascii_whitespace() {
+            *i += 1;
+        }
+    }
+    fn string(b: &[u8], i: &mut usize) -> Option<String> {
+        if b.get(*i) != Some(&b'"') {
+            return None;
+        }
+        *i += 1;
+        let mut out: Vec<u8> = Vec::new();
+        while *i < b.len() && b[*i] != b'"' {
+            if b[*i] == b'\\' && *i + 1 < b.len() {
+                *i += 1;
+                match b[*i] {
+                    b'n' => out.push(b'\n'),
+                    b't' => out.push(b'\t'),
+                    b'r' => out.push(b'\r'),
+                    b'b' | b'f' => {}
+                    b'u' if *i + 4 < b.len() => {
+                        let h = core::str::from_utf8(&b[*i + 1..*i + 5]).ok()?;
+                        let c = char::from_u32(u32::from_str_radix(h, 16).ok()?).unwrap_or('?');
+                        let mut buf = [0u8; 4];
+                        out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                        *i += 4;
+                    }
+                    x => out.push(x),
+                }
+                *i += 1;
+                continue;
+            }
+            out.push(b[*i]);
+            *i += 1;
+        }
+        *i += 1;
+        Some(String::from_utf8_lossy(&out).into_owned())
+    }
+    fn val(b: &[u8], i: &mut usize, depth: usize) -> Option<Value> {
+        if depth > 64 {
+            return None;
+        }
+        ws(b, i);
+        match *b.get(*i)? {
+            b'{' => {
+                *i += 1;
+                let mut o = Vec::new();
+                ws(b, i);
+                if b.get(*i) == Some(&b'}') {
+                    *i += 1;
+                    return Some(Value::Obj(Rc::new(RefCell::new(o))));
+                }
+                loop {
+                    ws(b, i);
+                    let k = string(b, i)?;
+                    ws(b, i);
+                    if b.get(*i) != Some(&b':') {
+                        return None;
+                    }
+                    *i += 1;
+                    let v = val(b, i, depth + 1)?;
+                    o.push((k, v));
+                    ws(b, i);
+                    match b.get(*i)? {
+                        b',' => *i += 1,
+                        b'}' => {
+                            *i += 1;
+                            return Some(Value::Obj(Rc::new(RefCell::new(o))));
+                        }
+                        _ => return None,
+                    }
+                }
+            }
+            b'[' => {
+                *i += 1;
+                let mut a = Vec::new();
+                ws(b, i);
+                if b.get(*i) == Some(&b']') {
+                    *i += 1;
+                    return Some(Value::Arr(Rc::new(RefCell::new(a))));
+                }
+                loop {
+                    a.push(val(b, i, depth + 1)?);
+                    ws(b, i);
+                    match b.get(*i)? {
+                        b',' => *i += 1,
+                        b']' => {
+                            *i += 1;
+                            return Some(Value::Arr(Rc::new(RefCell::new(a))));
+                        }
+                        _ => return None,
+                    }
+                }
+            }
+            b'"' => string(b, i).map(|s| Value::str(&s)),
+            b't' if b[*i..].starts_with(b"true") => {
+                *i += 4;
+                Some(Value::Bool(true))
+            }
+            b'f' if b[*i..].starts_with(b"false") => {
+                *i += 5;
+                Some(Value::Bool(false))
+            }
+            b'n' if b[*i..].starts_with(b"null") => {
+                *i += 4;
+                Some(Value::Null)
+            }
+            _ => {
+                let st = *i;
+                while *i < b.len() && (b[*i].is_ascii_digit() || b"+-.eE".contains(&b[*i])) {
+                    *i += 1;
+                }
+                let t = core::str::from_utf8(&b[st..*i]).ok()?;
+                if t.is_empty() {
+                    return None;
+                }
+                let toks = lex(t).ok()?;
+                match toks.as_slice() {
+                    [Tok::Num(n), Tok::Eof] => Some(Value::Num(*n)),
+                    [Tok::P("-"), Tok::Num(n), Tok::Eof] => Some(Value::Num(-*n)),
+                    _ => None,
+                }
+            }
+        }
+    }
+    let b = src.as_bytes();
+    let mut i = 0;
+    let v = val(b, &mut i, 0)?;
+    ws(b, &mut i);
+    if i == b.len() { Some(v) } else { None }
 }
 
 fn strip_tags(s: &str) -> String {
@@ -2276,7 +2759,10 @@ fn date_call(n: &str, this: &Value) -> Value {
 
 /// O'z-o'zini sinaş (yuklanişda): asosiy til imkoniyatlari.
 pub fn self_test() -> Result<usize, String> {
-    let cases: [(&str, &str); 14] = [
+    let cases: [(&str, &str); 17] = [
+        ("JSON.parse('{\"a\": [1, 2, {\"b\": \"x\"}], \"n\": -3.5}').a[2].b + JSON.parse('[1,2]').length", "x2"),
+        ("JSON.stringify(JSON.parse('{\"k\":[true,null,\"s\"]}'))", "{\"k\":[true,null,\"s\"]}"),
+        ("decodeURIComponent(encodeURIComponent('Salom dunyo & ş'))", "Salom dunyo & ş"),
         ("Math.max(...[3, 9, 4]) + String(1).padStart(3, '0')", "9001"),
         ("const p = x => String(x).padStart(2, '0'); p(7) + ':' + p(12)", "07:12"),
         ("1 + 2 * 3", "7"),

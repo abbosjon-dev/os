@@ -145,22 +145,31 @@ fn complete(raw: &[u8]) -> bool {
 }
 
 /// Bitta so'rov (yönaltirişsiz).
-fn request(u: &Url) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
+fn request(u: &Url, method: &str, body: Option<(&str, &[u8])>) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
     // Manzil hali olinmagan bölsa — DHCP ni qayta sinaymiz (yuklanişdagi urinish ötmagan bölişi mumkin)
     if !super::is_configured() && !super::dhcp::configure() {
         return Err(String::from("Tarmoq ulanmagan (DHCP manzil bermadi)"));
     }
     let ip = dns::resolve(&u.host).ok_or_else(|| format!("{} — DNS topilmadi", u.host))?;
     let host_hdr = if (u.https && u.port == 443) || (!u.https && u.port == 80) { u.host.clone() } else { format!("{}:{}", u.host, u.port) };
-    let req = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: ZaminBrauzer/{}\r\nAccept: text/html, text/plain, */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
-        u.path, host_hdr, env!("CARGO_PKG_VERSION")
-    );
+    let mut req = format!(
+        "{} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: ZaminBrauzer/{}\r\nAccept: text/html, application/json, text/plain, */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n",
+        method, u.path, host_hdr, env!("CARGO_PKG_VERSION")
+    )
+    .into_bytes();
+    match body {
+        Some((ct, b)) => {
+            req.extend_from_slice(format!("Content-Type: {}\r\nContent-Length: {}\r\n\r\n", ct, b.len()).as_bytes());
+            req.extend_from_slice(b);
+        }
+        None if method != "GET" && method != "HEAD" => req.extend_from_slice(b"Content-Length: 0\r\n\r\n"),
+        None => req.extend_from_slice(b"\r\n"),
+    }
     let mut raw = Vec::new();
     let start = crate::timer::uptime_ms();
     if u.https {
         let id = tls::connect(ip, u.port, &u.host).ok_or_else(|| format!("{} — TLS ulanib bölmadi", u.host))?;
-        tls::send(id, req.as_bytes());
+        tls::send(id, &req);
         loop {
             let d = tls::recv(id, 65536);
             if d.is_empty() {
@@ -174,7 +183,7 @@ fn request(u: &Url) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
         tls::close(id);
     } else {
         let id = tcp::connect(ip, u.port).ok_or_else(|| format!("{}:{} — ulanib bölmadi", u.host, u.port))?;
-        tcp::send(id, req.as_bytes());
+        tcp::send(id, &req);
         loop {
             let d = tcp::recv(id, 65536, 3000);
             if d.is_empty() {
@@ -208,21 +217,33 @@ fn request(u: &Url) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
 
 /// GET so'rovi (5 tagaça yönaltiriş bilan).
 pub fn get(url: &str) -> Result<Response, String> {
+    send("GET", url, None)
+}
+
+/// Istalgan usul (GET/POST/…) — tana va turi bilan. 303 (va POST dagi 301/302) dan keyin — GET.
+pub fn send(method: &str, url: &str, body: Option<(&str, &[u8])>) -> Result<Response, String> {
     let mut cur = String::from(url);
+    let mut method = String::from(method);
+    let mut body = body;
     for _ in 0..6 {
         let u = parse_url(&cur).ok_or_else(|| format!("Notöğri manzil: {}", cur))?;
         // Javob kelmasa (yöqolgan paket, band server) — bir marta qayta sinaymiz
-        let (status, headers, body) = match request(&u) {
+        let (status, headers, rbody) = match request(&u, &method, body) {
             Ok(r) => r,
-            Err(e) if e.contains("javobi") => request(&u)?,
+            Err(e) if e.contains("javobi") => request(&u, &method, body)?,
             Err(e) => return Err(e),
         };
         if matches!(status, 301 | 302 | 303 | 307 | 308) {
             if let Some(loc) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("location")).map(|(_, v)| v.clone()) {
                 cur = join(&cur, &loc);
+                if status == 303 || (method == "POST" && status != 307 && status != 308) {
+                    method = String::from("GET");
+                    body = None;
+                }
                 continue;
             }
         }
+        let body = rbody;
         return Ok(Response { status, headers, body, url: cur });
     }
     Err(String::from("Juda köp yönaltiriş"))

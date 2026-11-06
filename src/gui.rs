@@ -1421,8 +1421,10 @@ fn desktop() {
                     windows.last_mut().unwrap().rename = None; // nomini özgartirişni bekor qiliş
                     changed = true;
                 }
-                (input::EV_KEY, 1) if e.value == 1 && windows.last().is_some_and(|w| w.web.as_ref().is_some_and(|b| b.editing)) => {
-                    windows.last_mut().unwrap().web.as_mut().unwrap().editing = false;
+                (input::EV_KEY, 1) if e.value == 1 && windows.last().is_some_and(|w| w.web.as_ref().is_some_and(|b| b.editing || b.focus.is_some())) => {
+                    let b = windows.last_mut().unwrap().web.as_mut().unwrap();
+                    b.editing = false;
+                    b.focus = None;
                     changed = true;
                 }
                 (2, 8) => {
@@ -6378,6 +6380,8 @@ struct Web {
     js: Option<crate::js::Engine>,
     console: bool,                // F12 — JS konsoli
     t0: u64,
+    focus: Option<usize>,         // fokusdagi forma maydoni
+    fetches: Vec<(u64, u32)>,     // (yuklaş vazifasi, JS fetch raqami)
 }
 
 struct WItem {
@@ -6394,6 +6398,7 @@ struct WItem {
     button: bool,
     underline: bool,
     img: Option<usize>,
+    input: u16,
 }
 
 /// Fonda yuklaş navbati: (raqam, manzil, olindimi, natija).
@@ -6402,6 +6407,8 @@ struct WebJob {
     url: String,
     taken: bool,
     result: Option<WebRes>,
+    post: Option<String>,                  // forma tanasi (POST)
+    raw: Option<(String, Option<String>)>, // JS fetch: (usul, tana)
 }
 
 struct WebRes {
@@ -6410,6 +6417,28 @@ struct WebRes {
     status: String,
     images: Vec<(String, crate::image::Image)>,
     scripts: Vec<String>,
+    raw: Option<Result<(u16, String, String), String>>, // JS fetch natijasi
+}
+
+/// Körilgan sahifalar tarixi: (manzil, sarlavha, vaqt).
+static WEB_HIST: crate::sync::SpinLock<Vec<(String, String, String)>> = crate::sync::SpinLock::new(Vec::new());
+
+/// zamin://tarix — tarix sahifasi (dinamik).
+fn history_page() -> String {
+    let h = WEB_HIST.lock();
+    let mut s = String::from("<title>Tarix</title><style>.vaqt{color:#8e8e93;font-size:13px}.k{border:1px solid #3a4458;border-radius:8px;padding:10px}</style><h1>Tarix</h1>");
+    if h.is_empty() {
+        s.push_str("<p>Hali hech qanday sahifa oçilmagan.</p>");
+    } else {
+        s.push_str(&alloc::format!("<p>Oxirgi {} ta sahifa (yangisi tepada):</p><div class=\"k\"><ol>", h.len()));
+        for (u, t, tm) in h.iter().rev() {
+            let esc = |x: &str| x.replace('&', "&amp;").replace('<', "&lt;").replace('"', "&quot;");
+            s.push_str(&alloc::format!("<li><a href=\"{}\">{}</a> <span class=\"vaqt\">{} · {}</span></li>", esc(u), esc(t), tm, esc(u)));
+        }
+        s.push_str("</ol></div>");
+    }
+    s.push_str("<p><a href=\"zamin://bosh\">Bosh sahifa</a></p>");
+    s
 }
 
 static WEB_Q: crate::sync::SpinLock<Vec<WebJob>> = crate::sync::SpinLock::new(Vec::new());
@@ -6417,7 +6446,72 @@ static WEB_NEXT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::
 static WEB_WORKER: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 fn builtin_page(url: &str) -> Option<&'static str> {
+    let url = url.split(['?', '#']).next().unwrap_or(url);
     Some(match url.trim_end_matches('/') {
+        "zamin://malumot.json" => r##"{"tizim": "Zamin OS", "versiya": "0.0.24", "til": "Rust", "imkoniyatlar": ["JavaScript", "CSS", "fetch", "Promise", "formalar"], "yadrolar": 4, "ochiq": true}"##,
+        "zamin://forma" => r##"<title>Formalar va fetch()</title>
+<style>
+body { background: #0f1724; color: #dbe3ee; }
+h1 { color: #ffffff; text-align: center; }
+.karta { max-width: 560px; margin: 14px auto; padding: 14px; border: 2px solid #3a7bd5; border-radius: 12px; background: #13213a; }
+.yashil { border: 1px solid #2fbf5f; border-radius: 10px; padding: 10px; background: #0f2a1a; max-width: 560px; margin: 14px auto; }
+.izoh { color: #8ea0b6; font-size: 13px; }
+#javob { color: #ffd166; font-weight: bold; }
+</style>
+<h1>Formalar, fetch() va quti modeli</h1>
+<div class="karta">
+<h3>1. Ro'yxatdan ötiş (GET)</h3>
+<form action="zamin://natija" method="get">
+<p>Ism: <input name="ism" placeholder="Ismingiz" size="18"></p>
+<p>Parol: <input type="password" name="parol" size="12"></p>
+<p><input type="checkbox" name="obuna" checked> Yangiliklarga obuna</p>
+<p><input type="submit" value="Yuboriş"></p>
+</form>
+<p class="izoh">Natija sahifasi qiymatlarni <code>location.search</code> va <code>URLSearchParams</code> bilan öqiydi.</p>
+</div>
+<div class="yashil">
+<h3>2. fetch() + JSON.parse</h3>
+<p><button id="olish">Maʼlumot olish</button></p>
+<p id="javob">—</p>
+</div>
+<div class="karta">
+<h3>3. JS submit hodisasi (preventDefault)</h3>
+<form id="hisob">
+<p><input id="a" name="a" value="12" size="6"> + <input id="b" name="b" value="30" size="6"> <button>Hisobla</button></p>
+</form>
+<p id="yigindi" class="izoh">Natija shu yerda.</p>
+</div>
+<script>
+document.getElementById("olish").addEventListener("click", () => {
+  document.getElementById("javob").textContent = "Yuklanmoqda…";
+  fetch("zamin://malumot.json")
+    .then(r => r.json())
+    .then(d => {
+      document.getElementById("javob").textContent =
+        `${d.tizim} ${d.versiya} (${d.til}): ${d.imkoniyatlar.join(", ")} · yadrolar: ${d.yadrolar}`;
+    })
+    .catch(e => { document.getElementById("javob").textContent = "Xato: " + e; });
+});
+document.getElementById("hisob").addEventListener("submit", ev => {
+  ev.preventDefault();
+  const a = Number(document.getElementById("a").value);
+  const b = Number(document.getElementById("b").value);
+  document.getElementById("yigindi").textContent = `${a} + ${b} = ${a + b}`;
+});
+</script>"##,
+        "zamin://natija" => r##"<title>Forma natijasi</title>
+<style>.karta { max-width: 520px; margin: 20px auto; padding: 16px; border: 2px solid #2fbf5f; border-radius: 12px; background: #0f2a1a; }</style>
+<div class="karta"><h2>Forma qabul qilindi</h2>
+<p id="ism">…</p><p id="parol">…</p><p id="obuna">…</p>
+<p>Sörov satri: <code id="qs">…</code></p></div>
+<p><a href="zamin://forma">Formaga qaytiş</a></p>
+<script>
+const p = new URLSearchParams(location.search);
+document.getElementById("ism").textContent = "Salom, " + (p.get("ism") || "mehmon") + "!";
+document.getElementById("parol").textContent = "Parol uzunligi: " + (p.get("parol") || "").length + " belgi";
+document.getElementById("obuna").textContent = p.has("obuna") ? "Obuna: ha" : "Obuna: yöq";
+document.getElementById("qs").textContent = location.search;
+</script>"##,
         "zamin://bosh" => r##"<title>Bosh sahifa</title>
 <style>
 .hero{background:#1e3a8a;color:#ffffff;text-align:center}
@@ -6433,6 +6527,8 @@ fn builtin_page(url: &str) -> Option<&'static str> {
 <ul>
 <li><a href="zamin://sinov">JavaScript va CSS sinovi</a></li>
 <li><a href="~/Hujjatlar/zamin.html">Zamin OS qöllanmasi</a> — mahalliy HTML fayl</li>
+<li><a href="zamin://forma">Formalar va fetch() sinovi</a></li>
+<li><a href="zamin://tarix">Tarix</a> — körilgan sahifalar</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
 <li><a href="https://example.com/">example.com</a> (HTTPS, haqiqiy internet)</li>
 </ul>
@@ -6522,7 +6618,10 @@ fn error_doc(title: &str, msg: &str) -> Doc {
 }
 
 /// Resursni oladi: (baytlar, turi, yakuniy manzil).
-fn web_bytes(url: &str) -> Result<(Vec<u8>, String, String), String> {
+fn web_bytes(url: &str, post: Option<&str>) -> Result<(Vec<u8>, String, String), String> {
+    if url.trim_end_matches('/') == "zamin://tarix" {
+        return Ok((history_page().into_bytes(), String::from("text/html"), String::from(url)));
+    }
     if let Some(src) = builtin_page(url) {
         return Ok((Vec::from(src.as_bytes()), String::from("text/html"), String::from(url)));
     }
@@ -6543,7 +6642,10 @@ fn web_bytes(url: &str) -> Result<(Vec<u8>, String, String), String> {
         };
         return Ok((d, String::from(ct), String::from(p)));
     }
-    let r = crate::net::http::get(url)?;
+    let r = match post {
+        Some(b) => crate::net::http::send("POST", url, Some(("application/x-www-form-urlencoded", b.as_bytes())))?,
+        None => crate::net::http::get(url)?,
+    };
     if r.status >= 400 {
         return Err(alloc::format!("HTTP {} — {}", r.status, r.url));
     }
@@ -6557,12 +6659,26 @@ fn shrink(img: crate::image::Image, max: usize) -> crate::image::Image {
 }
 
 /// Yuklaş vazifasi (fonda): sahifa, tashqi CSS, skriptlar, rasmlar.
-fn web_load(url: &str) -> WebRes {
+/// JS fetch: (holat kodi, tana, yakuniy manzil) — xato kodlarida ham.
+fn web_raw(method: &str, url: &str, body: Option<&str>) -> Result<(u16, String, String), String> {
+    if !url.contains("://") || url.starts_with("zamin:") {
+        let (d, _, u) = web_bytes(url, None)?;
+        return Ok((200, String::from_utf8_lossy(&d).into_owned(), u));
+    }
+    let ct = match body {
+        Some(b) if b.trim_start().starts_with('{') || b.trim_start().starts_with('[') => "application/json",
+        _ => "text/plain;charset=UTF-8",
+    };
+    let r = crate::net::http::send(method, url, body.map(|b| (ct, b.as_bytes())))?;
+    Ok((r.status, String::from_utf8_lossy(&r.body).into_owned(), r.url))
+}
+
+fn web_load(url: &str, post: Option<&str>) -> WebRes {
     let t0 = crate::timer::uptime_ms();
-    let (bytes, ct, final_url) = match web_bytes(url) {
+    let (bytes, ct, final_url) = match web_bytes(url, post) {
         Ok(x) => x,
         Err(e) => {
-            return WebRes { doc: error_doc("Sahifani oçib bölmadi", &e), url: String::from(url), status: String::from("Xato"), images: Vec::new(), scripts: Vec::new() };
+            return WebRes { doc: error_doc("Sahifani oçib bölmadi", &e), url: String::from(url), status: String::from("Xato"), images: Vec::new(), scripts: Vec::new(), raw: None };
         }
     };
     let name = final_url.rsplit('/').next().unwrap_or("fayl").split('?').next().unwrap_or("fayl");
@@ -6573,7 +6689,7 @@ fn web_load(url: &str) -> WebRes {
         // Tashqi CSS
         let mut css = String::new();
         for href in crate::html::stylesheet_links(&text).into_iter().take(4) {
-            if let Ok((d, _, _)) = web_bytes(&crate::net::http::join(&final_url, &href)) {
+            if let Ok((d, _, _)) = web_bytes(&crate::net::http::join(&final_url, &href), None) {
                 if d.len() < 512 * 1024 {
                     css.push_str(&String::from_utf8_lossy(&d));
                     css.push('\n');
@@ -6586,7 +6702,7 @@ fn web_load(url: &str) -> WebRes {
             match s {
                 crate::html::Script::Inline(c) => scripts.push(c.clone()),
                 crate::html::Script::Src(u) => {
-                    if let Ok((d, _, _)) = web_bytes(&crate::net::http::join(&final_url, u)) {
+                    if let Ok((d, _, _)) = web_bytes(&crate::net::http::join(&final_url, u), None) {
                         if d.len() < 1024 * 1024 {
                             scripts.push(String::from_utf8_lossy(&d).into_owned());
                         }
@@ -6602,7 +6718,7 @@ fn web_load(url: &str) -> WebRes {
             }
             seen.push(b.src.clone());
             let full = crate::net::http::join(&final_url, &b.src);
-            if let Ok((d, _, fu)) = web_bytes(&full) {
+            if let Ok((d, _, fu)) = web_bytes(&full, None) {
                 if d.len() < 4 * 1024 * 1024 {
                     let nm = fu.rsplit('/').next().unwrap_or("rasm").split('?').next().unwrap_or("rasm");
                     if let Some(img) = crate::image::decode_file(nm, &d).or_else(|| crate::image::decode(&d)) {
@@ -6654,7 +6770,7 @@ fn web_load(url: &str) -> WebRes {
     } else {
         alloc::format!("Fayl · {} bayt", bytes.len())
     };
-    WebRes { doc, url: final_url, status, images, scripts }
+    WebRes { doc, url: final_url, status, images, scripts, raw: None }
 }
 
 extern "C" fn web_worker(_: usize) {
@@ -6663,12 +6779,22 @@ extern "C" fn web_worker(_: usize) {
             let mut q = WEB_Q.lock();
             q.iter_mut().find(|j| !j.taken).map(|j| {
                 j.taken = true;
-                (j.id, j.url.clone())
+                (j.id, j.url.clone(), j.post.clone(), j.raw.clone())
             })
         };
         match job {
-            Some((id, url)) => {
-                let res = web_load(&url);
+            Some((id, url, post, raw)) => {
+                let res = match raw {
+                    Some((m, b)) => WebRes {
+                        doc: Doc::empty(),
+                        url: url.clone(),
+                        status: String::new(),
+                        images: Vec::new(),
+                        scripts: Vec::new(),
+                        raw: Some(web_raw(&m, &url, b.as_deref())),
+                    },
+                    None => web_load(&url, post.as_deref()),
+                };
                 let mut q = WEB_Q.lock();
                 if let Some(j) = q.iter_mut().find(|j| j.id == id) {
                     j.result = Some(res);
@@ -6693,6 +6819,8 @@ fn web_new() -> Box<Web> {
         js: None,
         console: false,
         t0: 0,
+        focus: None,
+        fetches: Vec::new(),
     })
 }
 
@@ -6704,8 +6832,21 @@ fn web_apply(win: &mut Window, res: WebRes) {
     w.images = res.images;
     w.scroll = 0;
     w.loading = None;
+    w.focus = None;
+    w.fetches.clear();
     let mut eng = crate::js::Engine::new();
+    eng.url = w.url.clone();
     let now = crate::timer::uptime_ms();
+    if !w.url.starts_with("zamin://tarix") {
+        let t = time::now();
+        let title = if w.doc.title.is_empty() { w.url.clone() } else { w.doc.title.clone() };
+        let mut h = WEB_HIST.lock();
+        h.retain(|(u, _, _)| *u != w.url);
+        h.push((w.url.clone(), title, alloc::format!("{:02}:{:02}", t.hour, t.minute)));
+        if h.len() > 50 {
+            h.remove(0);
+        }
+    }
     for s in &res.scripts {
         let _ = eng.run(s, &mut w.doc, now);
     }
@@ -6726,6 +6867,11 @@ fn web_apply(win: &mut Window, res: WebRes) {
 }
 
 fn web_go(win: &mut Window, url: &str, push: bool) {
+    web_go_ex(win, url, push, None);
+}
+
+/// Yuklaş: `post` — forma tanasi (POST usuli).
+fn web_go_ex(win: &mut Window, url: &str, push: bool, post: Option<String>) {
     let mut url = String::from(url.trim());
     if !url.contains("://") && !url.starts_with('~') && !url.starts_with('/') && !url.starts_with("file:") && !url.starts_with("zamin:") {
         url = alloc::format!("http://{}", url);
@@ -6735,8 +6881,8 @@ fn web_go(win: &mut Window, url: &str, push: bool) {
         w.hist.push(w.url.clone());
     }
     w.editing = false;
-    if builtin_page(&url).is_some() {
-        let res = web_load(&url);
+    if post.is_none() && (builtin_page(&url).is_some() || url.starts_with("zamin:")) {
+        let res = web_load(&url, None);
         web_apply(win, res);
         return;
     }
@@ -6748,7 +6894,7 @@ fn web_go(win: &mut Window, url: &str, push: bool) {
     {
         let mut q = WEB_Q.lock();
         q.retain(|j| !(j.result.is_some() && j.id < id.saturating_sub(8)));
-        q.push(WebJob { id, url: url.clone(), taken: false, result: None });
+        q.push(WebJob { id, url: url.clone(), taken: false, result: None, post, raw: None });
     }
     w.loading = Some(id);
     w.t0 = crate::timer::uptime_ms();
@@ -6761,6 +6907,39 @@ fn web_poll(windows: &mut [Window]) -> bool {
     let mut changed = false;
     let now = crate::timer::uptime_ms();
     for win in windows.iter_mut().filter(|w| w.kind == Kind::Browser) {
+        // JS fetch(): yangi sörovlarni navbatga, tayyorlarini promise larga
+        if let Some(w) = win.web.as_mut().filter(|w| w.loading.is_none()) {
+            if let Some(eng) = w.js.as_mut() {
+                for (fid, method, url, body) in core::mem::take(&mut eng.fetch_out) {
+                    if !WEB_WORKER.swap(true, Ordering::Relaxed) {
+                        let _ = task::spawn_kernel("brauzer", web_worker, 0);
+                    }
+                    let id = WEB_NEXT.fetch_add(1, Ordering::Relaxed);
+                    let full = crate::net::http::join(&w.url, &url);
+                    WEB_Q.lock().push(WebJob { id, url: full, taken: false, result: None, post: None, raw: Some((method, body)) });
+                    w.fetches.push((id, fid));
+                }
+                let mut k = 0;
+                while k < w.fetches.len() {
+                    let (jid, fid) = w.fetches[k];
+                    let done = {
+                        let mut q = WEB_Q.lock();
+                        q.iter().position(|j| j.id == jid && j.result.is_some()).map(|p| q.remove(p).result.unwrap())
+                    };
+                    match done {
+                        Some(r) => {
+                            w.fetches.remove(k);
+                            eng.fetch_done(fid, r.raw.unwrap_or(Err(String::from("javob yöq"))), &mut w.doc);
+                            for a in eng.alerts.drain(..) {
+                                notify("Sahifa xabari", &a, 0x2f88ff);
+                            }
+                            changed = true;
+                        }
+                        None => k += 1,
+                    }
+                }
+            }
+        }
         let Some(id) = win.web.as_ref().and_then(|w| w.loading) else {
             if let Some(w) = win.web.as_mut() {
                 if let Some(eng) = w.js.as_mut() {
@@ -6824,22 +7003,67 @@ fn web_palette(doc: &Doc) -> (Color, Color, Color, Color, Color) {
     if dark { (bg, text, 0x5aa9ff, 0xffc777, doc.color.unwrap_or(OQ)) } else { (bg, text, 0x0b57d0, 0xa3501a, doc.color.unwrap_or(0x000000)) }
 }
 
-/// Sahifa joylaşuvi: elementlar, bezaklar (x, y, w, h, rang) va toʻliq balandlik.
-fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<(usize, usize, usize, usize, Color)>, usize) {
+/// Bezak: töğriburçak (to'ldirilgan va/yoki çegarali, yumaloq burçakli).
+struct Deco {
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+    fill: Option<Color>,
+    radius: usize,
+    bw: usize,
+    bc: Color,
+}
+
+fn dfill(x: usize, y: usize, w: usize, h: usize, c: Color) -> Deco {
+    Deco { x, y, w, h, fill: Some(c), radius: 0, bw: 0, bc: 0 }
+}
+
+/// Sahifa joylaşuvi: elementlar, bezaklar va toʻliq balandlik.
+/// Quti modeli: konteyner (fon / çegara / padding / kenglik) — qöşni bloklar bitta qutiga birlaşadi.
+fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
     let doc = &web.doc;
     let u = body();
-    let pad = u;
+    let page_pad = u;
     let k = (small() * 11 / 10) as f32 / 16.0;
     let pxs = |size: f32| ((size * k) as usize).clamp(8, 90);
-    let (_, text_col, link_col, code_col, head_col) = web_palette(doc);
-    let dark = luma(doc.bg.unwrap_or(0x161b26)) < 128;
+    let lpx = |v: f32| (v * k) as usize;
+    let (page_bg, text_col, link_col, code_col, head_col) = web_palette(doc);
+    let dark = luma(page_bg) < 128;
     let mut items: Vec<WItem> = Vec::new();
-    let mut deco = Vec::new();
+    let mut deco: Vec<Deco> = Vec::new();
     let mut y = u / 2;
-    let maxw = width.saturating_sub(pad * 2);
-    let mut prev_bg: (u32, usize) = (0, usize::MAX); // (fon kaliti, deco indeksi)
-    for b in doc.blocks.iter().filter(|b| !b.hidden) {
+    let full = width.saturating_sub(page_pad * 2);
+    let vis: Vec<&crate::html::Block> = doc.blocks.iter().filter(|b| !b.hidden).collect();
+    let mut open_box: Option<(u32, usize, usize)> = None; // (konteyner kaliti, deco indeksi, içki çekiniş)
+    for (bi, b) in vis.iter().enumerate() {
         let base_px = pxs(b.size);
+        // --- Konteyner (quti) geometriyasi ---
+        let (bx, bwid, inset) = if b.bgk != 0 {
+            let cw = match b.maxw {
+                Some((v, true)) => full * (v as usize).min(100) / 100,
+                Some((v, false)) => lpx(v).min(full),
+                None => full,
+            }
+            .max(u * 4);
+            let cx = page_pad + if b.center { (full - cw) / 2 } else { 0 };
+            let bwp = if b.bw > 0.0 { lpx(b.bw).max(1) } else { 0 };
+            let padp = lpx(b.pad).max(if b.bg.is_some() || bwp > 0 { u / 2 } else { 0 });
+            let inset = padp + bwp;
+            if open_box.map(|o| o.0) != Some(b.bgk) {
+                y += lpx(b.bmt);
+                deco.push(Deco { x: cx, y, w: cw, h: 0, fill: b.bg, radius: lpx(b.radius), bw: bwp, bc: b.bc.unwrap_or(0x808080) });
+                open_box = Some((b.bgk, deco.len() - 1, inset));
+                y += inset;
+            }
+            (cx + inset, cw.saturating_sub(inset * 2), inset)
+        } else {
+            open_box = None;
+            (page_pad, full, 0)
+        };
+        let _ = inset;
+        let pad = bx;
+        let maxw = bwid;
         let (indent, gap_top, gap_bot) = match b.kind {
             HK::H(1) => (0, u, u / 2),
             HK::H(_) => (0, u * 2 / 3, u / 4),
@@ -6852,18 +7076,30 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<(usize, usize, usize,
         };
         let bcol = b.color.unwrap_or(match b.kind {
             HK::H(_) => head_col,
-            HK::Quote => mix(text_col, doc.bg.unwrap_or(0x161b26), 70),
+            HK::Quote => mix(text_col, page_bg, 70),
             _ => text_col,
         });
-        let has_bg = b.bg.is_some();
-        y += gap_top;
-        if has_bg {
-            y += u / 3;
-        }
+        // birinçi blok qutida — yuqori bo'şliqsiz
+        let first_in_box = b.bgk != 0 && (bi == 0 || vis[bi - 1].bgk != b.bgk);
+        y += if first_in_box { 0 } else { gap_top } + if b.bgk == 0 { lpx(b.mt) } else { 0 };
         let y_block = y;
+        let last_in_box = b.bgk != 0 && vis.get(bi + 1).is_none_or(|n| n.bgk != b.bgk);
+        let close_box = |y: &mut usize, deco: &mut Vec<Deco>, open_box: &mut Option<(u32, usize, usize)>| {
+            if let Some((_, di, ins)) = *open_box {
+                if last_in_box {
+                    *y += ins;
+                    deco[di].h = *y - deco[di].y;
+                    *y += lpx(b.bmb);
+                    *open_box = None;
+                } else {
+                    deco[di].h = *y - deco[di].y;
+                }
+            }
+        };
         if b.kind == HK::Hr {
-            deco.push((pad, y, maxw, 1, if dark { 0x34405a } else { 0xc7ccd6 }));
+            deco.push(dfill(pad, y, maxw, 1, if dark { 0x34405a } else { 0xc7ccd6 }));
             y += 1 + gap_bot;
+            close_box(&mut y, &mut deco, &mut open_box);
             continue;
         }
         if b.kind == HK::Img {
@@ -6884,34 +7120,26 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<(usize, usize, usize,
             let alt = b.spans.first().map(|s| s.text.clone()).unwrap_or_default();
             let link = b.spans.first().and_then(|s| s.link.clone());
             if found.is_none() {
-                deco.push((x, y, w, h, if dark { 0x232a38 } else { 0xe4e7ec }));
+                deco.push(dfill(x, y, w, h, if dark { 0x232a38 } else { 0xe4e7ec }));
             }
             items.push(WItem {
-                x,
-                y,
-                w,
-                h,
+                x, y, w, h,
                 text: if found.is_some() { String::new() } else { alloc::format!("[rasm] {}", alt) },
-                col: mix(text_col, doc.bg.unwrap_or(0x161b26), 110),
-                px: small(),
-                mono: false,
-                link,
-                el: b.el,
-                button: false,
-                underline: false,
-                img: found,
+                col: mix(text_col, page_bg, 110),
+                px: small(), mono: false, link, el: b.el, button: false, underline: false, img: found, input: NO_EL,
             });
-            y += h + gap_bot;
+            y += h + if last_in_box { 0 } else { gap_bot };
+            close_box(&mut y, &mut deco, &mut open_box);
             continue;
         }
         let x0 = pad + indent;
         if let HK::Li(_, n) = b.kind {
             if n == 0 {
-                deco.push((x0 - u * 3 / 4, y + base_px / 2 - 2, 5, 5, mix(bcol, doc.bg.unwrap_or(0x161b26), 90)));
+                deco.push(dfill(x0 - u * 3 / 4, y + base_px / 2 - 2, 5, 5, mix(bcol, page_bg, 90)));
             } else {
                 let t = alloc::format!("{}.", n);
                 let tw = gfx::text_width(&t, base_px);
-                items.push(WItem { x: x0.saturating_sub(tw + u / 3), y, w: tw, h: base_px, text: t, col: mix(bcol, doc.bg.unwrap_or(0x161b26), 70), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None });
+                items.push(WItem { x: x0.saturating_sub(tw + u / 3), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 70), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL });
             }
         }
         if b.kind == HK::Pre {
@@ -6919,14 +7147,15 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<(usize, usize, usize,
             let lhm = gfx::line_height(base_px, Font::Mono).max(base_px + 3);
             let lines: Vec<&str> = all.lines().collect();
             let h = lines.len() * lhm + u;
-            deco.push((pad, y, maxw, h, b.bg.unwrap_or(if dark { 0x10151f } else { 0xeef0f3 })));
+            deco.push(dfill(pad, y, maxw, h, if b.bgk != 0 && b.bg.is_some() { mix(b.bg.unwrap(), 0x000000, 20) } else if dark { 0x10151f } else { 0xeef0f3 }));
             let mut yy = y + u / 2;
             for l in lines {
                 let w = gfx::text_width_mono(l, base_px);
-                items.push(WItem { x: x0, y: yy, w, h: base_px, text: String::from(l), col: b.color.unwrap_or(if dark { 0xd7e3c8 } else { 0x24292f }), px: base_px, mono: true, link: None, el: b.el, button: false, underline: false, img: None });
+                items.push(WItem { x: x0, y: yy, w, h: base_px, text: String::from(l), col: b.color.unwrap_or(if dark { 0xd7e3c8 } else { 0x24292f }), px: base_px, mono: true, link: None, el: b.el, button: false, underline: false, img: None, input: NO_EL });
                 yy += lhm;
             }
-            y += h + gap_bot;
+            y += h + if last_in_box { 0 } else { gap_bot };
+            close_box(&mut y, &mut deco, &mut open_box);
             continue;
         }
         // Qatorlarga bölib joylaş (tekislaş bilan)
@@ -6953,6 +7182,25 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<(usize, usize, usize,
                 line_h = base_px * 14 / 10;
                 continue;
             }
+            // Forma maydoni (matn, parol, belgilaş, yuboriş)
+            if s.input != NO_EL && !s.button {
+                let inp = &doc.inputs[s.input as usize];
+                let (ww, hh) = match inp.kind {
+                    2 => (spx + u / 2, spx),
+                    1 => (gfx::text_width(&inp.value, spx) + u * 3 / 2, spx * 7 / 5),
+                    _ => ((inp.size.clamp(4, 60) as usize * spx * 11 / 20).min(maxw), spx * 8 / 5),
+                };
+                if x + ww > pad + maxw && x > x0 {
+                    finish(&mut items, line_start, x);
+                    x = x0;
+                    y += line_h;
+                    line_start = items.len();
+                }
+                line_h = line_h.max(hh + u / 2);
+                items.push(WItem { x, y, w: ww, h: hh, text: String::new(), col: bcol, px: spx, mono: false, link: None, el: s.el, button: false, underline: false, img: None, input: s.input });
+                x += ww + u / 3;
+                continue;
+            }
             let c = s.color.unwrap_or(if s.link.is_some() { link_col } else if s.code { code_col } else { bcol });
             let mut rest = s.text.as_str();
             while !rest.is_empty() {
@@ -6971,34 +7219,26 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<(usize, usize, usize,
                     }
                 }
                 line_h = line_h.max(spx * 14 / 10);
-                items.push(WItem { x, y, w: ww, h: spx, text: String::from(word), col: c, px: spx, mono: s.code, link: s.link.clone(), el: s.el, button: s.button, underline: s.link.is_some() && s.underline, img: None });
+                items.push(WItem { x, y, w: ww, h: spx, text: String::from(word), col: c, px: spx, mono: s.code, link: s.link.clone(), el: s.el, button: s.button, underline: s.link.is_some() && s.underline, img: None, input: s.input });
                 x += ww;
             }
         }
         finish(&mut items, line_start, x);
         y += line_h;
-        if let Some(bg) = b.bg {
-            if b.bgk != 0 && prev_bg.0 == b.bgk && prev_bg.1 < deco.len() {
-                // shu konteynerning davomi — oldingi fonni çözamiz
-                let d = &mut deco[prev_bg.1];
-                d.3 = (y + u / 3).saturating_sub(d.1);
-            } else {
-                deco.insert(0, (pad / 2, y_block.saturating_sub(u / 3), maxw + pad, y - y_block + u * 2 / 3, bg));
-                // insert(0) indekslarni suradi
-                prev_bg = (b.bgk, 0);
-            }
-            y += u / 3;
-        } else {
-            prev_bg = (0, usize::MAX);
-        }
         if b.kind == HK::Quote {
-            deco.push((pad + u / 2, y_block, 3, y - y_block, accent()));
+            deco.push(dfill(pad + u / 2, y_block, 3, y - y_block, accent()));
         }
-        if b.kind == HK::H(1) && !has_bg {
-            deco.push((pad, y + u / 6, maxw, 1, if dark { 0x2a3346 } else { 0xd0d5dd }));
+        if b.kind == HK::H(1) && b.bgk == 0 {
+            deco.push(dfill(pad, y + u / 6, maxw, 1, if dark { 0x2a3346 } else { 0xd0d5dd }));
             y += u / 3;
         }
-        y += gap_bot;
+        if !last_in_box {
+            y += gap_bot;
+        }
+        if b.bgk == 0 {
+            y += lpx(b.mb);
+        }
+        close_box(&mut y, &mut deco, &mut open_box);
     }
     (items, deco, y + u)
 }
@@ -7078,10 +7318,21 @@ fn draw_browser(win: &Window) {
     gfx::set_clip(px0, py0, pw, ph);
     let (items, deco, total) = web_layout(web, pw.saturating_sub(u));
     let sc = web.scroll.min(total.saturating_sub(ph));
-    for (x, y, w, h, c) in deco {
-        if y + h >= sc && y < sc + ph {
-            let top = y.max(sc);
-            fill_rect(px0 + x, py0 + top - sc, w, (y + h) - top, c);
+    for d in deco {
+        if d.h > 0 && d.y + d.h >= sc && d.y < sc + ph {
+            let top = d.y.max(sc);
+            let (dx, dy, dh) = (px0 + d.x, py0 + top - sc, d.y + d.h - top);
+            let r = if d.y >= sc { d.radius.min(d.w / 2).min(dh / 2) } else { 0 };
+            if let Some(c) = d.fill {
+                if r > 0 {
+                    gfx::fill_round_rect(dx, dy, d.w, dh, r, c);
+                } else {
+                    fill_rect(dx, dy, d.w, dh, c);
+                }
+            }
+            if d.bw > 0 {
+                gfx::round_outline(dx, dy, d.w, dh, r, d.bw, d.bc);
+            }
         }
     }
     for it in &items {
@@ -7105,12 +7356,61 @@ fn draw_browser(win: &Window) {
             }
             continue;
         }
+        if it.input != NO_EL && !it.button {
+            let inp = &web.doc.inputs[it.input as usize];
+            let focused = web.focus == Some(it.input as usize);
+            let dark = luma(page_bg) < 128;
+            let (fbg, fbd, ftx) = if dark { (0x10151f, 0x3a4458, 0xe7edf6) } else { (0xffffff, 0xb8bec9, 0x1d1d1f) };
+            match inp.kind {
+                2 => {
+                    let b = it.px;
+                    gfx::fill_round_rect(x, y, b, b, b / 5, if inp.checked { accent() } else { fbg });
+                    gfx::round_outline(x, y, b, b, b / 5, 1, if inp.checked { accent() } else { fbd });
+                    if inp.checked {
+                        let (fx, fy, q) = (x as f32, y as f32, b as f32);
+                        seg(fx + q * 0.22, fy + q * 0.52, fx + q * 0.42, fy + q * 0.72, (q / 9.0).max(1.2), OQ);
+                        seg(fx + q * 0.42, fy + q * 0.72, fx + q * 0.8, fy + q * 0.28, (q / 9.0).max(1.2), OQ);
+                    }
+                }
+                1 => {
+                    gfx::fill_round_rect(x, y, it.w, it.h, it.h / 3, if dark { 0x3a4458 } else { 0xe8ebf0 });
+                    gfx::round_outline(x, y, it.w, it.h, it.h / 3, 1, fbd);
+                    gfx::draw_text_centered(x + it.w / 2, y + (it.h - it.px) / 2, &inp.value, ftx, it.px);
+                }
+                _ => {
+                    gfx::fill_round_rect(x, y, it.w, it.h, u / 4, fbg);
+                    gfx::round_outline(x, y, it.w, it.h, u / 4, if focused { 2 } else { 1 }, if focused { accent() } else { fbd });
+                    let shown: String = if inp.kind == 3 { inp.value.chars().map(|_| '*').collect() } else { inp.value.clone() };
+                    let tx = x + u / 3;
+                    let ty = y + (it.h - it.px) / 2;
+                    let avail = it.w.saturating_sub(u * 2 / 3);
+                    if shown.is_empty() && !focused {
+                        gfx::draw_text(tx, ty, &fit_text(&inp.placeholder, avail, it.px), mix(ftx, fbg, 140), it.px);
+                    } else {
+                        // oxiri körinsin
+                        let v: Vec<char> = shown.chars().collect();
+                        let mut k = v.len();
+                        while k > 0 && gfx::text_width(&v[k - 1..].iter().collect::<String>(), it.px) <= avail {
+                            k -= 1;
+                        }
+                        let t: String = v[k..].iter().collect();
+                        let ex = gfx::draw_text(tx, ty, &t, ftx, it.px);
+                        if focused {
+                            fill_rect(ex + 1, y + 3, 2, it.h.saturating_sub(6), accent());
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        let light = luma(page_bg) >= 128;
         if it.button {
-            gfx::fill_round_rect(x, y.saturating_sub(it.px / 5), it.w.saturating_sub(u / 6), it.px * 7 / 5, it.px / 3, 0x3a4458);
-            gfx::round_outline(x, y.saturating_sub(it.px / 5), it.w.saturating_sub(u / 6), it.px * 7 / 5, it.px / 3, 1, 0x5a6478);
+            let (bf, bb) = if light { (0xe8ebf0, 0xb8bec9) } else { (0x3a4458, 0x5a6478) };
+            gfx::fill_round_rect(x, y.saturating_sub(it.px / 5), it.w.saturating_sub(u / 6), it.px * 7 / 5, it.px / 3, bf);
+            gfx::round_outline(x, y.saturating_sub(it.px / 5), it.w.saturating_sub(u / 6), it.px * 7 / 5, it.px / 3, 1, bb);
         }
         let tx = if it.button { x + u / 4 } else { x };
-        let col = if it.button && it.col == web_palette(&web.doc).1 { OQ } else { it.col };
+        let col = if it.button && !light && it.col == web_palette(&web.doc).1 { OQ } else { it.col };
         if it.mono {
             gfx::draw_text_mono(tx, y, &it.text, col, it.px);
         } else {
@@ -7199,11 +7499,45 @@ fn web_click(win: &mut Window, cx: usize, cy: usize) -> bool {
         let (lx, ly) = (cx - px0, cy - py0 + sc);
         // Nuqta ostidagilar ichidan bosiladiganini (havola / JS) afzal köramiz
         let under: Vec<&WItem> = items.iter().filter(|it| lx >= it.x && lx < it.x + it.w && ly + it.h / 5 >= it.y && ly < it.y + it.h * 7 / 5).collect();
-        let hit = under.iter().find(|it| it.link.is_some() || it.el != NO_EL).or(under.first()).map(|it| (it.el, it.link.clone()));
+        let hit = under
+            .iter()
+            .find(|it| it.input != NO_EL || it.link.is_some() || it.el != NO_EL)
+            .or(under.first())
+            .map(|it| (it.el, it.link.clone(), it.input));
         let base = web.url.clone();
         let w = win.web.as_mut().unwrap();
         w.editing = false;
-        if let Some((el, link)) = hit {
+        w.focus = None;
+        if let Some((el, _, inp)) = hit.clone().filter(|h| h.2 != NO_EL) {
+            let (kind, form) = (w.doc.inputs[inp as usize].kind, w.doc.inputs[inp as usize].form);
+            match kind {
+                0 | 3 => {
+                    w.focus = Some(inp as usize);
+                    return true;
+                }
+                2 => {
+                    let c = &mut w.doc.inputs[inp as usize].checked;
+                    *c = !*c;
+                }
+                _ => {}
+            }
+            // JS bosiş işlovçisi (bölsa)
+            if el != NO_EL {
+                if let Some(eng) = w.js.as_mut() {
+                    if eng.has_handler(el as usize, &w.doc) {
+                        eng.click(el as usize, &mut w.doc, crate::timer::uptime_ms());
+                        for a in eng.alerts.drain(..) {
+                            notify("Sahifa xabari", &a, 0x2f88ff);
+                        }
+                    }
+                }
+            }
+            if (kind == 1 || kind == 5) && form != NO_EL {
+                web_submit(win, form as usize, Some(inp as usize));
+            }
+            return true;
+        }
+        if let Some((el, link, _)) = hit {
             // JS hodisasi (onclick / addEventListener)
             if el != NO_EL {
                 if let Some(eng) = w.js.as_mut() {
@@ -7236,7 +7570,84 @@ fn web_click(win: &mut Window, cx: usize, cy: usize) -> bool {
     false
 }
 
+/// Formani yuboradi: JS submit işlovçilari → GET (so'rov satri) yoki POST (tana).
+fn web_submit(win: &mut Window, f: usize, submitter: Option<usize>) {
+    let Some(w) = win.web.as_mut() else { return };
+    let Some(form) = w.doc.forms.get(f).cloned() else { return };
+    if form.el != NO_EL {
+        if let Some(eng) = w.js.as_mut() {
+            let prevented = eng.submit(form.el as usize, &mut w.doc, crate::timer::uptime_ms());
+            for a in eng.alerts.drain(..) {
+                notify("Sahifa xabari", &a, 0x2f88ff);
+            }
+            if prevented {
+                return; // sahifa özi işladi (preventDefault)
+            }
+        }
+    }
+    let enc = |x: &str| crate::js::url_encode(x, false).replace("%20", "+");
+    let mut q = String::new();
+    for (k, i) in w.doc.inputs.iter().enumerate().filter(|(_, i)| i.form as usize == f && !i.name.is_empty()) {
+        let v = match i.kind {
+            0 | 3 | 4 => Some(i.value.clone()),
+            2 if i.checked => Some(if i.value.is_empty() { String::from("on") } else { i.value.clone() }),
+            1 | 5 if Some(k) == submitter => Some(i.value.clone()),
+            _ => None,
+        };
+        if let Some(v) = v {
+            if !q.is_empty() {
+                q.push('&');
+            }
+            q.push_str(&enc(&i.name));
+            q.push('=');
+            q.push_str(&enc(&v));
+        }
+    }
+    let base = w.url.clone();
+    let action = if form.action.is_empty() { base.clone() } else { crate::net::http::join(&base, &form.action) };
+    if form.method == "post" {
+        web_go_ex(win, &action, true, Some(q));
+    } else {
+        let a = action.split('?').next().unwrap_or(&action).split('#').next().unwrap_or("");
+        let target = alloc::format!("{}?{}", a, q);
+        web_go(win, &target, true);
+    }
+}
+
 fn web_key(win: &mut Window, code: u16, shift: bool) {
+    // Forma maydoni fokusda: matn kiritiş
+    if let Some(k) = win.web.as_ref().and_then(|w| w.focus) {
+        let w = win.web.as_mut().unwrap();
+        let n = w.doc.inputs.len();
+        match code {
+            28 => {
+                let form = w.doc.inputs.get(k).map(|i| i.form).unwrap_or(NO_EL);
+                w.focus = None;
+                if form != NO_EL {
+                    web_submit(win, form as usize, None);
+                }
+            }
+            14 => {
+                if let Some(i) = w.doc.inputs.get_mut(k) {
+                    i.value.pop();
+                }
+            }
+            15 => {
+                // Tab — keyingi matn maydoni
+                w.focus = (1..=n).map(|d| (k + d) % n).find(|&j| matches!(w.doc.inputs[j].kind, 0 | 3));
+            }
+            _ => {
+                if let Some(c) = keycode_char(code, shift) {
+                    if let Some(i) = w.doc.inputs.get_mut(k) {
+                        if i.value.chars().count() < 500 {
+                            i.value.push(c);
+                        }
+                    }
+                }
+            }
+        }
+        return;
+    }
     let Some(web) = win.web.as_mut() else { return };
     if web.editing {
         match code {

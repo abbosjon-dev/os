@@ -102,6 +102,29 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   papka yöq bölsa — uyga) va **Böşatiş**; dokdagi savat töla bölsa — qogʻozlar körinadi.
   Nuqta bilan boşlanadigan yaşirin fayllar körsatilmaydi.
 
+### Brauzer: formalar, fetch() va quti modeli
+
+| Forma (quti modeli: border, radius, max-width, margin:auto) | Natija: `location.search` + `URLSearchParams` |
+|---|---|
+| ![Formalar](docs/web-forms.png) | ![Natija](docs/web-result.png) |
+| **HTTP: `fetch` GET/POST (JSON) va POST forma** | **Tarix: `zamin://tarix`** |
+| ![fetch va POST](docs/web-fetch-post.png) | ![Tarix](docs/web-history.png) |
+
+- **Formalar** — `<form action method=get|post>`, `<input>` (text, password, checkbox,
+  submit, hidden), `<textarea>`, `<button>`. Maydonni bosib yozish, `Tab` — keyingisi,
+  `Enter` — yuborish, `Esc` — fokusdan chiqish. GET — so'rov satri, POST — tana
+  (`application/x-www-form-urlencoded`); JS: `input.value/checked`, `submit` hodisasi
+  va `preventDefault()`.
+- **`fetch()` + Promise** — `.then/.catch/.finally`, `new Promise`, `Promise.resolve/reject/all`,
+  javob: `status`, `ok`, `text()`, `json()`; `fetch(url, {method: "POST", body})`.
+  So'rovlar fon vazifasida bajariladi, natija mikrovazifalar navbati orqali.
+  Qo'shimcha: `JSON.parse`, `encodeURIComponent/decodeURIComponent`, `URLSearchParams`,
+  `location.href/search/host/pathname`.
+- **HTTP** — `net::http::send` (istalgan usul + tana), 303 dan keyin GET.
+- **CSS quti modeli** — `margin` (shu jumladan `auto` — markazlash), `padding`, `border`,
+  `border-radius`, `width`/`max-width` (px, %); qo'shni bloklar bitta quti bo'lib chiziladi.
+- **Tarix** — `zamin://tarix` (oxirgi 50 sahifa, vaqti bilan).
+
 ### Brauzer: CSS, JavaScript, rasmlar va fonda yuklash
 
 | Bosh sahifa: CSS + JS (jonli soat, tugma) | JS va CSS sinovi + F12 konsoli |
@@ -758,7 +781,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.23**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.24**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -814,5 +837,8 @@ bosqiç (etap) yakunlanganda kötariladi.
   **CSS** (tashqi va ichki uslublar, kaskad, meros), sahifadagi **rasmlar**, **fonda yuklash**
   (ekran qotmaydi), fayl **yuklab olish**, F12 konsol; TCP tiqilishi va ARP-qulf xatolari
   tuzatildi, yadro steklari 60 KiB.
+- 0.0.24 — **Interaktiv veb**: formalar (GET/POST, matn/parol/belgilash/textarea, klaviatura bilan
+  to'ldirish), `fetch()` + Promise + `JSON.parse`, CSS quti modeli (margin/padding/border/
+  radius/max-width), `zamin://tarix`, HTTP POST.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
