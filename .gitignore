@@ -1,1 +1,8 @@
 target/
+.agent/logs/
+.agent/state.json
+.agent/supervisor.lock
+.agent/STOP
+.agent/HALT
+.agent/*.tmp
+.agent/history.jsonl

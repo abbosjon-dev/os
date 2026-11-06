@@ -831,6 +831,44 @@ rejalaştiruvçi, SMP, mutex, disk, fuzz, stek qörğoni, foydalanuvçi rejimi, 
 (ikkinchi disk bölsa) FAT yoziş.
 Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi.
 
+## Avtonom agent (Claude Code supervisori)
+
+Loyiha tashqi supervisor orqali avtonom rivojlantirilişi mumkin:
+`TAHLIL → REJA → BAJARIŞ → SINOV → TUZATIŞ → TEKŞIRUV → KEYINGI`.
+
+| Fayl | Vazifasi |
+|---|---|
+| `scripts/agent/supervisor.py` | Sikl, holat (`.agent/state.json`), lock, limitlar, tiklaş |
+| `scripts/agent/guard.py` | Billing/auth himoyasi — **fail-closed** |
+| `scripts/agent/verify.sh` | Mustaqil tekşiruv: build (0 ogohlantiriş) + QEMU yuklaniş, self-testlar |
+| `.agent/CONTEXT.md`, `.agent/tasks.json`, `.agent/config.json` | Doimiy xotira, vazifalar, sozlamalar |
+
+**Faqat obuna (zero qöşimça tölov):** har bir Claude çaqiruvidan oldin `guard.py`
+tekşiradi — `claude auth status` → `oauth_token` + `firstParty`; muhitda
+`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/Bedrock/Vertex/Foundry yöq; hech bir
+`settings.json` da `apiKeyHelper` yöq; `ANTHROPIC_BASE_URL` faqat rasmiy;
+qöşimça foydalaniş (extra usage) öçirilgani tasdiqlangan; buyruqda `--fallback-model`
+yöq. Bola jarayon tozalangan muhitda işlaydi. Birorta şart noaniq bölsa — sikl
+boşlanmaydi. Obuna limiti belgisi çiqsa — darhol `.agent/HALT` yoziladi, qayta urinmaydi,
+faqat qölda `start.sh --clear-halt` bilan davom etadi. Billing sozlamalari hech qaçon özgartirilmaydi.
+
+Vazifa bajarilgan deb faqat `verify.sh full` ötsa va özgariş bölsa hisoblanadi
+(agentning "TASK_DONE" deyişi yetarli emas); keyin supervisor commit va `main` ga push qiladi.
+
+```bash
+scripts/agent/start.sh                 # fon rejimida boşlaş (avval himoya tekşiriladi)
+scripts/agent/start.sh --fg --max-cycles 1
+scripts/agent/status.sh                # holat va vazifalar
+scripts/agent/stop.sh                  # muloyim: joriy sikl tugagaç
+scripts/agent/stop.sh --now            # darhol (keyingi startda tiklanadi)
+scripts/agent/start.sh --clear-halt    # limit/billing töxtaşidan keyin qölda ruxsat
+python3 scripts/agent/guard.py         # faqat himoyani tekşiriş
+```
+
+Sinovlar (soxta `claude`, pul sarflamaydi: `scripts/agent/test/fake_claude.py`):
+avtomatik davom etiş, `kill -9` dan keyin tiklaş, limit → HALT (1 ta çaqiruv, qayta urinmaydi),
+API kalit / apiKeyHelper / boşqa BASE_URL → rad etiladi, 3 ketma-ket tekşiruv xatosi → töxtaş.
+
 ## Versiyalaş
 
 Joriy versiya: **0.0.26**. Versiya har bir özgarişda emas, faqat işlaydigan

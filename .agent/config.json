@@ -1,0 +1,14 @@
+{
+  "claude_bin": "claude",
+  "max_cycles": 20,
+  "max_consecutive_failures": 3,
+  "cycle_timeout_s": 3600,
+  "max_est_usd_per_cycle": 15.0,
+  "max_est_usd_total": 150.0,
+  "permission_mode": "acceptEdits",
+  "allowed_tools": "Bash Read Edit Write Glob Grep TodoWrite",
+  "disallowed_tools": "WebSearch",
+  "push": true,
+  "branch": "main",
+  "verify_mode": "full"
+}
