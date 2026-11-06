@@ -16,6 +16,7 @@ pub struct Sty {
     pub align: u8, // 0 — çap, 1 — markaz, 2 — öng
     pub hidden: bool,
     pub underline: Option<bool>,
+    pub strike: bool, // text-decoration: line-through
     pub block: Option<bool>, // display: block / inline
     // Quti modeli (meros bölib ötmaydi)
     pub mt: f32,                      // margin-top (CSS px)
@@ -37,7 +38,7 @@ pub struct Sty {
 impl Sty {
     pub const fn root() -> Sty {
         Sty {
-            color: None, bg: None, size: 16.0, bold: false, italic: false, align: 0, hidden: false, underline: None, block: None,
+            color: None, bg: None, size: 16.0, bold: false, italic: false, align: 0, hidden: false, underline: None, strike: false, block: None,
             mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
         }
@@ -525,7 +526,10 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
                 s.maxw = Some((px, false));
             }
         }
-        "text-decoration" | "text-decoration-line" => s.underline = Some(low.contains("underline")),
+        "text-decoration" | "text-decoration-line" => {
+            s.underline = Some(low.contains("underline"));
+            s.strike = low.contains("line-through");
+        }
         _ => {}
     }
 }

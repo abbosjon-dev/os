@@ -102,6 +102,32 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   papka yöq bölsa — uyga) va **Böşatiş**; dokdagi savat töla bölsa — qogʻozlar körinadi.
   Nuqta bilan boşlanadigan yaşirin fayllar körsatilmaydi.
 
+### Brauzer: to'liq HTML (`zamin://html` sinov sahifasi)
+
+| Matn teglari va belgilar | Ro'yxatlar (A./iv./teskari), ichma-ich belgilar |
+|---|---|
+| ![Matn](docs/html-text.png) | ![Ro'yxatlar](docs/html-lists.png) |
+| **Jadval: caption, thead, border, colspan** | **Forma: label, radio, range, color, progress, meter** |
+| ![Jadval](docs/html-table.png) | ![Forma](docs/html-forms.png) |
+
+- **Matn**: haqiqiy **qalin** (ikki marta chizish), *kursiv* (tasmali qiyalik), `u/ins`, `s/del`,
+  `mark`, `small/big`, `sub/sup` (tayanch chiziq bo'yicha), `kbd` ramkasi, `abbr` (nuqtali),
+  `q` (qo'shtirnoq), `cite/var/dfn/address`, `font size/color`; CSS `line-through`, `font-style`.
+- **Bloklar**: `h1`–`h6`, `dl/dt/dd`, `ol type="1|a|A|i|I"` + `start`/`reversed`/`li value`,
+  ichma-ich `ul` belgilari (• ◦ ▪), `figure/figcaption`, `fieldset/legend`,
+  **`details/summary`** (bosilsa ochiladi), `<a name>` va **`#yakor`** havolalari.
+- **Jadvallar**: `caption`, `thead/tbody/tfoot`, `table border`, `cellpadding`, `colspan`, `td width`.
+- **Media**: `img width/height`, `srcset`, `picture/source`, lazy `data-src`, **`data:` URI**
+  (base64 va URL-kodlangan), **ichki `<svg>`** (SVG dekoderimiz bilan), `video/audio/iframe/embed/object`
+  kartochkalari (havola orqali yuklab olinadi), `canvas` joyi.
+- **Formalar**: `radio` guruhlari, `label for` va o'rab turgan `label`, `email/number/date/url/tel/search`,
+  `color`, `range`, `file`, `progress`, `meter`, `optgroup`.
+- **Hujjat**: `<base href>`, `<meta http-equiv=refresh>`, kodlashlar: UTF-8, **windows-1251**,
+  latin-1/windows-1252 (`Content-Type` yoki `<meta charset>`), ~250 ta nomli belgi (`&euro;`,
+  `&rarr;`, `&alpha;`…, Latin-1 harflari).
+- **Shrift**: 170 → **686 belgi** (Latin-1/Extended-A, o'zbek kirill Ўў Ққ Ғғ Ҳҳ, ʻ, yunon,
+  tipografiya, strelkalar, matematika, shakllar); glif qidirish — saralangan jadvalda ikkilik qidiruv.
+
 ### Brauzer: flex, grid, jadvallar, async/await va tablar
 
 | Flex (yonma-yon kartalar), grid, jadval | async/await, appendChild, classList |
@@ -807,7 +833,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.25**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.26**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -870,5 +896,9 @@ bosqiç (etap) yakunlanganda kötariladi.
   tanlagichi, `async/await`, `localStorage`, cookie (HTTP va `document.cookie`), to'liq DOM
   (innerHTML bilan HTML, createElement/appendChild, querySelectorAll, classList, hodisa
   qalqishi), `<select>`, brauzer tablari.
+- 0.0.26 — **To'liq HTML**: barcha matn teglari (haqiqiy qalin/kursiv, chiziqlar, sub/sup, kbd, mark),
+  ro'yxat turlari, dl, details/summary, jadval atributlari, ichki SVG va data: URI, media/iframe
+  kartochkalari, radio/label/range/color/progress/meter, #yakorlar, base/meta refresh,
+  windows-1251/latin-1, ~250 nomli belgi; shrift 686 belgigacha kengaytirildi.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

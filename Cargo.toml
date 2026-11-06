@@ -1,6 +1,6 @@
 [package]
 name = "zamin-kernel"
-version = "0.0.25"
+version = "0.0.26"
 edition = "2024"
 authors = ["Abbosjon Dev <info@zamin.app>"]
 homepage = "https://zamin.app"

@@ -6397,6 +6397,8 @@ struct Web {
     focus: Option<usize>,         // fokusdagi forma maydoni
     fetches: Vec<(u64, u32)>,     // (yuklaş vazifasi, JS fetch raqami)
     select_open: Option<usize>,   // oçiq <select> ro'yxati
+    refresh: Option<(u64, String)>, // <meta refresh>: (vaqt, manzil)
+    anchor: Option<String>,       // yuklanganda aylantiriladigan #yakor
 }
 
 struct WItem {
@@ -6414,6 +6416,9 @@ struct WItem {
     underline: bool,
     img: Option<usize>,
     input: u16,
+    fx: u16,   // html::FX_* effektlari
+    bold: bool,
+    det: u16,  // <summary> belgisi: bosilsa — <details> oçiladi/yopiladi
 }
 
 /// Fonda yuklaş navbati: (raqam, manzil, olindimi, natija).
@@ -6463,6 +6468,50 @@ static WEB_WORKER: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBo
 fn builtin_page(url: &str) -> Option<&'static str> {
     let url = url.split(['?', '#']).next().unwrap_or(url);
     Some(match url.trim_end_matches('/') {
+        "zamin://html" => r##"<!DOCTYPE html><html lang="uz"><head><meta charset="utf-8"><title>To‘liq HTML sinovi</title></head><body>
+<h1 id="bosh">HTML elementlari</h1>
+<p><a href="#jadval">→ Jadvalga ötiş</a> · <a href="#forma">→ Formaga</a> · <a href="#media">→ Mediaga</a></p>
+<h2>Matn teglari</h2>
+<p><b>qalin</b>, <strong>kuçli</strong>, <i>kursiv</i>, <em>urğu</em>, <u>tagi çizilgan</u>, <s>öçirilgan</s>, <del>del</del> → <ins>ins</ins>,
+<mark>belgilangan</mark>, <small>kiçik</small>, <big>katta</big>, H<sub>2</sub>O, E = mc<sup>2</sup>, <kbd>Ctrl</kbd>+<kbd>C</kbd>,
+<code>kod()</code>, <abbr title="HyperText Markup Language">HTML</abbr>, <q>iqtibos</q>, <cite>asar nomi</cite>, <var>x</var>, <samp>natija</samp>.</p>
+<p>Belgilar: &copy; &reg; &trade; &euro; &pound; &yen; &sect; &para; &deg; &plusmn; &times; &divide; &frac12; &frac34; &ne; &le; &ge; &infin; &sum; &radic; &larr; &rarr; &uarr; &darr; &hArr; &hearts; &spades; &alpha;&beta;&gamma;&delta; &Omega; &laquo;Salom&raquo; &bdquo;matn&ldquo; &hellip; &#8364; &#x2713;</p>
+<p>Lotin: Ñandú, Ölçam, Gödel, Straße, façade, Øre, Łódź · Kirill: Ўзбекистон, Қорақалпоқ, Ғалаба, Ҳаёт · Yunon: Ελληνικά</p>
+<h3>Sarlavha 3</h3><h4>Sarlavha 4</h4><h5>Sarlavha 5</h5><h6>Sarlavha 6</h6>
+<h2>Ro'yxatlar</h2>
+<ol type="A"><li>Birinçi</li><li>Ikkinçi<ul><li>ichki</li><li>ichki<ul><li>yanada ichki</li></ul></li></ul></li><li>Uçinçi</li></ol>
+<ol type="i" start="4"><li>tört</li><li>besh</li><li value="10">ön</li></ol>
+<ol reversed><li>uç</li><li>ikki</li><li>bir</li></ol>
+<dl><dt>HTML</dt><dd>Gipermatn belgilaş tili</dd><dt>CSS</dt><dd>Kaskadli uslublar jadvali</dd></dl>
+<details><summary>Batafsil (bosing — oçiladi)</summary><p>Bu yaşirin matn <b>details/summary</b> bilan oçildi.</p></details>
+<details open><summary>Oçiq details</summary><p>Boşidan oçiq.</p></details>
+<figure><svg width="220" height="90" viewBox="0 0 220 90" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="5" width="210" height="80" rx="14" fill="#1e88e5"/><circle cx="45" cy="45" r="26" fill="#ffd166"/><text x="85" y="55" font-size="26" fill="#ffffff">SVG</text></svg>
+<figcaption>Ichki &lt;svg&gt; — öz SVG dekoderimiz bilan</figcaption></figure>
+<p><img alt="data: URI rasm" width="48" height="48" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Ccircle cx='5' cy='5' r='4' fill='%2334c759'/%3E%3C/svg%3E"> ← data: URI (SVG)</p>
+<h2 id="jadval">Jadval</h2>
+<table border="1">
+<caption>Zamin OS komponentlari</caption>
+<thead><tr><th>Qism</th><th>Til</th><th>Holat</th></tr></thead>
+<tbody><tr><td>Yadro</td><td>Rust</td><td>tayyor</td></tr>
+<tr><td>Brauzer</td><td>Rust</td><td>tayyor</td></tr>
+<tr><td colspan="2">Ikki ustunli katak (colspan)</td><td>ok</td></tr></tbody>
+</table>
+<h2 id="forma">Forma maydonlari</h2>
+<fieldset><legend>Anketa</legend>
+<p><label for="ism">Ism:</label> <input id="ism" name="ism" placeholder="Ismingiz"> <input type="email" placeholder="nom@pochta.uz"></p>
+<p>Jins: <label><input type="radio" name="j" value="e" checked> Erkak</label> <label><input type="radio" name="j" value="a"> Ayol</label></p>
+<p>Rang: <input type="color" value="#ff9500"> Ovoz: <input type="range" min="0" max="10" value="7"> <input type="number" placeholder="yosh"></p>
+<p>Yuklanish: <progress value="70" max="100"></progress> Daraja: <meter value="0.4"></meter></p>
+<p><select><optgroup label="Osiyo"><option>Toshkent</option><option>Seul</option></optgroup><optgroup label="Yevropa"><option>Berlin</option></optgroup></select> <input type="file"></p>
+</fieldset>
+<h2 id="media">Media</h2>
+<video src="/videolar/zamin.avi" controls>Brauzer videoni qöllamaydi</video>
+<audio controls><source src="/musiqa/kuy.mp3" type="audio/mpeg">audio yöq</audio>
+<iframe src="https://example.com/"></iframe>
+<canvas width="200" height="60"></canvas>
+<hr><address>Muallif: Abbosjon Dev · zamin.app</address>
+<p><a href="#bosh">↑ Yuqoriga</a></p>
+</body></html>"##,
         "zamin://veb" => r##"<title>Töliqroq veb</title>
 <style>
 body { background: #0f1724; color: #dbe3ee; }
@@ -6535,7 +6584,7 @@ localStorage.setItem("tashrif", String(k));
 document.cookie = "til=uz; path=/";
 document.getElementById("xotira").textContent = "localStorage: bu sahifa " + k + "-marta oçildi · cookie: " + document.cookie;
 </script>"##,
-        "zamin://malumot.json" => r##"{"tizim": "Zamin OS", "versiya": "0.0.25", "til": "Rust", "imkoniyatlar": ["JavaScript", "CSS", "fetch", "Promise", "formalar"], "yadrolar": 4, "ochiq": true}"##,
+        "zamin://malumot.json" => r##"{"tizim": "Zamin OS", "versiya": "0.0.26", "til": "Rust", "imkoniyatlar": ["JavaScript", "CSS", "fetch", "Promise", "formalar"], "yadrolar": 4, "ochiq": true}"##,
         "zamin://forma" => r##"<title>Formalar va fetch()</title>
 <style>
 body { background: #0f1724; color: #dbe3ee; }
@@ -6616,6 +6665,7 @@ document.getElementById("qs").textContent = location.search;
 <li><a href="~/Hujjatlar/zamin.html">Zamin OS qöllanmasi</a> — mahalliy HTML fayl</li>
 <li><a href="zamin://forma">Formalar va fetch() sinovi</a></li>
 <li><a href="zamin://veb">Flex, grid, jadval, async/await sinovi</a></li>
+<li><a href="zamin://html">Barça HTML elementlari sinovi</a></li>
 <li><a href="zamin://tarix">Tarix</a> — körilgan sahifalar</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
 <li><a href="https://example.com/">example.com</a> (HTTPS, haqiqiy internet)</li>
@@ -6741,6 +6791,33 @@ fn web_bytes(url: &str, post: Option<&str>) -> Result<(Vec<u8>, String, String),
     Ok((r.body, ct, r.url))
 }
 
+/// Base64 (data: URI uçun).
+fn base64_decode(s: &str) -> Vec<u8> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => (c - b'A') as u32,
+            b'a'..=b'z' => (c - b'a' + 26) as u32,
+            b'0'..=b'9' => (c - b'0' + 52) as u32,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => return None,
+        })
+    };
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut acc, mut n) = (0u32, 0);
+    for c in s.bytes() {
+        if let Some(v) = val(c) {
+            acc = (acc << 6) | v;
+            n += 6;
+            if n >= 8 {
+                n -= 8;
+                out.push((acc >> n) as u8);
+            }
+        }
+    }
+    out
+}
+
 /// Katta rasmni kiçraytiradi (xotirani tejaş).
 fn shrink(img: crate::image::Image, max: usize) -> crate::image::Image {
     if img.w <= max && img.h <= max { img } else { make_thumb(&img, max) }
@@ -6773,7 +6850,7 @@ fn web_load(url: &str, post: Option<&str>) -> WebRes {
     let mut images = Vec::new();
     let mut scripts = Vec::new();
     let doc = if ct.contains("html") {
-        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let text = crate::html::decode_bytes(&bytes, &ct);
         // Tashqi CSS
         let mut css = String::new();
         for href in crate::html::stylesheet_links(&text).into_iter().take(4) {
@@ -6801,10 +6878,26 @@ fn web_load(url: &str, post: Option<&str>) -> WebRes {
         // Rasmlar
         let mut seen: Vec<String> = Vec::new();
         for b in doc.blocks.iter().filter(|b| b.kind == HK::Img && !b.src.is_empty()) {
-            if seen.contains(&b.src) || seen.len() >= 16 || b.src.starts_with("data:") {
+            if seen.contains(&b.src) || seen.len() >= 24 {
                 continue;
             }
             seen.push(b.src.clone());
+            // Ichki SVG va data: URI — tarmoqsiz
+            if let Some(n) = b.src.strip_prefix("svg:").and_then(|n| n.parse::<usize>().ok()) {
+                if let Some(img) = doc.svgs.get(n).and_then(|m| crate::image::decode_file("ichki.svg", m.as_bytes())) {
+                    images.push((b.src.clone(), shrink(img, 1200)));
+                }
+                continue;
+            }
+            if let Some(rest) = b.src.strip_prefix("data:") {
+                let (meta, data) = rest.split_once(',').unwrap_or((rest, ""));
+                let bytes = if meta.ends_with(";base64") { base64_decode(data) } else { crate::js::url_decode(data).into_bytes() };
+                let ext = if meta.contains("svg") { "a.svg" } else if meta.contains("png") { "a.png" } else if meta.contains("gif") { "a.gif" } else if meta.contains("jpeg") || meta.contains("jpg") { "a.jpg" } else { "a.bin" };
+                if let Some(img) = crate::image::decode_file(ext, &bytes).or_else(|| crate::image::decode(&bytes)) {
+                    images.push((b.src.clone(), shrink(img, 1200)));
+                }
+                continue;
+            }
             let full = crate::net::http::join(&final_url, &b.src);
             if let Ok((d, _, fu)) = web_bytes(&full, None) {
                 if d.len() < 4 * 1024 * 1024 {
@@ -6910,6 +7003,8 @@ fn web_new() -> Box<Web> {
         focus: None,
         fetches: Vec::new(),
         select_open: None,
+        refresh: None,
+        anchor: None,
     })
 }
 
@@ -6929,6 +7024,11 @@ fn apply_web(w: &mut Web, res: WebRes) {
     w.focus = None;
     w.fetches.clear();
     w.select_open = None;
+    w.anchor = w.url.split_once('#').map(|(_, f)| String::from(f)).filter(|f| !f.is_empty());
+    w.refresh = w.doc.refresh.clone().map(|(secs, u)| {
+        let target = if u.is_empty() { w.url.clone() } else { crate::net::http::join(&w.url, &u) };
+        (crate::timer::uptime_ms() + secs as u64 * 1000, target)
+    });
     let mut eng = crate::js::Engine::new();
     eng.url = w.url.clone();
     eng.fetch_hook = Some(web_raw); // await fetch(...) — joyida
@@ -7167,6 +7267,20 @@ fn web_poll(windows: &mut [Window]) -> bool {
                 }
             }
         }
+        // #yakor va <meta refresh>
+        if let Some(f) = win.web.as_mut().and_then(|w| w.anchor.take()) {
+            web_anchor(win, &f);
+            changed = true;
+        }
+        if let Some((at, u)) = win.web.as_ref().and_then(|w| w.refresh.clone()) {
+            if now >= at {
+                if let Some(w) = win.web.as_mut() {
+                    w.refresh = None;
+                }
+                web_go(win, &u, true);
+                changed = true;
+            }
+        }
         let Some(id) = win.web.as_ref().and_then(|w| w.loading) else {
             if let Some(w) = win.web.as_mut() {
                 if let Some(eng) = w.js.as_mut() {
@@ -7370,6 +7484,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
             HK::Hr => (0, u / 2, u / 2),
             HK::Img => (0, u / 3, u / 3),
             HK::P => (0, u / 4, u / 3),
+            HK::Indent(d) => (d as usize * u * 2, u / 8, u / 4),
         };
         let bcol = b.color.unwrap_or(match b.kind {
             HK::H(_) => head_col,
@@ -7401,12 +7516,21 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
         }
         if b.kind == HK::Img {
             let found = web.images.iter().position(|(s, _)| *s == b.src);
+            let (aw, ah) = (b.iw as f32, b.ih as f32);
             let (w, h) = match found {
                 Some(i) => {
                     let im = &web.images[i].1;
-                    let w = im.w.min(maxw);
-                    (w, im.h * w / im.w.max(1))
+                    // width/height atributlari (CSS px) bölsa — şunday, aks holda tabiiy ölçam
+                    let (nw, nh) = match (b.iw, b.ih) {
+                        (0, 0) => (im.w, im.h),
+                        (_, 0) => (lpx(aw), lpx(aw) * im.h / im.w.max(1)),
+                        (0, _) => (lpx(ah) * im.w / im.h.max(1), lpx(ah)),
+                        _ => (lpx(aw), lpx(ah)),
+                    };
+                    let w = nw.min(maxw).max(1);
+                    (w, nh * w / nw.max(1))
                 }
+                None if b.iw > 0 => (lpx(aw).min(maxw), if b.ih > 0 { lpx(ah) } else { u * 3 }),
                 None => (maxw.min(u * 12), u * 3),
             };
             let x = pad + match b.align {
@@ -7423,20 +7547,35 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
                 x, y, w, h,
                 text: if found.is_some() { String::new() } else { alloc::format!("[rasm] {}", alt) },
                 col: mix(text_col, page_bg, 110),
-                px: small(), mono: false, link, el: b.el, button: false, underline: false, img: found, input: NO_EL,
+                px: small(), mono: false, link, el: b.el, button: false, underline: false, img: found, input: NO_EL, fx: 0, bold: false, det: NO_EL,
             });
             y += h + if last_in_box { 0 } else { gap_bot };
             close_box(&mut y, deco, &mut open_box);
             continue;
         }
         let x0 = pad + indent;
-        if let HK::Li(_, n) = b.kind {
-            if n == 0 {
-                deco.push(dfill(x0 - u * 3 / 4, y + base_px / 2 - 2, 5, 5, mix(bcol, page_bg, 90)));
-            } else {
-                let t = alloc::format!("{}.", n);
+        if b.summary {
+            // ▶ / ▼ — bosilsa <details> oçiladi
+            let open = doc.details.get(b.det as usize).copied().unwrap_or(false);
+            let t = String::from(if open { "▼" } else { "▶" });
+            let tw = gfx::text_width(&t, base_px);
+            items.push(WItem { x: x0, y, w: tw + u / 2, h: base_px, text: t, col: mix(bcol, page_bg, 60), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: b.det });
+        }
+        let x0 = if b.summary { x0 + base_px + u / 3 } else { x0 };
+        if let HK::Li(d, n) = b.kind {
+            if n == 0 || b.mark.is_empty() && n == 0 {
+                // ichma-ich ro'yxatlar: ● ○ ■
+                let t = String::from(match (d.max(1) - 1) % 3 {
+                    0 => "•",
+                    1 => "◦",
+                    _ => "▪",
+                });
                 let tw = gfx::text_width(&t, base_px);
-                items.push(WItem { x: x0.saturating_sub(tw + u / 3), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 70), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL });
+                items.push(WItem { x: x0.saturating_sub(tw + u / 3), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 60), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
+            } else {
+                let t = if b.mark.is_empty() { alloc::format!("{}.", n) } else { b.mark.clone() };
+                let tw = gfx::text_width(&t, base_px);
+                items.push(WItem { x: x0.saturating_sub(tw + u / 3), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 70), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
             }
         }
         if b.kind == HK::Pre {
@@ -7448,7 +7587,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
             let mut yy = y + u / 2;
             for l in lines {
                 let w = gfx::text_width_mono(l, base_px);
-                items.push(WItem { x: x0, y: yy, w, h: base_px, text: String::from(l), col: b.color.unwrap_or(if dark { 0xd7e3c8 } else { 0x24292f }), px: base_px, mono: true, link: None, el: b.el, button: false, underline: false, img: None, input: NO_EL });
+                items.push(WItem { x: x0, y: yy, w, h: base_px, text: String::from(l), col: b.color.unwrap_or(if dark { 0xd7e3c8 } else { 0x24292f }), px: base_px, mono: true, link: None, el: b.el, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
                 yy += lhm;
             }
             y += h + if last_in_box { 0 } else { gap_bot };
@@ -7484,6 +7623,9 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
                 let inp = &doc.inputs[s.input as usize];
                 let (ww, hh) = match inp.kind {
                     2 => (spx + u / 2, spx),
+                    7 => (spx * 2, spx * 6 / 5),
+                    8 => ((u * 8).min(maxw), spx),
+                    9 => ((u * 8).min(maxw), spx * 2 / 3),
                     1 => (gfx::text_width(&inp.value, spx) + u * 3 / 2, spx * 7 / 5),
                     _ => ((inp.size.clamp(4, 60) as usize * spx * 11 / 20).min(maxw), spx * 8 / 5),
                 };
@@ -7494,7 +7636,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
                     line_start = items.len();
                 }
                 line_h = line_h.max(hh + u / 2);
-                items.push(WItem { x, y, w: ww, h: hh, text: String::new(), col: bcol, px: spx, mono: false, link: None, el: s.el, button: false, underline: false, img: None, input: s.input });
+                items.push(WItem { x, y, w: ww, h: hh, text: String::new(), col: bcol, px: spx, mono: false, link: None, el: s.el, button: false, underline: false, img: None, input: s.input, fx: 0, bold: false, det: NO_EL });
                 x += ww + u / 3;
                 continue;
             }
@@ -7504,7 +7646,9 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
                 let cut = if s.button { rest.len() } else { rest.find(' ').map(|i| i + 1).unwrap_or(rest.len()) };
                 let word = &rest[..cut];
                 rest = &rest[cut..];
-                let ww = if s.code { gfx::text_width_mono(word, spx) } else { gfx::text_width(word, spx) } + if s.button { u / 2 } else { 0 };
+                let ww = if s.code { gfx::text_width_mono(word, spx) } else { gfx::text_width(word, spx) }
+                    + if s.button || s.fx & crate::html::FX_KBD != 0 { u / 2 } else { 0 }
+                    + if s.bold { 1 } else { 0 };
                 if x + ww > pad + maxw && x > x0 {
                     finish(items, line_start, x);
                     x = x0;
@@ -7516,7 +7660,10 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
                     }
                 }
                 line_h = line_h.max(spx * 14 / 10);
-                items.push(WItem { x, y, w: ww, h: spx, text: String::from(word), col: c, px: spx, mono: s.code, link: s.link.clone(), el: s.el, button: s.button, underline: s.link.is_some() && s.underline, img: None, input: s.input });
+                // Tayanç çiziq (baseline) böyiça tekislaş: kiçik matn pastga suriladi
+                let off = base_px.saturating_sub(spx) * 4 / 5;
+                let yo = if s.fx & crate::html::FX_SUP != 0 { y.saturating_sub(spx / 6) } else if s.fx & crate::html::FX_SUB != 0 { y + base_px * 2 / 5 } else { y + off };
+                items.push(WItem { x, y: yo, w: ww, h: spx, text: String::from(word), col: c, px: spx, mono: s.code, link: s.link.clone(), el: s.el, button: s.button, underline: s.link.is_some() && s.underline, img: None, input: s.input, fx: s.fx, bold: s.bold, det: if b.summary { b.det } else { NO_EL } });
                 x += ww;
             }
         }
@@ -7660,6 +7807,40 @@ fn draw_browser(win: &Window) {
             let dark = luma(page_bg) < 128;
             let (fbg, fbd, ftx) = if dark { (0x10151f, 0x3a4458, 0xe7edf6) } else { (0xffffff, 0xb8bec9, 0x1d1d1f) };
             match inp.kind {
+                2 if inp.radio => {
+                    let r = it.px / 2;
+                    let (cx2, cy2) = (x + r, y + r);
+                    gfx::fill_circle(cx2, cy2, r, if inp.checked { accent() } else { fbd });
+                    gfx::fill_circle(cx2, cy2, r.saturating_sub(1), if inp.checked { accent() } else { fbg });
+                    if inp.checked {
+                        gfx::fill_circle(cx2, cy2, r * 2 / 5, OQ);
+                    }
+                }
+                7 => {
+                    let c = crate::css::parse_color(&inp.value).unwrap_or(0);
+                    gfx::fill_round_rect(x, y, it.w, it.h, u / 4, fbg);
+                    gfx::round_outline(x, y, it.w, it.h, u / 4, 1, fbd);
+                    gfx::fill_round_rect(x + 3, y + 3, it.w - 6, it.h - 6, u / 6, c);
+                }
+                8 => {
+                    let v: f32 = inp.value.trim().parse().unwrap_or(inp.min);
+                    let t = ((v - inp.min) / (inp.max - inp.min).max(0.0001)).clamp(0.0, 1.0);
+                    let my = y + it.h / 2;
+                    gfx::fill_round_rect(x, my - 2, it.w, 4, 2, fbd);
+                    let kx = x + (t * (it.w.saturating_sub(it.h)) as f32) as usize + it.h / 2;
+                    gfx::fill_round_rect(x, my - 2, kx - x, 4, 2, accent());
+                    gfx::fill_circle(kx, my, it.h / 2, OQ);
+                    gfx::fill_circle(kx, my, it.h / 2 - 2, accent());
+                }
+                9 => {
+                    let v: f32 = inp.value.trim().parse().unwrap_or(0.0);
+                    let t = ((v - inp.min) / (inp.max - inp.min).max(0.0001)).clamp(0.0, 1.0);
+                    gfx::fill_round_rect(x, y, it.w, it.h, it.h / 2, fbd);
+                    let fw = ((it.w as f32) * t) as usize;
+                    if fw > 0 {
+                        gfx::fill_round_rect(x, y, fw.max(it.h), it.h, it.h / 2, if t > 0.8 { 0x2fbf5f } else { accent() });
+                    }
+                }
                 2 => {
                     let b = it.px;
                     gfx::fill_round_rect(x, y, b, b, b / 5, if inp.checked { accent() } else { fbg });
@@ -7716,16 +7897,59 @@ fn draw_browser(win: &Window) {
             gfx::fill_round_rect(x, y.saturating_sub(it.px / 5), it.w.saturating_sub(u / 6), it.px * 7 / 5, it.px / 3, bf);
             gfx::round_outline(x, y.saturating_sub(it.px / 5), it.w.saturating_sub(u / 6), it.px * 7 / 5, it.px / 3, 1, bb);
         }
-        let tx = if it.button { x + u / 4 } else { x };
+        use crate::html::{FX_DOTTED, FX_ITALIC, FX_KBD, FX_MARK, FX_STRIKE, FX_SUB, FX_SUP, FX_UNDER};
+        let tx = if it.button || it.fx & FX_KBD != 0 { x + u / 4 } else { x };
         let col = if it.button && !light && it.col == web_palette(&web.doc).1 { OQ } else { it.col };
-        if it.mono {
-            gfx::draw_text_mono(tx, y, &it.text, col, it.px);
-        } else {
-            gfx::draw_text(tx, y, &it.text, col, it.px);
+        let px = if it.fx & (FX_SUP | FX_SUB) != 0 { it.px * 3 / 4 } else { it.px };
+        let tw = it.w.saturating_sub(if it.text.ends_with(' ') { gfx::text_width(" ", px) } else { 0 });
+        if it.fx & FX_MARK != 0 {
+            fill_rect(x, y.saturating_sub(1), it.w, px + 4, if light { 0xfff1a8 } else { 0x6b5a00 });
         }
-        if it.underline || (it.link.is_some() && !it.button) {
-            let tw = it.w.saturating_sub(if it.text.ends_with(' ') { gfx::text_width(" ", it.px) } else { 0 });
-            fill_rect(x, y + it.px + 1, tw, 1, mix(it.col, page_bg, 90));
+        if it.fx & FX_KBD != 0 {
+            gfx::fill_round_rect(x, y.saturating_sub(2), tw, px + 5, 3, if light { 0xeef0f3 } else { 0x262f40 });
+            gfx::round_outline(x, y.saturating_sub(2), tw, px + 5, 3, 1, if light { 0xb8bec9 } else { 0x4a5568 });
+        }
+        let col = if it.fx & FX_MARK != 0 && light { 0x1d1d1f } else { col };
+        let draw_one = |dx: usize| {
+            if it.mono {
+                gfx::draw_text_mono(tx + dx, y, &it.text, col, px);
+            } else {
+                gfx::draw_text(tx + dx, y, &it.text, col, px);
+            }
+        };
+        if it.fx & FX_ITALIC != 0 {
+            // Kursiv: matn gorizontal tasmalarga bölinib, yuqorisi öngga suriladi (qiyalik)
+            let bands = 4usize;
+            let bh = (px + 4).div_ceil(bands);
+            for k in 0..bands {
+                let by = y + k * bh;
+                let shift = (bands - 1 - k) * (px / 10).max(1) / 2;
+                gfx::set_clip(px0, by.max(py0), pw, bh);
+                draw_one(shift);
+                if it.bold {
+                    draw_one(shift + 1);
+                }
+            }
+            gfx::set_clip(px0, py0, pw, ph);
+        } else {
+            draw_one(0);
+            if it.bold {
+                draw_one(1); // haqiqiy qalinlik: bir piksel surib qayta chiziş
+            }
+        }
+        let lc = mix(it.col, page_bg, 90);
+        if it.underline || it.fx & FX_UNDER != 0 || (it.link.is_some() && !it.button) {
+            fill_rect(x, y + px + 1, tw, 1, lc);
+        }
+        if it.fx & FX_DOTTED != 0 {
+            let mut dx = 0;
+            while dx < tw {
+                fill_rect(x + dx, y + px + 1, 1, 1, lc);
+                dx += 3;
+            }
+        }
+        if it.fx & FX_STRIKE != 0 {
+            fill_rect(x, y + px * 11 / 20, tw, 1, col);
         }
     }
     // Oçiq <select> ro'yxati
@@ -7773,6 +7997,20 @@ fn select_popup(web: &Web, items: &[WItem], sc: usize, px0: usize, py0: usize) -
     let rh = small() + body() / 2;
     let cur = inp.options.iter().position(|o| o.0 == inp.value).unwrap_or(0);
     Some((px0 + it.x, (py0 + it.y + it.h).saturating_sub(sc), it.w.max(body() * 6), rh, inp.options.clone(), cur))
+}
+
+/// #yakor: id (yoki <a name>) li elementgaça aylantiradi.
+fn web_anchor(win: &mut Window, frag: &str) {
+    let Some(web) = &win.web else { return };
+    let frag = crate::js::url_decode(frag);
+    let Some(target) = web.doc.find_id(&frag) else { return };
+    let (_, _, _, _, (_, _, pw, _)) = web_geo(win);
+    let (items, _, _) = web_layout(web, pw.saturating_sub(body()));
+    let y = items.iter().filter(|it| web.doc.within(it.el, target as u16)).map(|it| it.y).min();
+    let max = web_max_scroll(win);
+    if let (Some(y), Some(w)) = (y, win.web.as_mut()) {
+        w.scroll = y.saturating_sub(body()).min(max);
+    }
 }
 
 fn web_max_scroll(win: &Window) -> usize {
@@ -7860,13 +8098,69 @@ fn web_click(win: &mut Window, cx: usize, cy: usize) -> bool {
             .find(|it| it.input != NO_EL || it.link.is_some() || it.el != NO_EL)
             .or(under.first())
             .map(|it| (it.el, it.link.clone(), it.input));
-        let base = web.url.clone();
+        let det_hit = under.iter().find(|it| it.det != NO_EL).map(|it| it.det);
+        let range_t = under.iter().find(|it| it.input != NO_EL).map(|it| (lx.saturating_sub(it.x)) as f32 / it.w.max(1) as f32);
+        let base = match &web.doc.base {
+            Some(b) => crate::net::http::join(&web.url, b),
+            None => web.url.clone(),
+        };
         let w = win.web.as_mut().unwrap();
         w.editing = false;
         w.focus = None;
+        // <summary> — <details> ni oçiş/yopiş
+        if let Some(d) = det_hit {
+            w.doc.toggle_details(d);
+            return true;
+        }
+        // <label>: for="id" yoki içidagi maydon — öşa maydon bosilgandek
+        let mut hit = hit;
+        if let Some((el, link, NO_EL)) = hit.clone() {
+            let mut cur = el;
+            let mut n = 0;
+            while cur != NO_EL && n < 16 {
+                let Some(info) = w.doc.elems.get(cur as usize) else { break };
+                if info.tag == "label" {
+                    let target = if !info.label_for.is_empty() {
+                        w.doc.find_id(&info.label_for).and_then(|e| w.doc.input_of(e))
+                    } else {
+                        let le = cur;
+                        (0..w.doc.inputs.len()).find(|&k| w.doc.within(w.doc.inputs[k].el, le) && w.doc.inputs[k].el != NO_EL)
+                    };
+                    if let Some(k) = target {
+                        hit = Some((w.doc.inputs[k].el, link, k as u16));
+                    }
+                    break;
+                }
+                cur = info.parent;
+                n += 1;
+            }
+        }
         if let Some((el, _, inp)) = hit.clone().filter(|h| h.2 != NO_EL) {
             let (kind, form) = (w.doc.inputs[inp as usize].kind, w.doc.inputs[inp as usize].form);
             match kind {
+                2 if w.doc.inputs[inp as usize].radio => {
+                    // radio: guruhda (bir xil name va forma) faqat bittasi
+                    let (name, f) = (w.doc.inputs[inp as usize].name.clone(), w.doc.inputs[inp as usize].form);
+                    for (k, i) in w.doc.inputs.iter_mut().enumerate() {
+                        if i.radio && i.name == name && i.form == f {
+                            i.checked = k == inp as usize;
+                        }
+                    }
+                }
+                8 => {
+                    let i = &mut w.doc.inputs[inp as usize];
+                    let t = range_t.unwrap_or(0.5).clamp(0.0, 1.0);
+                    let v = i.min + (i.max - i.min) * t;
+                    i.value = alloc::format!("{}", (v + 0.5) as i64);
+                }
+                7 => {
+                    // rang: tayyor palitra böyiça aylanadi
+                    const PAL: [&str; 8] = ["#000000", "#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#007aff", "#af52de", "#ffffff"];
+                    let i = &mut w.doc.inputs[inp as usize];
+                    let k = PAL.iter().position(|c| c.eq_ignore_ascii_case(&i.value)).map(|k| (k + 1) % PAL.len()).unwrap_or(0);
+                    i.value = String::from(PAL[k]);
+                }
+                9 => return true,
                 0 | 3 => {
                     w.focus = Some(inp as usize);
                     return true;
@@ -7918,10 +8212,21 @@ fn web_click(win: &mut Window, cx: usize, cy: usize) -> bool {
                     }
                     return true;
                 }
-                if href.starts_with('#') {
+                if let Some(frag) = href.strip_prefix('#') {
+                    let frag = String::from(frag);
+                    web_anchor(win, &frag);
                     return true;
                 }
                 let target = crate::net::http::join(&base, &href);
+                // Şu sahifaning yakori — qayta yuklamasdan aylantiramiz
+                let cur = win.web.as_ref().map(|w| String::from(w.url.split('#').next().unwrap_or(""))).unwrap_or_default();
+                if let Some((page, frag)) = target.split_once('#') {
+                    if page == cur {
+                        let frag = String::from(frag);
+                        web_anchor(win, &frag);
+                        return true;
+                    }
+                }
                 web_go(win, &target, true);
             }
         }

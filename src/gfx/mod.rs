@@ -519,7 +519,18 @@ pub fn blit_scaled(bx: usize, by: usize, bw: usize, bh: usize, iw: usize, ih: us
 // --- Matn (silliq, masshtablanadigan) ---
 
 fn glyph_index(ch: char) -> usize {
-    gfx_font::CHARS.chars().position(|c| c == ch).unwrap_or(0)
+    // Saralangan jadvaldan ikkilik qidiruv; topilmasa — öxşaş belgi yoki "?"
+    let find = |c: char| gfx_font::CODES.binary_search(&(c as u32)).ok().map(|k| gfx_font::IDX[k] as usize);
+    if let Some(i) = find(ch) {
+        return i;
+    }
+    let alt = match ch {
+        '\u{a0}' | '\u{2000}'..='\u{200b}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}' => ' ',
+        '\u{2212}' => '-',
+        _ if ch.is_control() => ' ',
+        _ => '?',
+    };
+    find(alt).unwrap_or(0)
 }
 
 /// Bir belgini chizadi. `top` — qator yuqori chekkasi, `px` — EM balandligi.
