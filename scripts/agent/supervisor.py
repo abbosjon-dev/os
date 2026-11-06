@@ -406,6 +406,8 @@ def loop(cfg, state):
                             "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n"
                             "Claude-Session: https://claude.ai/code/session_01XP37bWy7eR4Ndmx7yhzNeM"],
                            cwd=REPO, capture_output=True)
+            if cfg["push"]:
+                subprocess.run(["git", "push", "-q", "origin", cfg["branch"]], cwd=REPO, capture_output=True)
             continue
         # Har sikl oldidan billing himoyasi
         errs = guard.check(REPO, cfg["claude_bin"])
