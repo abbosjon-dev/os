@@ -182,7 +182,25 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   tashqarida 0, monoton) va ofscreen buferda hech bir piksel fon/quti rangidan to'qroq emasligini
   tekshiradi.
 
+  Veb quti endi **bitta o'tishda** chiziladi (`gfx::round_box`): fon (rang yoki
+  `linear-gradient`) va `border` har piksel uchun tashqi va ichki (radius − qalinlik, markazi
+  bir xil — CSS kabi) qamrov bo'yicha aralashtiriladi. Shu sababli chegara ostidan fonning AA
+  cheti chiqmaydi, chegara halqalari orasida "chok" qolmaydi, gradientli quti ham chegarali
+  bo'la oladi. Aylantirilgan quti endi to'liq geometriya bilan (yuqoridan ko'rinmaydigan qatorlar
+  `skip` bilan) chiziladi: qisman ko'rinadigan yoy va radius aylantirishda o'zgarmaydi.
+  `self_test_round` kengaytirildi: r=1..30 va chegara 1..4 px da `round_ring`, bir rangli va
+  gradientli qutilar yorug' va to'q fonda — hech bir piksel fon/quti/chegara ranglarining eng
+  to'qidan to'qroq emas; chegara rangi fon bilan bir xil bo'lsa natija oddiy quti bilan aynan
+  bir xil; aylantirilgan quti to'liq qutining pastki qismi bilan aynan bir xil. `zamin://matn`
+  ga `border: 2px solid`, `box-shadow`, gradient, gradient+chegara, ota fon ustidagi bola blok,
+  flex va rtl ichidagi bloklar qo'shildi. Skrinshot tekshiruvchisi:
+  `scripts/agent/check_corners.py surat.png` — har blok burchagi atrofidagi 6×6 hududda fondan
+  va blok rangidan to'qroq piksel qidiradi. (Eslatma: joylashuv bloklarni hozircha tekis
+  joylaydi — haqiqiy ichma-ich quti modeli yo'q, bola blok `position: relative` bilan suriladi.)
+
   ![Yumaloq burchaklar: zamin://matn](docs/web-text-align.png)
+
+  ![Aylantirilgan holat: pastdan kesilgan flex/rtl bloklar](docs/web-round-scroll.png)
 - **CSS `linear-gradient` va `box-shadow`** — `background` / `background-image` da
   `linear-gradient(<yo'nalish>, rang1 [joy%], rang2, …)`: yo'nalish — `to bottom|top|left|right`
   (va burchaklar, masalan `to top right`), `<N>deg`, `turn`, `rad` (standart — pastga); 2–6 rang

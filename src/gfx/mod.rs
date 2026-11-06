@@ -475,32 +475,111 @@ pub fn round_outline(x: usize, y: usize, w: usize, h: usize, r: usize, t: usize,
 pub fn round_outline_tb(x: usize, y: usize, w: usize, h: usize, rt: usize, rb: usize, t: usize, c: Color) {
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };
-    for i in 0..t {
-        if 2 * i >= w || 2 * i >= h {
-            break;
-        }
-        round_ring(f, x + i, y + i, w - 2 * i, h - 2 * i, rt.saturating_sub(i), rb.saturating_sub(i), c);
-    }
+    round_ring(f, x, y, w, h, rt, rb, t, c);
 }
 
-fn round_ring(f: &Fb, x: usize, y: usize, w: usize, h: usize, rt: usize, rb: usize, c: Color) {
-    if w < 2 || h < 2 {
+/// t qalinlikdagi yumaloq ramka (içi böş): taşqi radius rt/rb, içki radius — (r − t),
+/// markazi bir xil (CSS kabi). Bitta ötişda çiziladi — qatlamlar orasida çok qolmaydi.
+#[allow(clippy::too_many_arguments)]
+fn round_ring(f: &Fb, x: usize, y: usize, w: usize, h: usize, rt: usize, rb: usize, t: usize, c: Color) {
+    round_box_on(f, x, y, w, h, 0, rt, rb, BoxFill::None, t, c, 255);
+}
+
+/// Yumaloq quti foni: yöq, bir rang yoki chiziqli gradient (CSS burçagi, töxtaşlar).
+#[derive(Clone, Copy)]
+pub enum BoxFill<'a> {
+    None,
+    Solid(Color),
+    Grad(u16, &'a [(Color, u16)]),
+}
+
+/// Ikki rangni k (0..=255; 255 — töliq `b`) nisbatda aralaştiradi.
+#[inline]
+fn mix_rgb(a: Color, b: Color, k: u32) -> Color {
+    let ik = 255 - k;
+    let m = |s: u32| (((a >> s) & 0xff) * ik + ((b >> s) & 0xff) * k) / 255;
+    m(16) << 16 | m(8) << 8 | m(0)
+}
+
+/// Veb quti: fon (rang/gradient) + t qalinlikdagi çegara, yumaloq burçaklar bilan —
+/// hammasi BITTA ötişda: har piksel uçun taşqi (A) va içki (I) qamrov hisoblanib, rang
+/// = çegara va fonning I/A nisbatdagi aralaşmasi, fonga A alfa bilan qöyiladi. Şunda
+/// fon çetidagi AA pikseli çegara ostidan körinmaydi va çegara/fon orasida teşik qolmaydi.
+/// `h` — qutining TÖLIQ balandligi; `skip` — yuqoridan körinmaydigan (aylantirilgan)
+/// qatorlar, ekrandagi `y` — `skip`-qatorning örni. Burçaklar haqiqiy geometriya böyiça
+/// (qisman körinadigan yoy ham töğri) çiziladi, pastdan kesilganini qirqiş çeklaydi.
+#[allow(clippy::too_many_arguments)]
+pub fn round_box(x: usize, y: usize, w: usize, h: usize, skip: usize, r: usize, fill: BoxFill, t: usize, bc: Color) {
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return };
+    round_box_on(f, x, y, w, h, skip, r, r, fill, t, bc, 255);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn round_box_on(f: &Fb, x: usize, y: usize, w: usize, h: usize, skip: usize, rt: usize, rb: usize, fill: BoxFill, t: usize, bc: Color, alpha: u32) {
+    if w == 0 || h == 0 || skip >= h || alpha == 0 {
+        return;
+    }
+    if t == 0 && matches!(fill, BoxFill::None) {
         return;
     }
     let rt = rt.min(w / 2).min(h / 2);
     let rb = rb.min(w / 2).min(h / 2);
-    let edge = |dx: usize, dy: usize| dx == 0 || dy == 0 || dx == w - 1 || dy == h - 1;
-    for dy in 0..h {
+    let t = t.min(w.div_ceil(2)).min(h.div_ceil(2));
+    // içki (çegaradan içkaridagi) quti
+    let (iw, ih) = (w.saturating_sub(2 * t), h.saturating_sub(2 * t));
+    let (irt, irb) = (rt.saturating_sub(t), rb.saturating_sub(t));
+    // gradient: 256 rangli jadval va yönaliş
+    let mut lut = [0u32; 256];
+    let (mut dxv, mut dyv, mut len) = (0.0f32, 0.0f32, 1.0f32);
+    if let BoxFill::Grad(angle, stops) = fill {
+        if stops.is_empty() {
+            return;
+        }
+        for (i, c) in lut.iter_mut().enumerate() {
+            *c = stop_color(stops, i as u32 * 1000 / 255);
+        }
+        let (sn, cs) = sin_cos_deg(angle);
+        (dxv, dyv) = (sn, -cs);
+        len = (absf(w as f32 * dxv) + absf(h as f32 * dyv)).max(1.0);
+    }
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    // ekrandan taşqaridagi qatorlarni aylanmaymiz
+    let end = h.min(skip + f.h.saturating_sub(y));
+    for dy in skip..end {
+        let sy = y + dy - skip;
+        let py = dy as f32 + 0.5 - cy;
         for dx in 0..w {
-            if let Some((ox, oy, r)) = corner_at(dx, dy, w, h, rt, rb) {
-                let outer = corner_cov(ox, oy, r);
-                let inner = if r > 1 { corner_cov(ox, oy, r - 1) } else { 0 };
-                let a = outer.saturating_sub(inner);
-                if a > 0 {
-                    blend(f, x + dx, y + dy, c, a);
+            let a = match corner_at(dx, dy, w, h, rt, rb) {
+                Some((ox, oy, r)) => corner_cov(ox, oy, r),
+                None => 255,
+            };
+            if a == 0 {
+                continue;
+            }
+            // içki qamrov (fon ulushi)
+            let i = if t == 0 {
+                a
+            } else if dx < t || dy < t || dx >= t + iw || dy >= t + ih {
+                0
+            } else {
+                match corner_at(dx - t, dy - t, iw, ih, irt, irb) {
+                    Some((ox, oy, r)) => corner_cov(ox, oy, r),
+                    None => 255,
                 }
-            } else if edge(dx, dy) {
-                put(f, x + dx, y + dy, c);
+                .min(a)
+            };
+            let (col, cov) = match fill {
+                BoxFill::None => (bc, a - i),
+                BoxFill::Solid(c) => (mix_rgb(bc, c, i * 255 / a), a),
+                BoxFill::Grad(..) => {
+                    let px = dx as f32 + 0.5 - cx;
+                    let k = ((px * dxv + py * dyv) / len + 0.5).clamp(0.0, 1.0);
+                    (mix_rgb(bc, lut[(k * 255.0 + 0.5) as usize], i * 255 / a), a)
+                }
+            };
+            if cov > 0 {
+                blend(f, x + dx, sy, col, cov * alpha.min(255) / 255);
             }
         }
     }
@@ -548,7 +627,7 @@ pub fn self_test_round() -> Result<usize, &'static str> {
                 *p = bg;
             }
             round_rect_on(&f, 3, 2, w, h, rt, rb, fg, 255);
-            round_ring(&f, 3, 2, w, h, rt, rb, fg);
+            round_ring(&f, 3, 2, w, h, rt, rb, 1, fg);
             let min = lum(bg).min(lum(fg));
             for &p in buf.iter() {
                 if lum(p) + 3 < min {
@@ -562,6 +641,87 @@ pub fn self_test_round() -> Result<usize, &'static str> {
                 return Err("yuqori/pastki radius notoʻgʻri qöllandi");
             }
             n += 1;
+        }
+    }
+    n += self_test_round_box()?;
+    Ok(n)
+}
+
+/// Çegara (round_ring), gradient va bir rangli fon + çegarali yumaloq qutilar: har
+/// r = 1..30 va çegara qalinligi 1..4 da, yorugʻ va töq fon ustida ofscreen buferga
+/// çiziladi. Tekşiriladi: (1) hech bir piksel fon va quti/çegara ranglarining eng
+/// töqidan töqroq emas; (2) çegara rangi fon bilan bir xil bölsa — natija oddiy
+/// töldirilgan quti bilan aynan bir xil (qatlamlar orasida teşik/çok yöq); (3) yuqoridan
+/// `skip` qator aylantirilgan quti — töliq qutining pastki qismi bilan aynan bir xil.
+fn self_test_round_box() -> Result<usize, &'static str> {
+    let (bw, bh) = (72usize, 72usize);
+    let mut buf = alloc::vec![0u32; bw * bh];
+    let mut ref_buf = alloc::vec![0u32; bw * bh];
+    let f = Fb { ptr: buf.as_mut_ptr() as usize, w: bw, h: bh, noclip: true };
+    let fr = Fb { ptr: ref_buf.as_mut_ptr() as usize, w: bw, h: bh, noclip: true };
+    let lum = |c: u32| (c >> 16 & 0xff) + (c >> 8 & 0xff) + (c & 0xff);
+    let stops = [(0x4f8cffu32, 0u16), (0x1e3a8a, 500), (0xd4fc79, 1000)];
+    let gmin = stops.iter().map(|s| lum(s.0)).min().unwrap_or(0);
+    let mut n = 0;
+    for &bg in &[0xf3f5f9u32, 0x161b26] {
+        for r in 1..=30usize {
+            for t in 1..=4usize {
+                let (w, h) = (2 * r + 7 + t, 2 * r + 5);
+                for (kind, fg, bc) in [(0u8, 0u32, 0x3a7bd5u32), (1, 0xeef2f8, 0x1e3a8a), (1, 0x1e3a8a, 0xeef2f8), (2, 0, 0xffffff), (2, 0, 0x101010)] {
+                    let fill = match kind {
+                        0 => BoxFill::None,
+                        1 => BoxFill::Solid(fg),
+                        _ => BoxFill::Grad(135, &stops),
+                    };
+                    let fmin = match kind {
+                        0 => u32::MAX,
+                        1 => lum(fg),
+                        _ => gmin,
+                    };
+                    buf.fill(bg);
+                    if kind == 0 {
+                        round_ring(&f, 3, 2, w, h, r, r, t, bc);
+                    } else {
+                        round_box_on(&f, 3, 2, w, h, 0, r, r, fill, t, bc, 255);
+                    }
+                    let min = lum(bg).min(lum(bc)).min(fmin);
+                    // +8: butun sonli aralaştiriş (3 bosqiç) yaxlitlaşi
+                    if buf.iter().any(|&p| lum(p) + 8 < min) {
+                        return Err("çegara/gradient burçagida fon va rangdan töqroq piksel");
+                    }
+                    // burçak nuqtasi (0,0) yumaloq (r ≥ 4): fon qoladi; çegara qalinligi burçakda ham bor
+                    if r >= 4 && buf[2 * bw + 3] != bg {
+                        return Err("yumaloq burçak nuqtasi böyalgan");
+                    }
+                    if buf[(2 + h / 2) * bw + 3] != bc || buf[(2 + h / 2) * bw + 3 + t - 1] != bc {
+                        return Err("çegara qalinligi notöğri");
+                    }
+                    // (3) aylantirilgan: skip qator yuqoridan körinmaydi
+                    let skip = (r + t) / 2 + 1;
+                    ref_buf.fill(bg);
+                    if kind == 0 {
+                        round_box_on(&fr, 3, 2, w, h, skip, r, r, BoxFill::None, t, bc, 255);
+                    } else {
+                        round_box_on(&fr, 3, 2, w, h, skip, r, r, fill, t, bc, 255);
+                    }
+                    for yy in 2..2 + h - skip {
+                        if ref_buf[yy * bw..(yy + 1) * bw] != buf[(yy + skip) * bw..(yy + skip + 1) * bw] {
+                            return Err("aylantirilgan yumaloq quti töliq qutidan farq qiladi");
+                        }
+                    }
+                    n += 1;
+                }
+                // (2) çegara rangi = fon rangi → oddiy töldirilgan quti bilan aynan bir xil
+                let c = 0x3a7bd5;
+                buf.fill(bg);
+                round_box_on(&f, 3, 2, 2 * r + 4, 2 * r + 2, 0, r, r, BoxFill::Solid(c), t, c, 255);
+                ref_buf.fill(bg);
+                round_rect_on(&fr, 3, 2, 2 * r + 4, 2 * r + 2, r, r, c, 255);
+                if buf != ref_buf {
+                    return Err("fon+çegara bir xil rangda oddiy qutidan farq qiladi");
+                }
+                n += 1;
+            }
         }
     }
     Ok(n)

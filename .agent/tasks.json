@@ -125,7 +125,9 @@
       "id": "T16",
       "title": "Yumaloq burchaklar: zamin://matn ni qayta tekshirish va qolgan holatlarni tuzatish (border, soya, gradient, qisman aylantirish)",
       "detail": "Avval zamin://matn ni qayta tekshir. T9 tuzatishidan keyin docs/web-text-align.png toza ko'rinadi, lekin nuqson qaytmaganini tasdiqlash kerak. Keyin border-radius bilan birga keladigan, T9 qamramagan yo'llarni ko'rib chiq: round_ring/round_outline (border), box-shadow ostidagi yumaloq quti, linear-gradient fonli yumaloq quti, ichma-ich radiuslar (ota fon ustidagi bola blok), sahifa yarim aylantirilganda yuqoridan va pastdan kesilgan bloklar, flex/rtl ichidagi bloklar. Fayllar: src/gfx/mod.rs (corner_cov, corner_at, fill_round_rect_a, round_ring/round_outline, shadow chizish), src/gui.rs ~7844-8250 (lay(), web deco chizish sikli, set_clip). zamin://matn sahifasiga (src/gui.rs:6954) shu holatlarni ko'rsatadigan bloklar qo'sh: border:2px solid, box-shadow, gradient, ichma-ich radius. Qabul mezoni: (1) gfx::self_test_round() kengaytiriladi: ofscreen buferda round_ring va gradientli yumaloq quti har r=1..30 va har border qalinligida (1..4) yorug' va to'q fon ustida chiziladi; chegaradagi hech bir piksel fon rangi bilan quti/chegara rangining eng to'qidan to'qroq bo'lmaydi; '[ok]' chiqadi. (2) scripts/agent/shot.py bilan zamin://matn suratga olinadi va docs/web-text-align.png yangilanadi. Uni tekshiruvchi skript har blok burchagi atrofidagi 6x6 hududlarda fondan va blok rangidan to'qroq piksel topmasligi kerak. Aylantirilgan holat uchun ham alohida skrinshot olinadi. (3) verify.sh full o'tadi.",
-      "batch": 3
+      "batch": 3,
+      "status": "done",
+      "done_at": "2026-11-06 16:32:56"
     },
     {
       "id": "T17",

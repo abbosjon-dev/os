@@ -6982,6 +6982,27 @@ document.getElementById("qs").textContent = location.search;
 <p class="q m" style="text-transform:uppercase">uppercase: şahar öy, ğalla, çiroq, oʻzbek — шаҳар ўзбек</p>
 <p class="q m" style="text-transform:lowercase">LOWERCASE: ŞAHAR ÖY, ĞALLA, ÇIROQ — ШАҲАР ЎЗБЕК</p>
 <p class="q m" style="text-transform:capitalize">capitalize: oʻzbek tili, gʻaroyib çiroq, maʼno</p>
+<h2>border-radius: çegara, soya, gradient</h2>
+<style>
+.b{background:#eef2f8;color:#1a2233;padding:10px;border-radius:10px;border:2px solid #3a7bd5;margin:8px 0}
+.t{background:#ffffff;color:#1a2233;padding:10px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.35);margin:14px 0}
+.gr{background:linear-gradient(135deg,#4f8cff,#1e3a8a);color:#ffffff;padding:10px;border-radius:14px;margin:8px 0}
+.gb{background:linear-gradient(to right,#ff5f6d,#ffc371);color:#1a2233;padding:10px;border-radius:8px;border:3px solid #1e3a8a;margin:8px 0}
+.ota{background:#1e3a8a;color:#ffffff;padding:12px;border-radius:16px;margin:8px 0}
+.bola{background:#dfe9fb;color:#1a2233;padding:8px;border-radius:8px;margin:6px 0}
+.ic{background:#fde7c8;color:#1a2233;padding:6px;border-radius:6px;border:1px solid #b06a00}
+</style>
+<div class="b">border: 2px solid — yumaloq çegara (border-radius: 10px).</div>
+<div class="t">box-shadow: 0 4px 12px — soya ostidagi yumaloq quti.</div>
+<div class="gr">linear-gradient(135deg) — gradient fonli yumaloq quti.</div>
+<div class="gb">gradient + border: 3px solid — çegarali gradient quti.</div>
+<div class="ota" style="min-height:150px">Ota blok (radius 16px, töq fon). Bloklar tekis joylaşadi, şuning uçun bola bloklar position: relative bilan ota fon ustiga surilgan.</div>
+<div class="bola" style="position:relative;top:-114px;left:24px;max-width:55%">Bola blok (radius 8px) ota fon ustida.</div>
+<div class="bola" style="position:relative;top:-120px;left:24px;max-width:45%;border:2px solid #3a7bd5">Bola blok çegara bilan.</div>
+<div style="display:flex;gap:10px"><div class="b">flex 1</div><div class="t">flex 2</div><div class="gr">flex 3</div></div>
+<div dir="rtl" style="display:flex;gap:10px"><div class="ic">rtl 1</div><div class="gb">rtl 2</div><div class="bola">rtl 3</div></div>
+<div class="b" style="border-width:4px;border-radius:20px">border: 4px, radius 20px.</div>
+<div class="b" style="border-width:1px;border-radius:3px">border: 1px, radius 3px.</div>
 "##,
         "zamin://bezak" => r##"<title>CSS bezak: gradient va soya</title>
 <style>
@@ -8532,31 +8553,25 @@ fn draw_browser(win: &Window) {
         if d.h > 0 && d.y + d.h >= sc && d.y < sc + ph {
             let top = d.y.max(sc);
             let (dx, dy, dh) = (px0 + d.x, py0 + top - sc, d.y + d.h - top);
-            // Yuqoridan qisman aylantirilgan quti: faqat yuqori burçaklar kesiladi,
-            // pastkilari yumaloq qoladi.
-            let rb = d.radius.min(d.w / 2).min(dh / 2);
-            let rt = if d.y >= sc { rb } else { 0 };
+            // Burçak radiusi — TÖLIQ quti böyiça (aylantirilganda ham özgarmaydi); yuqoridan
+            // qisman aylantirilgan quti körinmaydigan `skip` qatorlari bilan çiziladi, şunda
+            // qisman körinadigan yoy va çegara ham haqiqiy geometriya böyiça çiqadi.
+            let r = d.radius.min(d.w / 2).min(d.h / 2);
+            let skip = top - d.y;
             if let Some((sx, sy, blur, spread, c, a)) = d.shadow {
                 // soya — butun quti böyiça (yuqorisi aylantirilgan bölsa ham), qirqiş sohasi çeklaydi
                 let ey = py0 as i32 + d.y as i32 - sc as i32;
-                gfx::box_shadow(dx as i32, ey, d.w, d.h, d.radius.min(d.w / 2).min(d.h / 2), sx, sy, blur, spread, c, a as u32);
+                gfx::box_shadow(dx as i32, ey, d.w, d.h, r, sx, sy, blur, spread, c, a as u32);
             }
-            if let Some(g) = d.grad.filter(|g| g.n >= 2) {
-                gfx::gradient_round_rect(dx, dy, d.w, dh, rt, rb, g.angle, &g.stops[..g.n as usize], top - d.y);
-            } else if let Some(c) = d.fill {
-                if rb > 0 {
-                    gfx::fill_round_rect_tb(dx, dy, d.w, dh, rt, rb, c);
-                } else {
-                    fill_rect(dx, dy, d.w, dh, c);
-                }
-            }
-            if d.bw > 0 {
-                if d.y >= sc {
-                    gfx::round_outline(dx, dy, d.w, dh, rb, d.bw, d.bc);
-                } else {
-                    // yuqori chegara körinmaydi: uni qirqiş sohasidan tepaga çiqaramiz
-                    gfx::round_outline_tb(dx, dy.saturating_sub(d.bw), d.w, dh + d.bw, 0, rb, d.bw, d.bc);
-                }
+            let fill = match (d.grad.as_ref().filter(|g| g.n >= 2), d.fill) {
+                (Some(g), _) => gfx::BoxFill::Grad(g.angle, &g.stops[..g.n as usize]),
+                (None, Some(c)) => gfx::BoxFill::Solid(c),
+                (None, None) => gfx::BoxFill::None,
+            };
+            match fill {
+                // oddiy töğri burçakli quti — tez yöl
+                gfx::BoxFill::Solid(c) if r == 0 && d.bw == 0 => fill_rect(dx, dy, d.w, dh, c),
+                _ => gfx::round_box(dx, dy, d.w, d.h, skip, r, fill, d.bw, d.bc),
             }
         }
     }
