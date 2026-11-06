@@ -1,0 +1,94 @@
+
+ _____               _          ___  ____
+|__  /__ _ _ __ ___ (_)_ __    / _ \/ ___|
+  / // _` | '_ ` _ \| | '_ \  | | | \___ \
+ / /| (_| | | | | | | | | | | | |_| |___) |
+/____\__,_|_| |_| |_|_|_| |_|  \___/|____/
+
+Zamin OS v0.0.27 — AArch64
+Dasturçi: Abbosjon Dev | zamin.app | info@zamin.app
+
+[til ] Til: Özbekça
+[boot] Imtiyoz darajasi: EL1
+[dtb ] qurilma tavsifi öqildi (1024 KiB)
+[mem ] RAM: 0x40000000..0x60000000 (512 MiB)
+[mem ] yadro: 0x40200000..0x40640000 (4352 KiB)
+[mmu ] yoqildi: 4 KiB sahifalar, 39-bit VA, keşlar yoqiq
+[mem ] sahifalar: 129468 böş / 131072 jami
+[heap] 32 MiB tayyor
+[irq ] GIC: 288 ta uziliş liniyasi, taymer: 100 Hz (çastota 62 MHz)
+[vaqt] 2026-11-06 21:03:25 (UTC+5)
+[rand] tasodifiy sonlar generatori: ChaCha20, manbalar: virtio-rng, RNDR, timer
+[disk] virtio-blk: 128 MiB
+[conf] birinçi işga tuşiriş — sozlaş boşlanadi
+[exc ] BRK #42 @ 0x40247e10 — qayta işlandi, davom etamiz
+[test] heap: Box/Vec/String va 3200 ajratiş — OK
+[test] mmu: 0x1000000000 -> 0x4264d000 xaritalaş, yoziş va olib taşlaş — OK
+[test] W^X: yadro kodi — faqat öqiş, maʼlumotlar — bajarib bölmaydi — OK
+[test] PAN: yadro foydalanuvçi xotirasiga faqat nusxalaş orqali tegadi — OK
+[test] kripto: SHA-256, HMAC, PBKDF2, ChaCha20-Poly1305 — standart vektorlar — OK
+[test] X.509: sertifikat tahlili, amal muddati va host nomi tekşiruvi — OK
+[test] rasm dekoderlari: 16 ta format (raster + vektor: SVG, PDF, EPS, DXF…) — OK
+  [ok] JavaScript: 19 ta sinov (funksiyalar, yopilmalar, massivlar, shablonlar); çaqiruv ~3530 bayt stek
+  [ok] <canvas> 2D: fillRect, strokeRect, yöl (lineTo/arc), fillText (7 sinov)
+  [ok] HTML jadval: rowspan (10 katak, joy egallovçilar bilan)
+  [ok] CSS joylaşuv: position (relative/absolute) va float/clear (5 sinov)
+  [ok] yumaloq burçaklar: qamrov (r=1..30) va yorugʻ fonda töq piksel yöq (9473 sinov)
+  [ok] dir=rtl va text-align (start/end/left/justify) (12 sinov)
+  [ok] CSS @media (min/max-width) va :hover (8 sinov)
+  [ok] CSS linear-gradient (töxtaşlar, burçak) va box-shadow (35 sinov)
+  [ok] CSS height/min-height, line-height va text-transform (23 sinov)
+  [ok] <audio>/<video>: WAV ijro havolasi (virtio-sound) va video poster (6 sinov)
+  [ok] <iframe>: srcdoc va bir xil manbali src ichki hujjat chizilişi (8 sinov)
+  [ok] terminal scrollback: 2000 qator çegarasi, söz/belgi böyiça öraş, UTF-8 (5 sinov)
+  [ok] muharrir undo/qidiruv: söz guruhlaş, 200 qadam, UTF-8 ustun (9 sinov)
+  [ok] localStorage/cookie diskka saqlaş (~/.zamin): kodlaş (4 yozuv)
+[test] audio: WAV, FLAC, MP3 va OGG/Vorbis dekoderlari — OK
+[test] video: MJPEG/AVI dekoderi, MP4/MOV/MKV/WebM taniş — OK
+[test] taymer: 50 ms da 5 ta uziliş — OK
+[test] KASLR: yadro steklari har yuklanişda 16320 xil joydan birida — OK
+[fs  ] fayl tizimi tayyor: 23 ta fayl, 5 ta papka
+[task] rejalaştiruvçi işga tuşdi (vaqt böligi 10 ms), dasturlar: 20 ta
+[smp ] 4 ta protsessor yadrosi işlamoqda
+[net ] virtio-net: MAC 52:54:00:12:34:56
+[snd ] övoz qurilmasi topilmadi
+[gpu ] virtio-gpu: 1280x800 ish stoli çizildi
+[net ] DHCP: IP 10.0.2.15, gateway 10.0.2.2, DNS 10.0.2.3
+[test] rejalaştiruvçi: 2 ta oqim bir vaqtda işladi (164765 / 153652 aylanish) — OK
+  fuzz: 144678181230739466 çaqiruv — yadro tirik
+[test] fuzz: 15000 ta tasodifiy tizim çaqiruvi — yadro barqaror — OK
+[test] SMP: oqimlar 4 ta yadroda parallel işladi — OK
+[test] mutex: 4 oqim, uxlab kutiş, natija 800 — OK
+[test] disk: söröv uziliş orqali tugadi (vazifa uxlab kutdi) — OK
+[xavf] yadro steki töldi (PID 17) — oqim tugatildi
+[test] yadro steki qörğoni: töliş aniqlandi, faqat aybdor oqim tugatildi — OK
+[test] foydalanuvçi rejimi (EL0): tizim çaqiruvlari va himoya, çiqiş kodi 42 — OK
+[ok] terminal tarix/tab: History push/prev/next, 100 ta çeklov, complete() va tab_line()
+
+
+  Zamin OS ga xuş kelibsiz!
+  Добро пожаловать в Zamin OS!
+  Welcome to Zamin OS!
+
+  Tilni tanlang · Выберите язык · Choose your language
+    1) Özbekça
+    2) Русский
+    3) English
+  > 3
+
+  First-time setup
+
+  Your full name: Test User
+  Login: lowercase Latin letters, digits, - and _ (2–32 characters, starts with a letter).
+  Username (login) [test]: test
+  Password: ********
+  Repeat password: ********
+  Creating account...
+
+  Done! Account created: test (Test User)
+  Home folder: /home/test
+  Settings saved to disk — next time only your password will be asked.
+  Your files are encrypted on disk (ChaCha20-Poly1305); the key is derived from your password.
+
+Zamin terminal. For a list of commands: help
+test@zamin> [js] Bosh sahifa tayyor

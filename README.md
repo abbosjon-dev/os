@@ -1017,7 +1017,7 @@ API kalit / apiKeyHelper / boşqa BASE_URL → rad etiladi, 3 ketma-ket tekşiru
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.27**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.28**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -1088,5 +1088,10 @@ bosqiç (etap) yakunlanganda kötariladi.
   agent 8 siklda bajardi — jadval rowspan, CSS position/float, @media va :hover, canvas 2D,
   dir=rtl va text-align (justify), localStorage/cookie diskda (~/.zamin/), haqiqiy iframe
   (srcdoc va bir xil manba), audio ijro (virtio-sound) va video poster; self-testlar 27 ta.
+- 0.0.28 — **Sayqal**: yumaloq burçaklardagi qora “tişçalar” tuzatildi (aniq qamrov, 9473 sinov);
+  terminalda buyruqlar tarixi (↑/↓, ~/.zamin/terminal_tarix) va Tab bilan töldiriş, 2000 qatorlik
+  aylantiriş tarixi va uzun qatorlarni öraş; muharrirda bekor qiliş/qaytariş (Alt+Z / Alt+Shift+Z)
+  va qidiruv (Alt+F); CSS linear-gradient, box-shadow, height/min-height, line-height va
+  text-transform (Ş/Ö/Ğ/Ç va kirill bilan). Skrinshot: `docs/sayqal-0.0.28.png`.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
