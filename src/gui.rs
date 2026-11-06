@@ -7725,7 +7725,7 @@ localStorage.setItem("tashrif", String(k));
 document.cookie = "til=uz; path=/";
 document.getElementById("xotira").textContent = "localStorage: bu sahifa " + k + "-marta oçildi · cookie: " + document.cookie;
 </script>"##,
-        "zamin://malumot.json" => r##"{"tizim": "Zamin OS", "versiya": "0.0.28", "til": "Rust", "imkoniyatlar": ["JavaScript", "CSS", "fetch", "Promise", "formalar"], "yadrolar": 4, "ochiq": true}"##,
+        "zamin://malumot.json" => r##"{"tizim": "Zamin OS", "versiya": "0.0.29", "til": "Rust", "imkoniyatlar": ["JavaScript", "CSS", "fetch", "Promise", "formalar"], "yadrolar": 4, "ochiq": true}"##,
         "zamin://forma" => r##"<title>Formalar va fetch()</title>
 <style>
 body { background: #0f1724; color: #dbe3ee; }

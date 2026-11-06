@@ -1114,7 +1114,7 @@ API kalit / apiKeyHelper / boşqa BASE_URL → rad etiladi, 3 ketma-ket tekşiru
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.28**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.29**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -1190,5 +1190,11 @@ bosqiç (etap) yakunlanganda kötariladi.
   aylantiriş tarixi va uzun qatorlarni öraş; muharrirda bekor qiliş/qaytariş (Alt+Z / Alt+Shift+Z)
   va qidiruv (Alt+F); CSS linear-gradient, box-shadow, height/min-height, line-height va
   text-transform (Ş/Ö/Ğ/Ç va kirill bilan). Skrinshot: `docs/sayqal-0.0.28.png`.
+- 0.0.29 — **Iş muhiti**: tizim almaşuv buferi; matn muharririda matn tanlaş (Shift+strelkalar,
+  siçqonça) va Alt+C/X/V; terminalda siçqonça bilan tanlaş, nusxa oliş va joylaş; Fayllar
+  menejerida röyxat körinişi (nom, hajm, sana, tur) va ustun böyiça saralaş; Sozlamalar → Ovoz:
+  ovoz balandligi slayderi va ovozsiz rejim; yumaloq burçaklar qayta tekşirildi; CSS overflow:
+  hidden/auto, white-space: nowrap/pre/pre-line, text-overflow: ellipsis va opacity.
+  Skrinşotlar: `docs/ish-muhiti-0.0.29.png`, `docs/ish-muhiti-fayllar-0.0.29.png`.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
