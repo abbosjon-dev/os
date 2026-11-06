@@ -44,7 +44,7 @@ DEFAULT_CFG = {
     "max_est_usd_total": 150.0,
     "permission_mode": "acceptEdits",
     "allowed_tools": "Bash Read Edit Write Glob Grep TodoWrite",
-    "disallowed_tools": "WebSearch",
+    "disallowed_tools": "WebSearch Bash(git push:*) Bash(git commit:*) Bash(git reset:*) Bash(claude:*)",
     "push": True,
     "branch": "main",
     "verify_mode": "full",
@@ -307,6 +307,7 @@ def loop(cfg, state):
                      resume_session=bool(recovering and state.get("session_id")))
         jsave(STATE, state)
         log(f"sikl {cyc}: {task['id']} — {task['title']}" + (" (tiklash)" if recovering else ""))
+        head0 = git("rev-parse", "HEAD")
         prompt = build_prompt(task, state, recovering, state.get("fail_log"))
         res, stderr = run_claude(cfg, prompt, state, cyc)
         if res is None:
@@ -333,7 +334,7 @@ def loop(cfg, state):
         log(f"sikl {cyc} tugadi: rc={res.get('_rc')} timeout={res.get('_timeout', False)} "
             f"taxminiy={est:.3f} verify={'OK' if ok else 'XATO'} da'vo={'DONE' if claimed else ('BLOCKED' if blocked else '-')}")
         if ok:
-            changed = bool(git("status", "--porcelain"))
+            changed = bool(git("status", "--porcelain")) or git("rev-parse", "HEAD") != head0
             state["consecutive_failures"] = 0
             state.pop("fail_log", None)
             if claimed and changed:
@@ -348,7 +349,10 @@ def loop(cfg, state):
                     task["status"] = "blocked"
                     task["note"] = "4 urinishda tugallanmadi"
             jsave(TASKS, tasks)
-            if changed and commit_and_push(cfg, task, cyc) and task.get("status") == "done":
+            pushed = commit_and_push(cfg, task, cyc) if changed else False
+            if changed and not pushed and cfg["push"] and git("rev-parse", "HEAD") != head0:
+                subprocess.run(["git", "push", "-u", "origin", cfg["branch"]], cwd=REPO, capture_output=True)
+            if changed and task.get("status") == "done":
                 task["commit"] = git("rev-parse", "--short", "HEAD")
                 jsave(TASKS, tasks)
         else:

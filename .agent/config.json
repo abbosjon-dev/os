@@ -7,7 +7,7 @@
   "max_est_usd_total": 150.0,
   "permission_mode": "acceptEdits",
   "allowed_tools": "Bash Read Edit Write Glob Grep TodoWrite",
-  "disallowed_tools": "WebSearch",
+  "disallowed_tools": "WebSearch Bash(git push:*) Bash(git commit:*) Bash(git reset:*) Bash(claude:*)",
   "push": true,
   "branch": "main",
   "verify_mode": "full"
