@@ -102,6 +102,23 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   papka yöq bölsa — uyga) va **Böşatiş**; dokdagi savat töla bölsa — qogʻozlar körinadi.
   Nuqta bilan boşlanadigan yaşirin fayllar körsatilmaydi.
 
+![Fayllar: röyxat körinişi](docs/apps/files-list.png)
+
+- **Grid / Röyxat almaştirgiçi** (asboblar qatorining öng tomonida). Röyxat körinişida
+  kiçik ikona (rasmlar uçun eskiz), **Nom**, **Hajm** (`B` / `KB` / `MB` / `GB`, papka uçun
+  `—`), **Özgartirilgan** sana (fayl tizimidagi `mtime`, mahalliy vaqtda — standart Toşkent,
+  UTC+5) va **Tur** (Papka, Rasm, Matn, Övoz, Video, Arxiv, Dastur yoki `KENGAYTMA fayl`).
+- **Ustun sarlavhasini bosiş** — şu ustun böyiça saralaydi, yana bosiş — tartibni teskari
+  qiladi (`▲` / `▼` belgisi). Papkalar doim yuqorida turadi, teng qiymatlar nom böyiça.
+  Saralaş özgarganda tanlangan element nom böyiça saqlanib qoladi.
+- Tanlaş, ikki marta bosiş, strelkalar, `Enter`, `F2`, `Delete`, sudrab tashlaş (papka
+  qatoriga) va kontekst menyusi röyxatda ham xuddi griddagidek işlaydi.
+- Tanlangan körinış va saralaş `~/.zamin/files` ga saqlanadi
+  (`view=list sort=size desc=1`) — qayta yuklanişdan keyin ham qoladi.
+- Mantiq sof funksiyalarda: `sort_entries(entries, key, desc)` va `human_size(u64)`;
+  yuklanişda `[ok] fayllar saralaş` self-testi nom/hajm/sana böyiça teskari tartibni,
+  papkalar birinçi turişini va `human_size(0 / 1023 / 1024 / 5 MB)` ni tekşiradi.
+
 ### Brauzer: to'liq HTML (`zamin://html` sinov sahifasi)
 
 | Matn teglari va belgilar | Ro'yxatlar (A./iv./teskari), ichma-ich belgilar |

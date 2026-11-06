@@ -559,6 +559,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] muharrir undo/qidiruv/tanlaş: söz guruhlaş, {} qadam, UTF-8 ustun, köp qatorli nusxa/kesiş/joylaş ({} sinov)", edit::MAX_STEPS, n),
         Err(e) => panic!("muharrir undo/qidiruv tekşiruvi yiqildi: {}", e),
     }
+    match gui::self_test_files_sort() {
+        Ok(n) => println!("  [ok] fayllar saralaş: nom/hajm/sana/tur, teskari tartib, papkalar birinçi, human_size ({} sinov)", n),
+        Err(e) => panic!("fayllar saralaş tekşiruvi yiqildi: {}", e),
+    }
     match net::webstore::self_test() {
         Ok(n) => println!("  [ok] localStorage/cookie diskka saqlaş (~/.zamin): kodlaş ({} yozuv)", n),
         Err(e) => panic!("localStorage/cookie saqlaş tekşiruvi yiqildi: {}", e),

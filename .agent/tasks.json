@@ -149,7 +149,9 @@
       "id": "T19",
       "title": "Fayllar menejeri: ro'yxat ko'rinishi (nom, hajm, sana, tur) va ustun bo'yicha saralash",
       "detail": "Fayllar: src/gui.rs (draw_files ~3740, fayllar bosish/klaviatura ishlovi, ~513 dagi entries.sort_by). Asboblar paneliga 'Grid / Ro'yxat' almashtirgich qo'sh. Ro'yxat ko'rinishida kichik ikona, nom, hajm (B/KB/MB, papka uchun '—'), o'zgartirilgan sana (fs vaqt metamaydonlaridan, Toshkent UTC+5) va tur ustunlari bo'ladi. Ustun sarlavhasini bosish shu ustun bo'yicha saralaydi, yana bosish tartibni teskari qiladi (▲/▼ belgisi chiqadi); papkalar doim yuqorida qoladi. Tanlash, Enter, F2, Delete, sudrab tashlash va kontekst menyusi ro'yxatda ham ishlashi kerak. Tanlangan ko'rinish va saralash ~/.zamin/ ga saqlanadi. Mantiq sof funksiyada: sort_entries(entries, key, desc) va human_size(u64). Qabul mezoni: yangi self-test ([ok] fayllar saralash) nom, hajm va sana bo'yicha teskari tartibni va papkalar birinchi turishini tekshiradi; human_size(0/1023/1024/5*1024*1024) to'g'ri chiqadi. Skrinshot docs/apps/files-list.png olinadi; README 'Fayl boshqaruvi' bo'limi yangilanadi; verify.sh full o'tadi.",
-      "batch": 3
+      "batch": 3,
+      "status": "done",
+      "done_at": "2026-11-06 17:16:13"
     },
     {
       "id": "T20",

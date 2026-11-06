@@ -161,6 +161,7 @@ struct Window {
     esc: Option<String>, // qayta işlanayotgan ESC ketma-ketligi
     side: Vec<String>,  // Fayllar: yon panel papkalari (uy papkasidagi)
     thumbs: Vec<Option<crate::image::Image>>, // Fayllar: rasm eskizlari (rows bilan bir xil tartibda)
+    fmeta: Vec<(u64, u64)>, // Fayllar: (hajm, özgartirilgan vaqt — unix) rows bilan bir xil tartibda
     id: usize,          // yagona raqam (animatsiya uçun)
     tab: usize,         // Sozlamalar: tanlangan bölim
     hidden: bool,       // dokka yashirilgan (sariq tugma)
@@ -342,6 +343,7 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         cur: Vec::new(), esc: None,
         side: Vec::new(),
         thumbs: Vec::new(),
+        fmeta: Vec::new(),
         id: NEXT_WIN_ID.fetch_add(1, Ordering::Relaxed),
         tab: 0,
         hidden: false,
@@ -506,7 +508,7 @@ fn new_window(kind: Kind, n: usize) -> Window {
     }
 }
 
-/// Fayllar oynasiga papka tarkibini yuklaydi (papkalar oldin, keyin alifbo).
+/// Fayllar oynasiga papka tarkibini yuklaydi (papkalar oldin, keyin tanlangan saralaş).
 fn load_dir(win: &mut Window, path: &str) {
     win.path = String::from(path);
     win.rows.clear();
@@ -514,9 +516,12 @@ fn load_dir(win: &mut Window, path: &str) {
     entries.retain(|e| !e.name.starts_with('.')); // yaşirin fayllar (.Savat va h.k.)
     win.fsel = None;
     win.rename = None;
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
+    let pr = files_prefs();
+    sort_entries(&mut entries, pr.key, pr.desc);
     win.thumbs.clear();
+    win.fmeta.clear();
     for e in entries {
+        win.fmeta.push((e.size as u64, e.mtime));
         let kind = FKind::of(&e.name, e.is_dir);
         // Rasm bölsa — kiçik eskiz (bir marta dekodlanadi, keşlanadi)
         let thumb = if kind == FKind::Image {
@@ -560,6 +565,243 @@ fn path_join(base: &str, name: &str) -> String {
     } else {
         alloc::format!("{}/{}", base, name)
     }
+}
+
+/// Fayllar: saralaş ustuni.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SortKey {
+    Name,
+    Size,
+    Date,
+    Type,
+}
+
+impl SortKey {
+    fn from_u8(v: u8) -> SortKey {
+        match v {
+            1 => SortKey::Size,
+            2 => SortKey::Date,
+            3 => SortKey::Type,
+            _ => SortKey::Name,
+        }
+    }
+    fn as_u8(self) -> u8 {
+        match self {
+            SortKey::Name => 0,
+            SortKey::Size => 1,
+            SortKey::Date => 2,
+            SortKey::Type => 3,
+        }
+    }
+}
+
+/// Fayllar oynasi körinişi va saralaşi (barça Fayllar oynalari uçun umumiy).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct FilesPrefs {
+    list: bool, // true — röyxat, false — grid
+    key: SortKey,
+    desc: bool,
+}
+
+/// bit0 — röyxat, bit1..2 — ustun, bit3 — teskari; bit7 — diskdan öqilgan.
+static FILES_PREFS: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+const FILES_PREFS_PATH: &str = "~/.zamin/files";
+
+fn files_prefs() -> FilesPrefs {
+    let mut v = FILES_PREFS.load(Ordering::Relaxed);
+    if v & 0x80 == 0 {
+        // birinçi marta — ~/.zamin/files dan
+        let txt = fs::read_all(FILES_PREFS_PATH).ok().and_then(|d| String::from_utf8(d).ok()).unwrap_or_default();
+        v = 0x80 | prefs_decode(&txt);
+        FILES_PREFS.store(v, Ordering::Relaxed);
+    }
+    FilesPrefs { list: v & 1 != 0, key: SortKey::from_u8((v >> 1) & 3), desc: v & 8 != 0 }
+}
+
+/// "view=list sort=size desc=1" → bitlar (nomaʼlum qismlar e'tiborsiz).
+fn prefs_decode(txt: &str) -> u8 {
+    let mut v = 0u8;
+    for part in txt.split_whitespace() {
+        match part.split_once('=') {
+            Some(("view", "list")) => v |= 1,
+            Some(("sort", k)) => {
+                let key = match k {
+                    "size" => SortKey::Size,
+                    "date" => SortKey::Date,
+                    "type" => SortKey::Type,
+                    _ => SortKey::Name,
+                };
+                v = (v & !6) | (key.as_u8() << 1);
+            }
+            Some(("desc", "1")) => v |= 8,
+            _ => {}
+        }
+    }
+    v
+}
+
+fn prefs_encode(p: FilesPrefs) -> String {
+    let k = match p.key {
+        SortKey::Name => "name",
+        SortKey::Size => "size",
+        SortKey::Date => "date",
+        SortKey::Type => "type",
+    };
+    alloc::format!("view={} sort={} desc={}\n", if p.list { "list" } else { "grid" }, k, p.desc as u8)
+}
+
+/// Sozlamani xotiraga va ~/.zamin/files ga yozadi (foydalanuvçi kirgan bölsa).
+fn set_files_prefs(p: FilesPrefs) {
+    let v = 0x80 | p.list as u8 | (p.key.as_u8() << 1) | ((p.desc as u8) << 3);
+    FILES_PREFS.store(v, Ordering::Relaxed);
+    if crate::accounts::current_uid() == 0 {
+        return;
+    }
+    use crate::abi::{OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
+    if fs::node_of("~/.zamin").is_err() && fs::mkdir("~/.zamin").is_err() {
+        return;
+    }
+    if let Ok(id) = fs::open(FILES_PREFS_PATH, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE) {
+        let _ = fs::write(id, Some(0), prefs_encode(p).as_bytes());
+    }
+}
+
+/// Tur ustuni matni.
+fn type_label(name: &str, kind: FKind) -> String {
+    match kind {
+        FKind::Dir => String::from("Papka"),
+        FKind::Image => String::from("Rasm"),
+        FKind::Text => String::from("Matn"),
+        FKind::Program => String::from("Dastur"),
+        FKind::Audio => String::from("Övoz"),
+        FKind::Video => String::from("Video"),
+        FKind::Archive => String::from("Arxiv"),
+        FKind::Other => {
+            let e = ext_label(name);
+            if e.is_empty() { String::from("Fayl") } else { alloc::format!("{} fayl", e) }
+        }
+    }
+}
+
+/// Nomlarni katta-kiçik harfga qaramay soliştiradi (teng bölsa — aynan).
+fn name_cmp(a: &str, b: &str) -> core::cmp::Ordering {
+    let la = a.chars().flat_map(char::to_lowercase);
+    let lb = b.chars().flat_map(char::to_lowercase);
+    la.cmp(lb).then_with(|| a.cmp(b))
+}
+
+/// Papka elementlarini saralaydi: papkalar doim yuqorida, keyin `key` böyiça
+/// (`desc` — teskari). Teng qiymatlar nom böyiça (ösuvçi) tartiblanadi.
+fn sort_entries(entries: &mut [fs::Entry], key: SortKey, desc: bool) {
+    use core::cmp::Ordering as O;
+    entries.sort_by(|a, b| {
+        let dirs = b.is_dir.cmp(&a.is_dir);
+        if dirs != O::Equal {
+            return dirs;
+        }
+        let o = match key {
+            SortKey::Name => name_cmp(&a.name, &b.name),
+            // papka hajmi körsatilmaydi ('—') — ular orasida nom böyiça
+            SortKey::Size if a.is_dir => O::Equal,
+            SortKey::Size => a.size.cmp(&b.size),
+            SortKey::Date => a.mtime.cmp(&b.mtime),
+            SortKey::Type => type_label(&a.name, FKind::of(&a.name, a.is_dir))
+                .cmp(&type_label(&b.name, FKind::of(&b.name, b.is_dir))),
+        };
+        let o = if desc { o.reverse() } else { o };
+        o.then_with(|| name_cmp(&a.name, &b.name))
+    });
+}
+
+/// Odam öqiydigan hajm: "0 B", "1023 B", "1.0 KB", "5.0 MB", "1.2 GB".
+fn human_size(n: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if n < 1024 {
+        return alloc::format!("{} B", n);
+    }
+    let mut unit = 0;
+    let mut div: u64 = 1024;
+    while unit + 1 < UNITS.len() && n >= div * 1024 {
+        div *= 1024;
+        unit += 1;
+    }
+    // bir kasr xona, yaxlitlab (10 lik birliklarda)
+    let tenths = (n as u128 * 10 + div as u128 / 2) / div as u128;
+    alloc::format!("{}.{} {}", tenths / 10, tenths % 10, UNITS[unit])
+}
+
+/// Özgartirilgan sana (mahalliy vaqt, standart — Toşkent UTC+5): "2026-11-06 14:30".
+fn fmt_mtime(unix: u64) -> String {
+    if unix == 0 {
+        return String::from("—");
+    }
+    let d = crate::time::local(unix);
+    alloc::format!("{:04}-{:02}-{:02} {:02}:{:02}", d.year, d.month, d.day, d.hour, d.minute)
+}
+
+/// Fayllar saralaş self-testi: nom/hajm/sana teskari tartibi, papkalar birinçi,
+/// human_size va sozlama kodlaşi. Qaytaradi — tekşiruvlar soni.
+pub fn self_test_files_sort() -> Result<usize, &'static str> {
+    let mk = |name: &str, is_dir: bool, size: usize, mtime: u64| fs::Entry {
+        name: String::from(name),
+        is_dir,
+        size,
+        mode: 0o644,
+        owner: 1,
+        mtime,
+    };
+    let base = || {
+        alloc::vec![
+            mk("b.txt", false, 300, 20),
+            mk("Zeta", true, 1, 5),
+            mk("a.png", false, 5000, 10),
+            mk("c.mp3", false, 10, 30),
+            mk("alfa", true, 0, 50),
+        ]
+    };
+    let names = |v: &[fs::Entry]| v.iter().map(|e| e.name.clone()).collect::<Vec<_>>();
+    let mut n = 0;
+    let mut check = |key: SortKey, desc: bool, want: [&str; 5]| -> Result<(), &'static str> {
+        let mut v = base();
+        sort_entries(&mut v, key, desc);
+        n += 1;
+        if names(&v) != want { Err("sort_entries tartibi notöğri") } else { Ok(()) }
+    };
+    check(SortKey::Name, false, ["alfa", "Zeta", "a.png", "b.txt", "c.mp3"])?;
+    check(SortKey::Name, true, ["Zeta", "alfa", "c.mp3", "b.txt", "a.png"])?;
+    check(SortKey::Size, false, ["alfa", "Zeta", "c.mp3", "b.txt", "a.png"])?;
+    check(SortKey::Size, true, ["alfa", "Zeta", "a.png", "b.txt", "c.mp3"])?;
+    check(SortKey::Date, false, ["Zeta", "alfa", "a.png", "b.txt", "c.mp3"])?;
+    check(SortKey::Date, true, ["alfa", "Zeta", "c.mp3", "b.txt", "a.png"])?;
+    check(SortKey::Type, false, ["alfa", "Zeta", "b.txt", "a.png", "c.mp3"])?;
+    // papkalar doim birinçi (har qanday ustun va yönalişda)
+    for k in 0..4 {
+        for desc in [false, true] {
+            let mut v = base();
+            sort_entries(&mut v, SortKey::from_u8(k), desc);
+            n += 1;
+            if !(v[0].is_dir && v[1].is_dir && v[2..].iter().all(|e| !e.is_dir)) {
+                return Err("papkalar yuqorida emas");
+            }
+        }
+    }
+    for (b, want) in [(0u64, "0 B"), (1023, "1023 B"), (1024, "1.0 KB"), (5 * 1024 * 1024, "5.0 MB"), (1536, "1.5 KB")] {
+        n += 1;
+        if human_size(b) != want {
+            return Err("human_size notöğri");
+        }
+    }
+    let p = FilesPrefs { list: true, key: SortKey::Date, desc: true };
+    let v = prefs_decode(&prefs_encode(p));
+    n += 1;
+    if v != (1 | (2 << 1) | 8) || prefs_decode("") != 0 {
+        return Err("sozlama kodlaşi notöğri");
+    }
+    n += 1;
+    if fmt_mtime(0) != "—" {
+        return Err("fmt_mtime(0)");
+    }
+    Ok(n)
 }
 
 /// Fayllar oynasida qator bosilganda: papka — kiradi; fayl — mos ilovada oçadi.
@@ -2057,6 +2299,28 @@ fn handle_click(
             if let Some(p) = target {
                 let mut w = windows.remove(i);
                 load_dir(&mut w, &p);
+                windows.push(w);
+                return true;
+            }
+            // Grid / Röyxat almaştirgiçi va ustun sarlavhasi (saralaş)
+            let vb = files_view_btns(&windows[i]);
+            let mut pr = files_prefs();
+            let new_pr = if in_rect(vb[0], cx, cy) {
+                Some(FilesPrefs { list: false, ..pr })
+            } else if in_rect(vb[1], cx, cy) {
+                Some(FilesPrefs { list: true, ..pr })
+            } else if let Some(k) = list_header_at(&windows[i], cx, cy) {
+                pr.desc = if pr.key == k { !pr.desc } else { false };
+                pr.key = k;
+                Some(pr)
+            } else {
+                None
+            };
+            if let Some(np) = new_pr {
+                files_rename_commit(&mut windows[i]);
+                set_files_prefs(np);
+                files_resort_all(windows);
+                let w = windows.remove(i);
                 windows.push(w);
                 return true;
             }
@@ -3836,6 +4100,7 @@ struct FilesGeo {
     th: usize,   // asboblar qatori balandligi
     gx: usize,   // grid boşi
     gy: usize,
+    gw: usize,
     gh: usize,
     cw: usize,   // katak ölçami
     ch: usize,
@@ -3857,16 +4122,80 @@ fn files_geo(win: &Window) -> FilesGeo {
     let cw = u * 5;
     let ch = u * 5;
     FilesGeo {
-        sbw, top, tx, th, gx, gy, gh, cw, ch,
+        sbw, top, tx, th, gx, gy, gw, gh, cw, ch,
         cols: (gw / cw).max(1),
         item_h: u * 7 / 4,
         side_y: top + u * 2,
     }
 }
 
-/// Bosilgan nuqtadagi grid elementi (Fayllar oynasi).
+/// Röyxat körinişi: sarlavha va qator balandligi.
+fn list_row_h() -> usize {
+    body() * 3 / 2
+}
+
+/// Röyxat ustunlari çegaralari (x): [nom, hajm, sana, tur, oxiri].
+fn list_cols(g: &FilesGeo) -> [usize; 5] {
+    let u = body();
+    let end = g.gx + g.gw;
+    let dw = gfx::text_width("2026-11-06 22:30", small() * 9 / 10) + u;
+    let (tw, sw) = (u * 5, u * 4);
+    let rest = (g.gw).saturating_sub(dw + tw + sw).max(u * 4);
+    let sx = g.gx + rest;
+    [g.gx, sx, sx + sw, sx + sw + dw, end.max(sx + sw + dw + 1)]
+}
+
+/// Fayllar oynasida bitta elementning çizilgan joyi (x, y, w, h).
+fn file_cell_rect(win: &Window, r: usize) -> (usize, usize, usize, usize) {
+    let g = files_geo(win);
+    if files_prefs().list {
+        let rh = list_row_h();
+        (g.gx, g.gy + rh + r * rh, g.gw, rh)
+    } else {
+        let (row, col) = (r / g.cols, r % g.cols);
+        (g.gx + col * g.cw, g.gy + row * g.ch, g.cw, g.ch)
+    }
+}
+
+/// Asboblar qatoridagi "Grid / Röyxat" almaştirgiçi: ikki tugma (x, y, w, h).
+fn files_view_btns(win: &Window) -> [(usize, usize, usize, usize); 2] {
+    let g = files_geo(win);
+    let u = body();
+    let px = small() * 4 / 5;
+    let bh = u * 3 / 2;
+    let by = g.top + (g.th - bh) / 2;
+    let w1 = gfx::text_width("Grid", px) + u;
+    let w2 = gfx::text_width("Röyxat", px) + u;
+    let x2 = (win.x + win.w).saturating_sub(w2 + u / 2);
+    let x1 = x2.saturating_sub(w1);
+    [(x1, by, w1, bh), (x2, by, w2, bh)]
+}
+
+/// Röyxat sarlavhasida bosilgan ustun.
+fn list_header_at(win: &Window, cx: usize, cy: usize) -> Option<SortKey> {
+    if !files_prefs().list {
+        return None;
+    }
+    let g = files_geo(win);
+    if cy < g.gy || cy >= g.gy + list_row_h() {
+        return None;
+    }
+    let c = list_cols(&g);
+    (0..4).find(|&k| cx >= c[k] && cx < c[k + 1]).map(|k| SortKey::from_u8(k as u8))
+}
+
+/// Bosilgan nuqtadagi element (Fayllar oynasi; grid yoki röyxat).
 fn file_row_at(win: &Window, cx: usize, cy: usize) -> Option<usize> {
     let g = files_geo(win);
+    if files_prefs().list {
+        let rh = list_row_h();
+        let y0 = g.gy + rh;
+        if cx < g.gx || cx >= g.gx + g.gw || cy < y0 || cy >= g.gy + g.gh {
+            return None;
+        }
+        let i = (cy - y0) / rh;
+        return if i < win.rows.len() { Some(i) } else { None };
+    }
     if cx < g.gx || cy < g.gy || cx >= g.gx + g.cols * g.cw || cy >= g.gy + g.gh {
         return None;
     }
@@ -3986,10 +4315,29 @@ fn draw_files(win: &Window) {
         win.path.clone()
     };
     gfx::draw_text(bx + u2 + u / 2, g.top + (g.th - small()) / 2, &crumb, 0xf0f4fa, small());
+    // Grid / Röyxat almaştirgiçi
+    let pr = files_prefs();
+    let vb = files_view_btns(win);
+    let bpx = small() * 4 / 5;
+    let (sx, sy) = (vb[0].0, vb[0].1);
+    let sw = vb[1].0 + vb[1].2 - sx;
+    fill_round_rect_a(sx, sy, sw, vb[0].3, u / 3, 0xffffff, 18);
+    for (k, (x, y, w, h)) in vb.iter().copied().enumerate() {
+        let on = (k == 1) == pr.list;
+        if on {
+            fill_round_rect_a(x + 2, y + 2, w - 4, h - 4, u / 4, accent(), 160);
+        }
+        let lbl = if k == 0 { "Grid" } else { "Röyxat" };
+        gfx::draw_text_centered(x + w / 2, y + (h - bpx) / 2, lbl, if on { OQ } else { 0xaab6c6 }, bpx);
+    }
     let cnt = alloc::format!("{} ta element", win.rows.len());
     let cw = gfx::text_width(&cnt, small() * 4 / 5);
-    gfx::draw_text((win.x + win.w).saturating_sub(cw + u), g.top + (g.th - small()) / 2 + 2, &cnt, 0x6f7f95, small() * 4 / 5);
+    gfx::draw_text(sx.saturating_sub(cw + u / 2), g.top + (g.th - small()) / 2 + 2, &cnt, 0x6f7f95, small() * 4 / 5);
     fill_rect(g.tx, g.top + g.th, win.w - g.sbw, 1, 0x2a3346);
+    if pr.list {
+        draw_files_list(win, &g, pr);
+        return;
+    }
     // --- Grid ---
     if win.rows.is_empty() {
         gfx::draw_text_centered(g.tx + (win.w - g.sbw) / 2, g.gy + g.gh / 3, "Papka böş", 0x6f7f95, body());
@@ -4019,26 +4367,101 @@ fn draw_files(win: &Window) {
         }
         if let (true, Some(r)) = (selected, &win.rename) {
             // Nomini özgartiriş maydoni (oxiri körinadi)
-            let (bx, by, bw, bh) = (x0 + 1, y0 + isz + u / 3, g.cw - 2, npx + u / 2);
-            gfx::fill_round_rect(bx, by, bw, bh, u / 4, 0x0d1220);
-            gfx::round_outline(bx, by, bw, bh, u / 4, 1, accent());
-            let v: Vec<char> = r.chars().collect();
-            let mut k = v.len();
-            while k > 0 {
-                let t: String = v[k - 1..].iter().collect();
-                if gfx::text_width(&t, npx) > bw - u / 2 {
-                    break;
-                }
-                k -= 1;
-            }
-            let t: String = v[k..].iter().collect();
-            let ex = gfx::draw_text(bx + u / 4, by + (bh - npx) / 2, &t, OQ, npx);
-            fill_rect(ex + 1, by + 3, 2, bh - 6, 0x63a8ff);
+            draw_rename_box(r, x0 + 1, y0 + isz + u / 3, g.cw - 2, npx + u / 2, npx);
         } else {
             let lbl = fit_text(name, g.cw - u / 3, npx);
             let col = if selected { OQ } else { 0xe7edf6 };
             gfx::draw_text_centered(x0 + g.cw / 2, y0 + isz + u / 2, &lbl, col, npx);
         }
+    }
+}
+
+/// Nomni özgartiriş maydoni (oxiri körinadi).
+fn draw_rename_box(r: &str, bx: usize, by: usize, bw: usize, bh: usize, npx: usize) {
+    let u = body();
+    gfx::fill_round_rect(bx, by, bw, bh, u / 4, 0x0d1220);
+    gfx::round_outline(bx, by, bw, bh, u / 4, 1, accent());
+    let v: Vec<char> = r.chars().collect();
+    let mut k = v.len();
+    while k > 0 {
+        let t: String = v[k - 1..].iter().collect();
+        if gfx::text_width(&t, npx) > bw.saturating_sub(u / 2) {
+            break;
+        }
+        k -= 1;
+    }
+    let t: String = v[k..].iter().collect();
+    let ex = gfx::draw_text(bx + u / 4, by + (bh - npx) / 2, &t, OQ, npx);
+    fill_rect(ex + 1, by + 3, 2, bh.saturating_sub(6), 0x63a8ff);
+}
+
+/// Fayllar: röyxat körinişi — sarlavha (saralaş ▲/▼) va qatorlar
+/// (kiçik ikona, nom, hajm, özgartirilgan sana, tur).
+fn draw_files_list(win: &Window, g: &FilesGeo, pr: FilesPrefs) {
+    let u = body();
+    let rh = list_row_h();
+    let c = list_cols(g);
+    let hpx = small() * 4 / 5;
+    let npx = small() * 9 / 10;
+    // Sarlavha
+    let hy = g.gy;
+    fill_round_rect_a(g.gx, hy, g.gw, rh, u / 4, 0xffffff, 10);
+    const HEAD: [&str; 4] = ["Nom", "Hajm", "Özgartirilgan", "Tur"];
+    for k in 0..4 {
+        let key = SortKey::from_u8(k as u8);
+        let active = pr.key == key;
+        let x = c[k] + u / 2;
+        let ty = hy + (rh - hpx) / 2;
+        let ex = gfx::draw_text(x, ty, HEAD[k], if active { 0xf0f4fa } else { 0x8a9bb0 }, hpx);
+        if active {
+            gfx::draw_text(ex + u / 3, ty, if pr.desc { "▼" } else { "▲" }, accent(), hpx);
+        }
+        if k > 0 {
+            fill_rect(c[k], hy + rh / 4, 1, rh / 2, 0x2a3346);
+        }
+    }
+    fill_rect(g.gx, hy + rh, g.gw, 1, 0x2a3346);
+    if win.rows.is_empty() {
+        gfx::draw_text_centered(g.gx + g.gw / 2, g.gy + g.gh / 3, "Papka böş", 0x6f7f95, body());
+        return;
+    }
+    let isz = (rh * 3 / 4).max(8);
+    for (i, (name, kind)) in win.rows.iter().enumerate() {
+        let y0 = hy + rh + i * rh;
+        if y0 + rh > g.gy + g.gh {
+            break;
+        }
+        let selected = win.fsel == Some(i);
+        if selected {
+            fill_round_rect_a(g.gx, y0 + 1, g.gw, rh - 2, u / 4, accent(), 70);
+        } else if i % 2 == 1 {
+            fill_round_rect_a(g.gx, y0 + 1, g.gw, rh - 2, u / 4, 0xffffff, 6);
+        }
+        let ix = c[0] + u / 3;
+        let iy = y0 + (rh - isz) / 2;
+        if let Some(Some(t)) = win.thumbs.get(i) {
+            gfx::blit_fit(ix, iy, isz, isz, t.w, t.h, &t.px);
+        } else {
+            big_icon(*kind, name, ix, iy, isz);
+        }
+        let tx = ix + isz + u / 3;
+        let ty = y0 + (rh - npx) / 2;
+        let nw = c[1].saturating_sub(tx + u / 3);
+        if let (true, Some(r)) = (selected, &win.rename) {
+            draw_rename_box(r, tx - u / 6, y0 + 2, nw + u / 6, rh - 4, npx);
+        } else {
+            let lbl = fit_text(name, nw, npx);
+            gfx::draw_text(tx, ty, &lbl, if selected { OQ } else { 0xe7edf6 }, npx);
+        }
+        let (size, mtime) = win.fmeta.get(i).copied().unwrap_or((0, 0));
+        let dim = if selected { 0xdbe3ee } else { 0x9aa8ba };
+        let sz = if *kind == FKind::Dir { String::from("—") } else { human_size(size) };
+        // hajm — öngga tekislangan
+        let sw = gfx::text_width(&sz, npx);
+        gfx::draw_text(c[2].saturating_sub(sw + u / 2), ty, &sz, dim, npx);
+        gfx::draw_text(c[2] + u / 2, ty, &fmt_mtime(mtime), dim, npx);
+        let tl = fit_text(&type_label(name, *kind), c[4].saturating_sub(c[3] + u), npx);
+        gfx::draw_text(c[3] + u / 2, ty, &tl, dim, npx);
     }
 }
 
@@ -5347,6 +5770,17 @@ fn load_trash(win: &mut Window) {
     };
 }
 
+/// Saralaş/körinış özgarganda barça Fayllar oynalarini qayta tartiblaydi
+/// (tanlangan element nomi böyiça saqlanadi).
+fn files_resort_all(windows: &mut [Window]) {
+    for w in windows.iter_mut().filter(|w| w.kind == Kind::Files) {
+        let p = w.path.clone();
+        let sel = w.fsel.and_then(|s| w.rows.get(s)).map(|r| r.0.clone());
+        load_dir(w, &p);
+        w.fsel = sel.and_then(|n| w.rows.iter().position(|r| r.0 == n));
+    }
+}
+
 /// Barça Fayllar va Savat oynalarini yangilaydi (fayl tizimi özgarganda).
 fn reload_all_files(windows: &mut [Window]) {
     for w in windows.iter_mut() {
@@ -5602,7 +6036,7 @@ fn files_key(windows: &mut Vec<Window>, desk: &mut Desk, code: u16, shift: bool,
     }
     let (n, cols, cur) = {
         let w = &windows[wi];
-        (w.rows.len(), files_geo(w).cols, w.fsel)
+        (w.rows.len(), if files_prefs().list { 1 } else { files_geo(w).cols }, w.fsel)
     };
     match code {
         105 | 106 | 103 | 108 if n > 0 => {
@@ -6715,8 +7149,7 @@ fn drop_target(windows: &[Window], desk: &Desk, cx: usize, cy: usize) -> Option<
                 let g = files_geo(w);
                 if let Some(r) = file_row_at(w, cx, cy) {
                     if w.rows[r].1 == FKind::Dir {
-                        let (row, col) = (r / g.cols, r % g.cols);
-                        return Some((path_join(&w.path, &w.rows[r].0), (g.gx + col * g.cw, g.gy + row * g.ch, g.cw, g.ch)));
+                        return Some((path_join(&w.path, &w.rows[r].0), file_cell_rect(w, r)));
                     }
                 }
                 if let Some(p) = files_side_at(w, cx, cy) {
