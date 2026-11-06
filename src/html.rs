@@ -111,9 +111,39 @@ pub struct Block {
     // opacity (0..=255): blok matni uçun (barça ajdodlar kö'paytmasi) va konteyner (quti) foni uçun
     pub op: u8,
     pub bop: u8,
+    // Ichma-ich konteynerlar: eng yaqin qutidan (bgk) taşqaridagi quti ajdodlar — taşqaridan içkariga
+    pub outer: Vec<Cbox>,
+}
+
+/// Konteyner (quti) xossalari: fon, çegara, padding, kenglik, chekinişlar, soya, alfa, relative siljiş.
+#[derive(Clone, Copy, PartialEq)]
+pub struct Cbox {
+    pub ser: u32,
+    pub bg: Option<u32>,
+    pub pad: f32,
+    pub bw: f32,
+    pub bc: Option<u32>,
+    pub radius: f32,
+    pub grad: Option<css::Grad>,
+    pub shadow: Option<css::Shadow>,
+    pub maxw: Option<(f32, bool)>,
+    pub center: bool,
+    pub mt: f32,
+    pub mb: f32,
+    pub op: u8,
+    pub dx: f32,
+    pub dy: f32,
 }
 
 impl Block {
+    /// Konteynerlar zanjiri (taşqaridan içkariga): ajdod qutilar + eng yaqin quti (bgk).
+    pub fn chain(&self) -> Vec<Cbox> {
+        let mut v = self.outer.clone();
+        if self.bgk != 0 {
+            v.push(Cbox { ser: self.bgk, bg: self.bg, pad: self.pad, bw: self.bw, bc: self.bc, radius: self.radius, grad: self.grad, shadow: self.shadow, maxw: self.maxw, center: self.center, mt: self.bmt, mb: self.bmb, op: self.bop, dx: self.bdx, dy: self.bdy });
+        }
+        v
+    }
     /// innerHTML: yangi bloklar eski blokning position/float kontekstini oladi.
     fn copy_pos(&mut self, t: &Block) {
         if self.oser == 0 {
@@ -270,6 +300,7 @@ impl Doc {
                         b.gcols = tmpl.gcols;
                         b.fw = tmpl.fw;
                         b.copy_pos(&tmpl);
+                        b.outer = tmpl.outer.clone();
                         b.pad = tmpl.pad;
                         b.bw = tmpl.bw;
                         b.bc = tmpl.bc;
@@ -421,6 +452,7 @@ impl Doc {
                     b.grad = t.grad;
                 }
                 b.shadow = t.shadow;
+                b.outer = t.outer.clone();
                 b.pad = t.pad;
                 b.bw = t.bw;
                 b.bc = t.bc;
@@ -1060,6 +1092,8 @@ impl P {
             Some(o) => (o.sty.bg, o.serial, o.sty),
             None => (None, 0, Sty::root()),
         };
+        // taşqi quti ajdodlar (eng yaqin qutidan taşqarida, şu flex ustuni içida)
+        let outer_open: Vec<&Open> = self.stack[fk.min(self.stack.len())..].iter().rev().take_while(|o| o.tag != "body" && o.tag != "html").filter(|o| o.sty.is_box() && o.serial < bgk).collect();
         // position / float
         let oi = self.stack.iter().rposition(|o| o.sty.float != 0 || o.sty.pos >= 2);
         let (oser, okind, ow, oins, pk) = match oi {
@@ -1109,6 +1143,21 @@ impl P {
         let opq = |f: f32| (f.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
         let op = opq(self.stack.iter().map(|o| o.sty.opacity).product());
         let bop = opq(self.stack.iter().filter(|o| o.serial <= bgk).map(|o| o.sty.opacity).product());
+        let outer: Vec<Cbox> = outer_open
+            .iter()
+            .rev()
+            .map(|c| {
+                let (mut dx, mut dy) = (0.0, 0.0);
+                for o in self.stack.iter().filter(|o| o.serial <= c.serial) {
+                    let (a, b) = off(o);
+                    dx += a;
+                    dy += b;
+                }
+                let op = opq(self.stack.iter().filter(|o| o.serial <= c.serial).map(|o| o.sty.opacity).product());
+                let t = &c.sty;
+                Cbox { ser: c.serial, bg: t.bg, pad: t.pad, bw: t.bw, bc: t.bc, radius: t.radius, grad: t.grad, shadow: t.shadow, maxw: t.maxw, center: t.center, mt: t.mt, mb: t.mb, op, dx, dy }
+            })
+            .collect();
         Block {
             kind: k, spans: Vec::new(), bg, align: css::resolve_align(st.align, st.rtl), rtl: st.rtl, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: st.hidden, bgk,
             pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, grad: cs.grad, shadow: cs.shadow, maxw: cs.maxw, center: cs.center, mt: st.mt, mb: st.mb,
@@ -1117,7 +1166,7 @@ impl P {
             mark: String::new(), det, summary, iw: 0, ih: 0, rspan: fl.8,
             oser, okind, ow, oins, pk, aser, rdx, rdy, bdx, bdy, clear: st.clear,
             hser, hmin, hfix, lh: line_factor(&st),
-            ws: st.ws, clip, ellip, op, bop,
+            ws: st.ws, clip, ellip, op, bop, outer,
         }
     }
     /// Böş (void) element (img) uçun float / position: uslubi hisoblanib, blok oqimdan çiqariladi.
@@ -1238,6 +1287,7 @@ impl P {
             // Bitta ramka-quti: ichki hujjat foni, çegara, iframe kengligi
             (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.center, b.bmt, b.bmb) = (Some(fbg), key, 8.0, border, Some(bc), 2.0, width, false, 6.0, 6.0);
             (b.grad, b.shadow) = (None, None);
+            b.outer = Vec::new();
         }
         self.doc.blocks.extend(blocks);
     }
@@ -1557,6 +1607,7 @@ impl P {
             b.rspan = 0; // joy egallovçi
             (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.center) = (None, 0, 0.0, 0.0, None, 0.0, None, false);
             (b.grad, b.shadow) = (None, None);
+            b.outer = Vec::new();
             b.spans.push(Span { text: String::from("\u{2007}"), link: None, bold: false, code: false, br: false, color: None, size: b.size, el: NO_EL, button: false, underline: false, input: NO_EL, fx: 0 });
             self.doc.blocks.push(b);
         }
@@ -2374,7 +2425,7 @@ pub fn plain(text: &str) -> Doc {
         mark: String::new(), det: NO_EL, summary: false, iw: 0, ih: 0, rspan: 1,
         oser: 0, okind: 0, ow: None, oins: [None; 4], pk: 0, aser: 0, rdx: 0.0, rdy: 0.0, bdx: 0.0, bdy: 0.0, clear: 0,
         hser: 0, hmin: 0.0, hfix: false, lh: 0.0,
-        ws: 0, clip: 0, ellip: false, op: 255, bop: 255,
+        ws: 0, clip: 0, ellip: false, op: 255, bop: 255, outer: Vec::new(),
     });
     d
 }
@@ -2877,4 +2928,58 @@ pub fn self_test_overflow() -> Result<usize, &'static str> {
         return Err("ellipsis: qator '…' bilan tugamadi yoki konteynerdan oşdi");
     }
     Ok(n + 2)
+}
+
+/// T24: ichma-ich konteynerlar — ota blokning foni, çegarasi va padding'i bola bloklarni o'rab oladi.
+pub fn self_test_nested() -> Result<usize, &'static str> {
+    let mut n = 0;
+    // Tahlil: bolaning konteynerlar zanjiri otani ham öz içiga oladi
+    let d = parse("<div style=\"background:#111111;padding:16px;border:2px solid #222222\"><p>O</p><div style=\"background:#333333;padding:4px\"><p>B</p></div></div>");
+    let b = d.blocks.iter().find(|b| b.spans.iter().any(|s| s.text.trim() == "B")).ok_or("nested: B bloki yöq")?;
+    let o = d.blocks.iter().find(|b| b.spans.iter().any(|s| s.text.trim() == "O")).ok_or("nested: O bloki yöq")?;
+    let (bc, oc) = (b.chain(), o.chain());
+    if bc.len() != 2 || oc.len() != 1 || bc[0].ser != oc[0].ser || bc[0].bg != Some(0x111111) || bc[1].bg != Some(0x333333) || (bc[0].pad - 16.0).abs() > 0.01 || (bc[0].bw - 2.0).abs() > 0.01 {
+        return Err("nested: konteynerlar zanjiri notöğri");
+    }
+    n += 1;
+    // Joylaşuv: bola ota içida, x = ota x + 18 (padding + çegara)
+    let k = (crate::gui::layout_probe(parse("<p>x</p>"), 640).2).max(0.01);
+    let find = |deco: &[(usize, usize, usize, usize, Option<u32>, u8)], c: u32| deco.iter().find(|d| d.4 == Some(c)).map(|d| (d.0, d.1, d.2, d.3));
+    let (_, deco) = crate::gui::layout_probe_rects(parse("<p>A</p><div style=\"background:#111111;padding:16px;border:2px solid #222222\"><p>Ota matni</p>\
+        <div style=\"background:#333333;padding:6px\"><p>Bola 1</p></div><div style=\"background:#444444;padding:6px\"><p>Bola 2</p></div></div><p>Z</p>"), 640);
+    let ota = find(&deco, 0x111111).ok_or("nested: ota çizilmadi")?;
+    let b1 = find(&deco, 0x333333).ok_or("nested: bola 1 çizilmadi")?;
+    let b2 = find(&deco, 0x444444).ok_or("nested: bola 2 çizilmadi")?;
+    let want = 18.0 * k;
+    if ((b1.0 as f32) - (ota.0 as f32) - want).abs() > 1.5 || b2.0 != b1.0 {
+        return Err("nested: bola x != ota x + 18 (padding + border)");
+    }
+    n += 1;
+    if ota.1 + ota.3 < b2.1 + b2.3 + (16.0 * k) as usize || b2.1 < b1.1 + b1.3 || b1.1 <= ota.1 {
+        return Err("nested: ota balandligi bolalarni (padding bilan) qamramadi");
+    }
+    if b1.0 + b1.2 > ota.0 + ota.2 - (16.0 * k) as usize {
+        return Err("nested: bola öng çeti ota padding'idan oşdi");
+    }
+    n += 1;
+    // 3 daraja: har deco öz otasi içida, otaniki bolalarnikidan oldin çiziladi
+    let (_, deco) = crate::gui::layout_probe_rects(parse("<div style=\"background:#a00001;padding:10px\"><p>1</p><div style=\"background:#a00002;padding:8px;border:1px solid #000000\"><p>2</p>\
+        <div style=\"background:#a00003;padding:6px\"><p>3</p></div><p>2b</p></div><p>1b</p></div>"), 640);
+    let pos = |c: u32| deco.iter().position(|d| d.4 == Some(c));
+    let (i1, i2, i3) = (pos(0xa00001).ok_or("nested: 1-daraja yöq")?, pos(0xa00002).ok_or("nested: 2-daraja yöq")?, pos(0xa00003).ok_or("nested: 3-daraja yöq")?);
+    if !(i1 < i2 && i2 < i3) {
+        return Err("nested: ota deco bolalarnikidan oldin çizilmadi");
+    }
+    let r = |i: usize| (deco[i].0, deco[i].1, deco[i].2, deco[i].3);
+    let inside = |c: (usize, usize, usize, usize), p: (usize, usize, usize, usize)| c.0 > p.0 && c.1 > p.1 && c.0 + c.2 < p.0 + p.2 && c.1 + c.3 < p.1 + p.3;
+    if !inside(r(i2), r(i1)) || !inside(r(i3), r(i2)) {
+        return Err("nested: 3 daraja — deco otasi içida emas");
+    }
+    n += 2;
+    // Qöşni bloklar bitta qutiga birlaşadi (bgk), aka-uka qutilar alohida
+    let (_, deco) = crate::gui::layout_probe_rects(parse("<div style=\"background:#b00001;padding:8px\"><p>a</p><p>b</p><p>c</p></div><div style=\"background:#b00001;padding:8px\"><p>d</p></div>"), 640);
+    if deco.iter().filter(|d| d.4 == Some(0xb00001)).count() != 2 {
+        return Err("nested: qöşni bloklar bitta qutiga birlaşmadi");
+    }
+    Ok(n + 1)
 }

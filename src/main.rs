@@ -547,6 +547,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] CSS overflow, white-space, text-overflow: ellipsis va opacity ({} sinov)", n),
         Err(e) => panic!("CSS overflow/white-space/opacity tekşiruvi yiqildi: {}", e),
     }
+    match html::self_test_nested() {
+        Ok(n) => println!("  [ok] Ichma-ich konteynerlar: ota foni, çegarasi va padding'i bolalarni o'rab oladi ({} sinov)", n),
+        Err(e) => panic!("ichma-ich konteyner tekşiruvi yiqildi: {}", e),
+    }
     match html::self_test_av() {
         Ok(n) => println!("  [ok] <audio>/<video>: WAV ijro havolasi (virtio-sound) va video poster ({} sinov)", n),
         Err(e) => panic!("audio/video tekşiruvi yiqildi: {}", e),

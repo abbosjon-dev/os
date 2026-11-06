@@ -7850,9 +7850,12 @@ document.getElementById("qs").textContent = location.search;
 <div class="t">box-shadow: 0 4px 12px — soya ostidagi yumaloq quti.</div>
 <div class="gr">linear-gradient(135deg) — gradient fonli yumaloq quti.</div>
 <div class="gb">gradient + border: 3px solid — çegarali gradient quti.</div>
-<div class="ota" style="min-height:150px">Ota blok (radius 16px, töq fon). Bloklar tekis joylaşadi, şuning uçun bola bloklar position: relative bilan ota fon ustiga surilgan.</div>
-<div class="bola" style="position:relative;top:-114px;left:24px;max-width:55%">Bola blok (radius 8px) ota fon ustida.</div>
-<div class="bola" style="position:relative;top:-120px;left:24px;max-width:45%;border:2px solid #3a7bd5">Bola blok çegara bilan.</div>
+<div class="ota">Ota blok (radius 16px, töq fon) — bola bloklar uning foni, padding'i içida.
+<div class="bola" style="max-width:70%">Bola blok (radius 8px) ota fon ustida.</div>
+<div class="bola" style="border:2px solid #3a7bd5">Bola blok çegara bilan.
+<div class="ic">Nevara blok — 3-daraja içma-içlik.</div>
+</div>
+</div>
 <div style="display:flex;gap:10px"><div class="b">flex 1</div><div class="t">flex 2</div><div class="gr">flex 3</div></div>
 <div dir="rtl" style="display:flex;gap:10px"><div class="ic">rtl 1</div><div class="gb">rtl 2</div><div class="bola">rtl 3</div></div>
 <div class="b" style="border-width:4px;border-radius:20px">border: 4px, radius 20px.</div>
@@ -8829,6 +8832,12 @@ fn out_of_flow(run: &[&crate::html::Block]) -> Vec<crate::html::Block> {
             if c.bgk == c.oser || c.bgk == 0 {
                 (c.maxw, c.center) = (None, false);
             }
+            // taşqi qutilar: faqat joylaşgan elementning özi va uning içidagilari
+            let os = c.oser;
+            c.outer.retain(|o| o.ser >= os);
+            for o in c.outer.iter_mut().filter(|o| o.ser == os) {
+                (o.maxw, o.center) = (None, false);
+            }
             c.oser = 0;
             c.okind = 0;
             c
@@ -8923,7 +8932,8 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
     let (page_bg, text_col, link_col, code_col, head_col) = web_palette(doc);
     let dark = luma(page_bg) < 128;
     let mut y = y0;
-    let mut open_box: Option<(u32, usize, usize)> = None;
+    // Ochiq konteynerlar steki (taşqaridan içkariga): (seriya, deco raqami, inset, kontent x, kontent eni, pastki chekiniş)
+    let mut open_box: Vec<(u32, usize, usize, usize, usize, usize)> = Vec::new();
     // rowspan: pastki qatorlarga çoziladigan katak qutilari (deco raqami, qolgan qatorlar)
     let mut rs_pend: Vec<(usize, u8)> = Vec::new();
     // float: (egallangan kenglik, pastki çeti) — çap va öng
@@ -8964,13 +8974,16 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
         }
         // float bilan torayişgan soha
         let (page_pad, full) = if lf.0 + rf.0 + u * 4 < full0 { (page_pad0 + lf.0, full0 - lf.0 - rf.0) } else { (page_pad0, full0) };
+        // Konteynerlar zanjiri va ochiq stek bilan umumiy qism
+        let chain = b.chain();
+        let keep = open_box.iter().zip(chain.iter()).take_while(|(o, c)| o.0 == c.ser).count();
         // overflow: hidden — guruh almaşdi: oldingisini qirqamiz, yangisini boşlaymiz
         if cgrp.map(|g| g.0) != Some(b.clip) {
             if let Some(g) = cgrp.take() {
                 clip_group(g, y, items, deco);
             }
             if b.clip != 0 {
-                let own = b.bgk == b.clip && b.okind == 0 && !(b.flex != 0 && b.flex != skip && (b.fmode == 1 || b.fmode == 3));
+                let own = chain.get(keep).map(|c| c.ser) == Some(b.clip) && b.okind == 0 && !(b.flex != 0 && b.flex != skip && (b.fmode == 1 || b.fmode == 3));
                 cgrp = Some((b.clip, items.len(), deco.len(), page_pad, y, full, own));
             }
         }
@@ -9063,7 +9076,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 f.0 += w + gap;
                 f.1 = f.1.max(bottom + u / 4);
             }
-            open_box = None;
+            open_box.clear();
             bi = j;
             continue;
         }
@@ -9137,7 +9150,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 rs_pend.extend(rs_new);
                 y = bottom + u / 4;
             }
-            open_box = None;
+            open_box.clear();
             bi = j;
             continue;
         }
@@ -9146,33 +9159,37 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
         let bi = bi - 1;
         let base_px = pxs(b.size);
         // --- Konteyner (quti) geometriyasi ---
-        let (bx, bwid, inset) = if b.bgk != 0 {
-            let cw = match b.maxw {
-                Some((v, true)) => full * (v as usize).min(100) / 100,
-                Some((v, false)) => lpx(v).min(full),
-                None => full,
+        // Oldingi blokdan qolgan (yopilmagan) ortiqça qutilar yopiladi
+        while open_box.len() > keep {
+            let (_, di, ins, _, _, mb) = open_box.pop().unwrap();
+            y += ins;
+            deco[di].h = y - deco[di].y;
+            y += mb;
+        }
+        // Yangi (ichma-ich) qutilar: har biri ota qutining kontent sohasida
+        let opened = chain.len() > keep;
+        for c in &chain[keep..] {
+            let (px, pw) = open_box.last().map(|o| (o.3, o.4)).unwrap_or((page_pad, full));
+            let cw = match c.maxw {
+                Some((v, true)) => pw * (v as usize).min(100) / 100,
+                Some((v, false)) => lpx(v).min(pw),
+                None => pw,
             }
             .max(u * 4);
-            let cx = page_pad + if b.center { (full - cw) / 2 } else { 0 };
-            let bwp = if b.bw > 0.0 { lpx(b.bw).max(1) } else { 0 };
-            let padp = lpx(b.pad).max(if b.bg.is_some() || bwp > 0 { u / 2 } else { 0 });
+            let cx = px + if c.center { pw.saturating_sub(cw) / 2 } else { 0 };
+            let bwp = if c.bw > 0.0 { lpx(c.bw).max(1) } else { 0 };
+            let padp = lpx(c.pad).max(if c.bg.is_some() || bwp > 0 { u / 2 } else { 0 });
             let inset = padp + bwp;
-            if open_box.map(|o| o.0) != Some(b.bgk) {
-                y += lpx(b.bmt);
-                let shadow = b.shadow.map(|s| (spx(s.dx) as i32, spx(s.dy) as i32, lpx(s.blur), spx(s.spread) as i32, s.color, s.alpha));
-                deco.push(Deco { x: cx, y, w: cw, h: 0, fill: b.bg, radius: lpx(b.radius), bw: bwp, bc: b.bc.unwrap_or(0x808080), grad: b.grad, shadow, clip: None, alpha: b.bop });
-                open_box = Some((b.bgk, deco.len() - 1, inset));
-                if b.bdx != 0.0 || b.bdy != 0.0 {
-                    box_shifts.push((deco.len() - 1, spx(b.bdx), spx(b.bdy)));
-                }
-                y += inset;
+            y += lpx(c.mt);
+            let shadow = c.shadow.map(|s| (spx(s.dx) as i32, spx(s.dy) as i32, lpx(s.blur), spx(s.spread) as i32, s.color, s.alpha));
+            deco.push(Deco { x: cx, y, w: cw, h: 0, fill: c.bg, radius: lpx(c.radius), bw: bwp, bc: c.bc.unwrap_or(0x808080), grad: c.grad, shadow, clip: None, alpha: c.op });
+            if c.dx != 0.0 || c.dy != 0.0 {
+                box_shifts.push((deco.len() - 1, spx(c.dx), spx(c.dy)));
             }
-            (cx + inset, cw.saturating_sub(inset * 2), inset)
-        } else {
-            open_box = None;
-            (page_pad, full, 0)
-        };
-        let _ = inset;
+            y += inset;
+            open_box.push((c.ser, deco.len() - 1, inset, cx + inset, cw.saturating_sub(inset * 2), lpx(c.mb)));
+        }
+        let (bx, bwid) = open_box.last().map(|o| (o.3, o.4)).unwrap_or((page_pad, full));
         if b.op < 255 {
             // quti özi ham şaffof bölsa — matn uning ortidagi (sahifa) fon bilan aralaşadi
             let back = if b.bop < 255 { page_bg } else { b.bg.unwrap_or(page_bg) };
@@ -9200,30 +9217,34 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
             _ => text_col,
         });
         // birinçi blok qutida — yuqori bo'şliqsiz
-        let first_in_box = b.bgk != 0 && (bi == 0 || vis[bi - 1].bgk != b.bgk);
+        let first_in_box = b.bgk != 0 && opened;
         y += if first_in_box { 0 } else { gap_top } + if b.bgk == 0 { lpx(b.mt) } else { 0 };
         let y_block = y;
-        let last_in_box = b.bgk != 0 && vis.get(bi + 1).is_none_or(|n| n.bgk != b.bgk);
+        // keyingi blok bilan umumiy konteynerlar soni — qolganlari şu blokdan keyin yopiladi
+        let next_keep = vis.get(bi + 1).map_or(0, |n| {
+            let nc = n.chain();
+            open_box.iter().zip(nc.iter()).take_while(|(o, c)| o.0 == c.ser).count()
+        });
+        let last_in_box = b.bgk != 0 && next_keep < open_box.len();
         if b.hser != 0 && hgrp.map(|g| g.0) != Some(b.hser) {
             hgrp = Some((b.hser, y_block));
         }
         let last_in_h = b.hser != 0 && vis.get(bi + 1).is_none_or(|n| n.hser != b.hser);
-        let close_box = |y: &mut usize, deco: &mut Vec<Deco>, open_box: &mut Option<(u32, usize, usize)>| {
+        let close_box = |y: &mut usize, deco: &mut Vec<Deco>, open_box: &mut Vec<(u32, usize, usize, usize, usize, usize)>| {
             // height: keyingi blok belgilangan balandlikdan keyin (kontent taşib çiqişi mumkin);
             // min-height: kamida şunça
             if let Some((_, y0)) = hgrp.filter(|_| last_in_h) {
                 let t = y0 + lpx(b.hmin);
                 *y = if b.hfix { t } else { (*y).max(t) };
             }
-            if let Some((_, di, ins)) = *open_box {
-                if last_in_box {
-                    *y += ins;
-                    deco[di].h = *y - deco[di].y;
-                    *y += lpx(b.bmb);
-                    *open_box = None;
-                } else {
-                    deco[di].h = *y - deco[di].y;
-                }
+            while open_box.len() > next_keep {
+                let (_, di, ins, _, _, mb) = open_box.pop().unwrap();
+                *y += ins;
+                deco[di].h = *y - deco[di].y;
+                *y += mb;
+            }
+            for o in open_box.iter() {
+                deco[o.1].h = *y - deco[o.1].y;
             }
         };
         if b.kind == HK::Hr {

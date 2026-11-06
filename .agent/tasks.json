@@ -189,7 +189,9 @@
       "id": "T24",
       "title": "Ichma-ich blok konteynerlari: ota blokning foni, chegarasi va padding'i bola bloklarni o'rab oladi",
       "detail": "Hozir html::Block faqat eng yaqin bitta konteynerning pad/bw/bc/radius/bg/grad/shadow qiymatini saqlaydi. Bloklar tekis joylashadi: zamin://matn da (src/gui.rs:7853) bola bloklar ota fon ustiga faqat position:relative bilan 'surib' qo'yilgan. Haqiqiy saytlarda (karta ichida karta, sidebar ichidagi bloklar) bu buziladi. Fayllar: src/html.rs (Block, 48-114: konteynerlar zanjiri maydoni, masalan cstack: Vec<u32> yoki ota konteyner seriyasi + chuqurlik; konteyner xossalari alohida jadvalda: seriya -> {pad, bw, bc, radius, bg, grad, shadow, op}), src/gui.rs web_layout (8750) va lay() (8917): har ichma-ich konteyner uchun chap/o'ng chekinish yig'iladi. Deco ota blokning to'liq balandligini (barcha bolalari bilan) qamrab oladi, ota deco bolalarnikidan oldin chiziladi. Qo'shni bloklarni bgk orqali birlashtirish mantig'i saqlanadi. zamin://matn dagi position:relative aylanma yo'li olib tashlanadi, o'rniga oddiy <div class=ota><div class=bola>…</div></div> qo'yiladi. 3 darajali misol ham qo'shiladi. Qabul mezoni: yangi html::self_test_nested() main.rs self_tests ga ulanadi va '[ok]' chiqaradi. Unda: ota (padding:16px, border:2px) ichidagi bolaning x koordinatasi ota x + 18 ga teng; ota deco balandligi oxirgi bola pastidan + padding ga teng yoki undan katta; 3 daraja ichma-ichlikda har deco o'z otasi ichida yotadi. Skrinshot docs/web-nested.png olinadi va check_corners.py dan o'tadi. Mavjud self_test_position, self_test_box_height, self_test_overflow ham o'tishda davom etadi. verify.sh full o'tadi.",
-      "batch": 4
+      "batch": 4,
+      "status": "done",
+      "done_at": "2026-11-06 18:34:27"
     },
     {
       "id": "T25",

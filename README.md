@@ -225,8 +225,7 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   ga `border: 2px solid`, `box-shadow`, gradient, gradient+chegara, ota fon ustidagi bola blok,
   flex va rtl ichidagi bloklar qo'shildi. Skrinshot tekshiruvchisi:
   `scripts/agent/check_corners.py surat.png` — har blok burchagi atrofidagi 6×6 hududda fondan
-  va blok rangidan to'qroq piksel qidiradi. (Eslatma: joylashuv bloklarni hozircha tekis
-  joylaydi — haqiqiy ichma-ich quti modeli yo'q, bola blok `position: relative` bilan suriladi.)
+  va blok rangidan to'qroq piksel qidiradi. (Ichma-ich quti modeli endi bor — pastga qarang.)
 
   **Regressiya tekshiruvi:** `scripts/agent/verify.sh full` endi yuklanish sinovidan keyin
   `shot.py` bilan brauzerni ochib, to'rtta surat oladi — `zamin://matn` (boshi va yarim
@@ -244,6 +243,21 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   ![Yumaloq burchaklar: zamin://matn](docs/web-text-align.png)
 
   ![Aylantirilgan holat: pastdan kesilgan flex/rtl bloklar](docs/web-round-scroll.png)
+- **Ichma-ich blok konteynerlari** — ota blokning foni, chegarasi, padding'i va soyasi endi bola
+  bloklarni haqiqatan o'rab oladi (karta ichida karta, sidebar ichidagi bloklar). `html::Block`
+  eng yaqin quti (`bgk`) dan tashqari ajdod qutilar zanjirini saqlaydi (`outer: Vec<Cbox>` —
+  seriya, fon, gradient, chegara, radius, padding, kenglik, chekinishlar, soya, opacity,
+  `position: relative` siljishi); `Block::chain()` to'liq zanjirni beradi. `lay()` ochiq
+  qutilar stekini yuritadi: har yangi quti ota qutining kontent sohasida (chap/o'ng chekinishlar
+  yig'iladi) ochiladi, ota bezagi bolalarnikidan oldin chiziladi va barcha bolalar balandligini
+  qamraydi; keyingi blok zanjirida yo'q qutilar ichkaridan tashqariga yopiladi (pastki
+  padding + chegara + margin). Qo'shni bloklar `bgk` bo'yicha bitta qutiga birlashishi saqlandi.
+  `zamin://matn` dagi `position: relative` aylanma yo'li olib tashlandi — endi oddiy
+  `<div class=ota><div class=bola>…</div></div>` va 3 darajali misol. Sinov:
+  `self_test_nested` (ota `padding:16px; border:2px` ichidagi bola x = ota x + 18, ota balandligi
+  oxirgi bola pasti + padding dan kam emas, 3 darajada har bezak o'z otasi ichida).
+
+  ![Ichma-ich konteynerlar: zamin://matn](docs/web-nested.png)
 - **CSS `linear-gradient` va `box-shadow`** — `background` / `background-image` da
   `linear-gradient(<yo'nalish>, rang1 [joy%], rang2, …)`: yo'nalish — `to bottom|top|left|right`
   (va burchaklar, masalan `to top right`), `<N>deg`, `turn`, `rad` (standart — pastga); 2–6 rang
