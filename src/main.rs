@@ -523,6 +523,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] CSS @media (min/max-width) va :hover ({} sinov)", n),
         Err(e) => panic!("CSS @media/:hover tekşiruvi yiqildi: {}", e),
     }
+    match net::webstore::self_test() {
+        Ok(n) => println!("  [ok] localStorage/cookie diskka saqlaş (~/.zamin): kodlaş ({} yozuv)", n),
+        Err(e) => panic!("localStorage/cookie saqlaş tekşiruvi yiqildi: {}", e),
+    }
     // Audio dekoderi: WAV
     audio::self_test().expect("audio (WAV) dekoderi yiqildi");
     tprintln!(msg::TEST_AUDIO);

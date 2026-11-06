@@ -92,8 +92,9 @@ pub fn join(base: &str, href: &str) -> String {
     out
 }
 
-/// Cookie qutisi: (host, nom, qiymat). Tizim içida — qayta yuklanguncha.
+/// Cookie qutisi: (host, nom, qiymat). `~/.zamin/cookies` ga saqlanadi — qayta yuklanişdan keyin ham qoladi.
 static JAR: crate::sync::SpinLock<Vec<(String, String, String)>> = crate::sync::SpinLock::new(Vec::new());
+static JAR_DISK: super::webstore::Persist = super::webstore::Persist::new("cookies");
 
 fn host_of(url: &str) -> String {
     parse_url(url).map(|u| u.host).unwrap_or_else(|| String::from("zamin"))
@@ -102,6 +103,7 @@ fn host_of(url: &str) -> String {
 /// Host uçun cookie satri: "a=1; b=2".
 pub fn cookies_for(url: &str) -> String {
     let h = host_of(url);
+    JAR_DISK.sync(&JAR);
     JAR.lock().iter().filter(|(hh, _, _)| *hh == h).map(|(_, n, v)| format!("{}={}", n, v)).collect::<Vec<_>>().join("; ")
 }
 
@@ -112,11 +114,22 @@ pub fn set_cookie(url: &str, header: &str) {
     let Some((n, v)) = first.split_once('=') else { return };
     let (n, v) = (String::from(n.trim()), String::from(v.trim()));
     let expire = header.to_ascii_lowercase().split(';').any(|a| a.trim() == "max-age=0");
-    let mut jar = JAR.lock();
-    jar.retain(|(hh, nn, _)| !(*hh == h && *nn == n));
-    if !expire && !n.is_empty() && jar.len() < 500 {
-        jar.push((h, n, v));
+    JAR_DISK.sync(&JAR);
+    {
+        let mut jar = JAR.lock();
+        let old = jar.iter().position(|(hh, nn, _)| *hh == h && *nn == n);
+        let keep = !expire && !n.is_empty();
+        match (old, keep) {
+            (Some(i), true) if jar[i].2 == v => return, // özgariş yöq — diskka yozmaymiz
+            (Some(i), true) => jar[i].2 = v,
+            (Some(i), false) => {
+                jar.remove(i);
+            }
+            (None, true) if jar.len() < 500 => jar.push((h, n, v)),
+            (None, _) => return,
+        }
     }
+    JAR_DISK.save(&JAR);
 }
 
 pub struct Response {

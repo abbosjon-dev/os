@@ -183,6 +183,11 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   (ota elementlar ishlovchilari ham ishlaydi). `display:none` elementlar ham quriladi —
   JS keyin ko'rsata oladi.
 - **HTTP cookie** — `Set-Cookie` saqlanadi, keyingi so'rovlarda `Cookie:` yuboriladi.
+- **Doimiy xotira** — `localStorage` va cookie lar foydalanuvchining `~/.zamin/localstorage`
+  hamda `~/.zamin/cookies` fayllariga (shifrlangan ZaminFS orqali) yoziladi: qayta
+  yuklangandan keyin ham saqlanib qoladi. Har foydalanuvchining o'z ombori bor; tizimga
+  kirilmagan bo'lsa — faqat xotirada. Format — TAB bilan ajratilgan satrlar (`\t`, `\n`, `\\`
+  qochiriladi). O'zgarish bo'lmasa diskka qayta yozilmaydi.
 - **`<select>/<option>`** — ochiluvchi ro'yxat, forma bilan yuboriladi, JS `.value`.
 - **Tablar** — `Alt+T` yoki `+` — yangi tab, `×` yoki `Alt+W` — yopish; har tab o'z sahifasi,
   tarixi va JS holati bilan; nofaol tablar ham fonda yuklanadi.

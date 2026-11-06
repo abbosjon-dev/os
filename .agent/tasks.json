@@ -39,7 +39,9 @@
     {
       "id": "T6",
       "title": "localStorage va cookie larni diskka saqlash (~/.zamin/)",
-      "detail": "Qayta yuklangandan keyin ham saqlanib qolsin; fs moduli orqali."
+      "detail": "Qayta yuklangandan keyin ham saqlanib qolsin; fs moduli orqali.",
+      "status": "done",
+      "done_at": "2026-11-06 11:30:51"
     },
     {
       "id": "T7",

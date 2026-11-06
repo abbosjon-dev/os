@@ -10,6 +10,7 @@ pub mod http;
 pub mod tcp;
 pub mod tls;
 pub mod udp;
+pub mod webstore;
 pub mod x509;
 mod x509_test_cert;
 

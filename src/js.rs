@@ -1632,8 +1632,8 @@ impl Engine {
                     "setItem" => Value::Native("ls.set", Box::new(Value::Undef)),
                     "removeItem" => Value::Native("ls.remove", Box::new(Value::Undef)),
                     "clear" => Value::Native("ls.clear", Box::new(Value::Undef)),
-                    "length" => Value::Num(LS.lock().iter().filter(|(o, _, _)| *o == origin(&self.url)).count() as f64),
-                    key => LS.lock().iter().find(|(o, kk, _)| *o == origin(&self.url) && kk == key).map(|(_, _, v)| Value::str(v)).unwrap_or(Value::Undef),
+                    "length" => Value::Num(ls().iter().filter(|(o, _, _)| *o == origin(&self.url)).count() as f64),
+                    key => ls().iter().find(|(o, kk, _)| *o == origin(&self.url) && kk == key).map(|(_, _, v)| Value::str(v)).unwrap_or(Value::Undef),
                 },
                 ("document", "write") | ("document", "writeln") => Value::Native("doc.write", Box::new(Value::Undef)),
                 ("document", "addEventListener") | ("window", "addEventListener") => Value::Native("noop", Box::new(Value::Undef)),
@@ -2389,19 +2389,21 @@ impl Engine {
                 doc.restyle(i);
                 Value::Bool(r)
             }
-            "ls.get" => LS.lock().iter().find(|(o, k, _)| *o == origin(&self.url) && *k == arg(0).to_string()).map(|(_, _, v)| Value::str(v)).unwrap_or(Value::Null),
+            "ls.get" => ls().iter().find(|(o, k, _)| *o == origin(&self.url) && *k == arg(0).to_string()).map(|(_, _, v)| Value::str(v)).unwrap_or(Value::Null),
             "ls.set" => {
                 ls_set(&self.url, &arg(0).to_string(), &arg(1).to_string());
                 Value::Undef
             }
             "ls.remove" => {
                 let (o, k) = (origin(&self.url), arg(0).to_string());
-                LS.lock().retain(|(oo, kk, _)| !(*oo == o && *kk == k));
+                ls().retain(|(oo, kk, _)| !(*oo == o && *kk == k));
+                ls_save();
                 Value::Undef
             }
             "ls.clear" => {
                 let o = origin(&self.url);
-                LS.lock().retain(|(oo, _, _)| *oo != o);
+                ls().retain(|(oo, _, _)| *oo != o);
+                ls_save();
                 Value::Undef
             }
             "doc.write" => {
@@ -2587,8 +2589,20 @@ fn gfx_h() -> usize {
     crate::gfx::size().1
 }
 
-/// localStorage: (manba, kalit, qiymat). Tizim içida — qayta yuklanguncha saqlanadi.
+/// localStorage: (manba, kalit, qiymat). `~/.zamin/localstorage` ga saqlanadi —
+/// qayta yuklanişdan keyin ham qoladi.
 static LS: crate::sync::SpinLock<Vec<(String, String, String)>> = crate::sync::SpinLock::new(Vec::new());
+static LS_DISK: crate::net::webstore::Persist = crate::net::webstore::Persist::new("localstorage");
+
+/// Omborga kiriş (joriy foydalanuvçining fayli bilan moslangan holda).
+fn ls() -> crate::sync::SpinLockGuard<'static, Vec<(String, String, String)>> {
+    LS_DISK.sync(&LS);
+    LS.lock()
+}
+
+fn ls_save() {
+    LS_DISK.save(&LS);
+}
 
 /// Manba (origin): "sxema://host" yoki ichki/mahalliy sahifalar uçun "zamin".
 fn origin(url: &str) -> String {
@@ -2600,15 +2614,16 @@ fn origin(url: &str) -> String {
 
 fn ls_set(url: &str, k: &str, v: &str) {
     let o = origin(url);
-    let mut ls = LS.lock();
-    match ls.iter_mut().find(|(oo, kk, _)| *oo == o && kk == k) {
-        Some(e) => e.2 = String::from(v),
-        None => {
-            if ls.len() < 2000 {
-                ls.push((o, String::from(k), String::from(v)));
-            }
+    {
+        let mut ls = ls();
+        match ls.iter().position(|(oo, kk, _)| *oo == o && kk == k) {
+            Some(i) if ls[i].2 == v => return,
+            Some(i) => ls[i].2 = String::from(v),
+            None if ls.len() < 2000 => ls.push((o, String::from(k), String::from(v))),
+            None => return,
         }
     }
+    ls_save();
 }
 
 /// URL kodlaş (UTF-8 baytlar %XX).
