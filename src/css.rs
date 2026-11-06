@@ -26,6 +26,12 @@ pub struct Sty {
     pub radius: f32,                  // border-radius
     pub maxw: Option<(f32, bool)>,    // width / max-width: (qiymat, foizmi)
     pub center: bool,                 // margin: auto — markazlaş
+    // Joylaşuv (flex / grid)
+    pub flex: u8,    // 0 — yöq, 1 — flex qator, 2 — flex ustun, 3 — grid
+    pub gap: f32,
+    pub gcols: u8,   // grid ustunlari soni
+    pub justify: u8, // 0 — boşidan, 1 — markaz, 2 — oraliq (space-between), 3 — oxiridan
+    pub grow: f32,   // flex: 1 (ustun kengligi ulushi)
 }
 
 impl Sty {
@@ -33,11 +39,16 @@ impl Sty {
         Sty {
             color: None, bg: None, size: 16.0, bold: false, italic: false, align: 0, hidden: false, underline: None, block: None,
             mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
+            flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
         }
     }
     /// Meros: rang, ölçam, qalinlik, tekislaş, yaşiriş — bolaga ötadi; fon — ötmaydi.
     pub fn inherit(&self) -> Sty {
-        Sty { bg: None, block: None, mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false, ..*self }
+        Sty {
+            bg: None, block: None, mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
+            flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
+            ..*self
+        }
     }
     /// Konteynermi (fon, çegara yoki kenglik çeklovi bor)?
     pub fn is_box(&self) -> bool {
@@ -50,6 +61,7 @@ pub struct Compound {
     pub tag: Option<String>,
     pub id: Option<String>,
     pub classes: Vec<String>,
+    pub direct: bool, // keyingi (öngdagi) bilan ">" — bevosita ota
 }
 
 #[derive(Clone)]
@@ -94,7 +106,17 @@ fn parse_compound(s: &str) -> Option<Compound> {
                 c.id = Some(ident(&mut i));
             }
             b'*' => i += 1,
-            b':' | b'[' => return None, // psevdo-klass / atribut — qöllanmaydi
+            b':' => {
+                // Zararsiz psevdo-klasslar e'tiborsiz; holatga bogʻliqlari (:hover…) — qoida taşlanadi
+                let rest = &s[i + 1..];
+                let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+                if matches!(name.as_str(), "link" | "visited" | "root") {
+                    i += 1 + name.len();
+                } else {
+                    return None;
+                }
+            }
+            b'[' => return None, // atribut tanlagiçi — qöllanmaydi
             _ => {
                 let t = ident(&mut i);
                 if t.is_empty() {
@@ -112,10 +134,24 @@ fn parse_selectors(s: &str) -> Vec<Vec<Compound>> {
     let mut out = Vec::new();
     for part in s.split(',') {
         let part = part.trim();
-        if part.is_empty() || part.contains('>') || part.contains('+') || part.contains('~') {
+        if part.is_empty() || part.contains('+') || part.contains('~') {
             continue;
         }
-        let chain: Option<Vec<Compound>> = part.split_whitespace().map(parse_compound).collect();
+        let spaced = part.replace('>', " > ");
+        let mut chain: Option<Vec<Compound>> = Some(Vec::new());
+        for tok in spaced.split_whitespace() {
+            let Some(ch) = chain.as_mut() else { break };
+            if tok == ">" {
+                if let Some(last) = ch.last_mut() {
+                    last.direct = true;
+                }
+                continue;
+            }
+            match parse_compound(tok) {
+                Some(c) => ch.push(c),
+                None => chain = None,
+            }
+        }
         if let Some(ch) = chain {
             if !ch.is_empty() {
                 out.push(ch);
@@ -210,6 +246,14 @@ pub fn matches(chain: &[Compound], el: &ElRef, ancestors: &[ElRef]) -> bool {
     }
     let mut k = ancestors.len();
     for c in prev.iter().rev() {
+        if c.direct {
+            // "c > keyingi": bevosita ota bölişi şart
+            if k == 0 || !compound_match(c, &ancestors[k - 1]) {
+                return false;
+            }
+            k -= 1;
+            continue;
+        }
         loop {
             if k == 0 {
                 return false;
@@ -386,6 +430,11 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
         }
         "display" => {
             s.hidden = low == "none";
+            s.flex = match low.as_str() {
+                "flex" | "inline-flex" => 1,
+                "grid" | "inline-grid" => 3,
+                _ => 0,
+            };
             s.block = match low.as_str() {
                 "block" | "flex" | "grid" | "list-item" | "table" => Some(true),
                 "inline" | "inline-block" | "inline-flex" => Some(false),
@@ -393,6 +442,40 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
             };
         }
         "visibility" => s.hidden = low == "hidden" || low == "collapse",
+        "flex-direction" => {
+            if s.flex == 1 && low.starts_with("column") {
+                s.flex = 2;
+            } else if s.flex == 2 && low.starts_with("row") {
+                s.flex = 1;
+            }
+        }
+        "gap" | "column-gap" | "grid-gap" | "grid-column-gap" => {
+            if let Some(v) = low.split_whitespace().last().and_then(|x| length(x, s.size)) {
+                s.gap = v.clamp(0.0, 100.0);
+            }
+        }
+        "grid-template-columns" => {
+            // repeat(3, 1fr) yoki "1fr 2fr 1fr" — ustunlar soni
+            let n = if let Some(r) = low.strip_prefix("repeat(") {
+                r.split(',').next().and_then(|x| x.trim().parse::<u8>().ok()).unwrap_or(2)
+            } else {
+                low.split_whitespace().count() as u8
+            };
+            s.gcols = n.clamp(1, 12);
+        }
+        "justify-content" => {
+            s.justify = match low.as_str() {
+                "center" => 1,
+                "space-between" | "space-around" | "space-evenly" => 2,
+                "flex-end" | "end" | "right" => 3,
+                _ => 0,
+            }
+        }
+        "flex" | "flex-grow" => {
+            if let Some(f) = low.split_whitespace().next().and_then(parse_f) {
+                s.grow = f.clamp(0.0, 12.0);
+            }
+        }
         "margin" => {
             let p: Vec<&str> = low.split_whitespace().collect();
             let top = p.first().and_then(|x| length(x, s.size)).unwrap_or(0.0);

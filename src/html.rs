@@ -56,6 +56,15 @@ pub struct Block {
     pub mb: f32,
     pub bmt: f32, // konteynerning öz chekinişlari
     pub bmb: f32,
+    // Flex / grid / jadval: konteyner va ustun (bevosita bola) raqamlari
+    pub flex: u32,
+    pub fcol: u32,
+    pub fmode: u8, // 1 — qator (flex/jadval), 3 — grid
+    pub fgap: f32,
+    pub gcols: u8,
+    pub fjust: u8,
+    pub fw: Option<(f32, bool)>, // ustun kengligi (bolaning width)
+    pub fgrow: f32,
 }
 
 /// Forma maydoni.
@@ -69,6 +78,7 @@ pub struct Input {
     pub el: u16,
     pub size: u16,
     pub checked: bool,
+    pub options: Vec<(String, String)>, // <select>: (qiymat, yozuv)
 }
 
 #[derive(Clone)]
@@ -84,6 +94,8 @@ pub struct ElInfo {
     pub id: String,
     pub tag: String,
     pub onclick: Option<String>,
+    pub classes: Vec<String>,
+    pub parent: u16,
 }
 
 #[derive(Clone)]
@@ -101,13 +113,14 @@ pub struct Doc {
     pub color: Option<u32>,
     pub inputs: Vec<Input>,
     pub forms: Vec<Form>,
+    pub rules: Vec<Rule>, // classList özgarişida qayta uslublaş uçun
 }
 
 pub const NO_EL: u16 = u16::MAX;
 
 impl Doc {
     pub fn empty() -> Doc {
-        Doc { title: String::new(), blocks: Vec::new(), elems: Vec::new(), scripts: Vec::new(), bg: None, color: None, inputs: Vec::new(), forms: Vec::new() }
+        Doc { title: String::new(), blocks: Vec::new(), elems: Vec::new(), scripts: Vec::new(), bg: None, color: None, inputs: Vec::new(), forms: Vec::new(), rules: Vec::new() }
     }
     /// Elementga tegişli forma maydoni (input / textarea).
     pub fn input_of(&self, el: usize) -> Option<usize> {
@@ -116,41 +129,109 @@ impl Doc {
     pub fn find_id(&self, id: &str) -> Option<usize> {
         self.elems.iter().position(|e| e.id == id)
     }
-    /// Elementning matni (bloklari yoki bölaklari).
+    /// `a` element `e` içidami (yoki özimi)?
+    pub fn within(&self, a: u16, e: u16) -> bool {
+        let mut cur = a;
+        let mut n = 0;
+        while cur != NO_EL && n < 512 {
+            if cur == e {
+                return true;
+            }
+            cur = self.elems.get(cur as usize).map(|x| x.parent).unwrap_or(NO_EL);
+            n += 1;
+        }
+        false
+    }
+    /// Elementning matni (barça avlodlari bilan).
     pub fn text_of(&self, el: usize) -> String {
         let e = el as u16;
         let mut out = String::new();
         for b in &self.blocks {
-            if b.el == e {
-                for s in &b.spans {
-                    out.push_str(&s.text);
-                }
-            } else {
-                for s in b.spans.iter().filter(|s| s.el == e) {
-                    out.push_str(&s.text);
-                }
+            for s in b.spans.iter().filter(|s| self.within(s.el, e)) {
+                out.push_str(&s.text);
             }
         }
         out
     }
-    /// Element matnini almaştiradi (JS: textContent / innerHTML).
-    pub fn set_text(&mut self, el: usize, text: &str) {
+    /// Element tarkibini almaştiradi: matn (textContent) yoki HTML (innerHTML).
+    pub fn set_content(&mut self, el: usize, text: &str, html: bool) {
         let e = el as u16;
-        for b in self.blocks.iter_mut() {
-            if b.el == e {
-                let tmpl = b.spans.first().cloned().unwrap_or(Span {
-                    text: String::new(), link: None, bold: false, code: false, br: false, color: None, size: b.size, el: e, button: false, underline: false, input: NO_EL,
-                });
-                b.spans = alloc::vec![Span { text: String::from(text), br: false, ..tmpl }];
+        // 1) Blok darajasidagi element: içidagi barça bloklar → yangisi
+        let range: Vec<usize> = (0..self.blocks.len()).filter(|&k| self.within(self.blocks[k].el, e)).collect();
+        if let (Some(&first), Some(&last)) = (range.first(), range.last()) {
+            let is_block = self.blocks[first].el == e || range.len() > 1 || self.blocks[first].spans.iter().all(|s| self.within(s.el, e));
+            if is_block {
+                let tmpl = self.blocks[first].clone();
+                let base_el = tmpl.el;
+                let mut new_blocks: Vec<Block> = if html {
+                    let mut d = parse_frag(text, &self.rules);
+                    let off = self.elems.len() as u16;
+                    for x in d.elems.iter_mut() {
+                        x.parent = if x.parent == NO_EL { e } else { x.parent + off };
+                    }
+                    let remap = |v: u16| if v == NO_EL { e } else { v + off };
+                    for b in d.blocks.iter_mut() {
+                        b.el = remap(b.el);
+                        for sp in b.spans.iter_mut() {
+                            sp.el = remap(sp.el);
+                        }
+                        if b.bg.is_none() {
+                            b.bg = tmpl.bg;
+                            b.bgk = tmpl.bgk;
+                        }
+                        b.flex = tmpl.flex;
+                        b.fcol = tmpl.fcol;
+                        b.fmode = tmpl.fmode;
+                        b.fgap = tmpl.fgap;
+                        b.gcols = tmpl.gcols;
+                        b.fw = tmpl.fw;
+                        b.pad = tmpl.pad;
+                        b.bw = tmpl.bw;
+                        b.bc = tmpl.bc;
+                        b.radius = tmpl.radius;
+                        b.maxw = tmpl.maxw;
+                        b.center = tmpl.center;
+                        if b.color.is_none() {
+                            b.color = tmpl.color;
+                        }
+                    }
+                    self.elems.extend(d.elems);
+                    d.blocks
+                } else {
+                    Vec::new()
+                };
+                if new_blocks.is_empty() {
+                    let mut b = tmpl.clone();
+                    let sp = tmpl.spans.iter().find(|s| !s.br && s.input == NO_EL).cloned().unwrap_or(Span {
+                        text: String::new(), link: None, bold: false, code: false, br: false, color: None, size: tmpl.size, el: base_el, button: false, underline: false, input: NO_EL,
+                    });
+                    let lines: Vec<&str> = text.split('\n').collect();
+                    b.spans.clear();
+                    for (k, l) in lines.iter().enumerate() {
+                        if k > 0 {
+                            b.spans.push(Span { text: String::new(), br: true, ..sp.clone() });
+                        }
+                        b.spans.push(Span { text: String::from(*l), br: false, el: base_el, input: NO_EL, ..sp.clone() });
+                    }
+                    new_blocks.push(b);
+                }
+                // Faqat ketma-ket oraliqni almaştiramiz
+                let last = if range.windows(2).all(|w| w[1] == w[0] + 1) { last } else { first };
+                self.blocks.splice(first..=last, new_blocks);
                 return;
             }
         }
-        for b in self.blocks.iter_mut() {
-            if let Some(first) = b.spans.iter().position(|s| s.el == e) {
-                b.spans[first].text = String::from(text);
+        // 2) Qator içidagi element (span, b, a…)
+        let plain = if html { strip_tags(text) } else { String::from(text) };
+        for bi in 0..self.blocks.len() {
+            let pos: Vec<usize> = (0..self.blocks[bi].spans.len()).filter(|&k| self.within(self.blocks[bi].spans[k].el, e)).collect();
+            if let Some(&first) = pos.first() {
+                let b = &mut self.blocks[bi];
+                b.spans[first].text = plain.clone();
+                b.spans[first].el = e;
                 let mut k = 0;
-                b.spans.retain(|s| {
-                    let keep = s.el != e || k == first;
+                b.spans.retain(|_| {
+                    let keep = !pos.contains(&k) || k == first;
                     k += 1;
                     keep
                 });
@@ -163,13 +244,16 @@ impl Doc {
         let e = el as u16;
         let prop = css::kebab(prop);
         let low = val.to_ascii_lowercase();
-        for b in self.blocks.iter_mut() {
-            let whole = b.el == e;
+        for bi in 0..self.blocks.len() {
+            let whole = self.within(self.blocks[bi].el, e);
+            let owner = self.blocks[bi].el == e;
+            let inside: Vec<bool> = self.blocks[bi].spans.iter().map(|sp| self.within(sp.el, e)).collect();
+            let b = &mut self.blocks[bi];
             if whole {
                 match prop.as_str() {
-                    "background" | "background-color" => b.bg = css::parse_color(val),
-                    "text-align" => b.align = if low == "center" { 1 } else if low == "right" { 2 } else { 0 },
                     "display" => b.hidden = low == "none",
+                    "background" | "background-color" if owner => b.bg = css::parse_color(val),
+                    "text-align" if owner => b.align = if low == "center" { 1 } else if low == "right" { 2 } else { 0 },
                     "color" => b.color = css::parse_color(val),
                     "font-size" => {
                         let mut st = Sty::root();
@@ -179,7 +263,10 @@ impl Doc {
                     _ => {}
                 }
             }
-            for sp in b.spans.iter_mut().filter(|s| whole || s.el == e) {
+            for (k, sp) in b.spans.iter_mut().enumerate() {
+                if !(whole || inside[k]) {
+                    continue;
+                }
                 match prop.as_str() {
                     "color" => sp.color = css::parse_color(val),
                     "font-weight" => sp.bold = low == "bold" || low.parse::<u32>().is_ok_and(|n| n >= 600),
@@ -192,6 +279,114 @@ impl Doc {
                 }
             }
         }
+    }
+    /// JS: appendChild / insertAdjacentHTML — HTML ni element oxiriga qöşadi.
+    pub fn append_into(&mut self, el: usize, src: &str) {
+        let e = el as u16;
+        let last = (0..self.blocks.len()).rev().find(|&k| self.within(self.blocks[k].el, e));
+        let mut d = parse_frag(src, &self.rules);
+        let off = self.elems.len() as u16;
+        for x in d.elems.iter_mut() {
+            x.parent = if x.parent == NO_EL { e } else { x.parent + off };
+        }
+        let tmpl = last.map(|k| self.blocks[k].clone());
+        for b in d.blocks.iter_mut() {
+            b.el = if b.el == NO_EL { e } else { b.el + off };
+            for sp in b.spans.iter_mut() {
+                sp.el = if sp.el == NO_EL { e } else { sp.el + off };
+            }
+            if let Some(t) = &tmpl {
+                if b.bg.is_none() {
+                    b.bg = t.bg;
+                    b.bgk = t.bgk;
+                }
+                b.pad = t.pad;
+                b.bw = t.bw;
+                b.bc = t.bc;
+                b.radius = t.radius;
+                b.maxw = t.maxw;
+                b.center = t.center;
+                b.flex = t.flex;
+                b.fcol = t.fcol;
+                b.fmode = t.fmode;
+                b.fgap = t.fgap;
+                b.gcols = t.gcols;
+                b.fw = t.fw;
+            }
+        }
+        self.elems.extend(d.elems);
+        let at = last.map(|k| k + 1).unwrap_or(self.blocks.len());
+        self.blocks.splice(at..at, d.blocks);
+    }
+    /// classList özgardi: elementning öz qoidalari (rang, fon, ko'rinişi) qayta qöllanadi.
+    pub fn restyle(&mut self, el: usize) {
+        let Some(info) = self.elems.get(el).cloned() else { return };
+        let me = ElRef { tag: &info.tag, id: &info.id, classes: &info.classes };
+        let st = css::compute(&Sty::root(), &self.rules, &me, &[], None);
+        let e = el as u16;
+        let base = Sty::root();
+        for bi in 0..self.blocks.len() {
+            let whole = self.blocks[bi].el == e;
+            if whole {
+                self.blocks[bi].hidden = st.hidden;
+                if st.bg.is_some() || self.blocks[bi].bgk == 0 {
+                    self.blocks[bi].bg = st.bg;
+                }
+            }
+            for k in 0..self.blocks[bi].spans.len() {
+                if whole || self.blocks[bi].spans[k].el == e {
+                    let sp = &mut self.blocks[bi].spans[k];
+                    sp.color = st.color;
+                    sp.bold = st.bold;
+                    if st.size != base.size {
+                        sp.size = st.size;
+                    }
+                }
+            }
+        }
+        // Yaşiriş butun avlod bloklariga
+        for bi in 0..self.blocks.len() {
+            if self.blocks[bi].el != e && self.within(self.blocks[bi].el, e) {
+                self.blocks[bi].hidden = st.hidden;
+            }
+        }
+    }
+    /// Oddiy tanlagiç böyiça elementlar: "#id", ".klass", "teg", "teg.klass".
+    pub fn query_all(&self, sel: &str) -> Vec<usize> {
+        let sel = sel.trim();
+        let last = sel.split_whitespace().last().unwrap_or(sel);
+        let (tag, rest) = match last.find(['.', '#']) {
+            Some(0) => ("", last),
+            Some(i) => (&last[..i], &last[i..]),
+            None => (last, ""),
+        };
+        let mut id = String::new();
+        let mut classes: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        let mut kind = ' ';
+        for c in rest.chars().chain(core::iter::once('.')) {
+            if c == '.' || c == '#' {
+                if !cur.is_empty() {
+                    if kind == '#' {
+                        id = core::mem::take(&mut cur);
+                    } else {
+                        classes.push(core::mem::take(&mut cur));
+                    }
+                }
+                cur.clear();
+                kind = c;
+            } else {
+                cur.push(c);
+            }
+        }
+        (0..self.elems.len())
+            .filter(|&k| {
+                let e = &self.elems[k];
+                (tag.is_empty() || tag == "*" || e.tag == tag.to_ascii_lowercase())
+                    && (id.is_empty() || e.id == id)
+                    && classes.iter().all(|c| e.classes.iter().any(|x| x == c))
+            })
+            .collect()
     }
     /// JS: document.write — HTML bölagini oxiriga qöşadi.
     pub fn append_html(&mut self, src: &str) {
@@ -278,7 +473,8 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 /// Brauzerning öz uslublari (UA stylesheet).
 const UA_CSS: &str = "h1{font-size:2em;font-weight:bold}h2{font-size:1.5em;font-weight:bold}h3{font-size:1.17em;font-weight:bold}\
 h4,h5,h6{font-weight:bold}b,strong,th{font-weight:bold}small{font-size:.83em}big{font-size:1.2em}center{text-align:center}\
-a{text-decoration:underline}pre,code,kbd,samp,tt{font-size:.9em}button{font-weight:bold}";
+a{text-decoration:underline}pre,code,kbd,samp,tt{font-size:.9em}button{font-weight:bold}\
+tr{display:flex}td,th{padding:3px}th{font-weight:bold}";
 
 const VOID: [&str; 12] = ["br", "hr", "img", "meta", "link", "input", "area", "base", "col", "embed", "source", "wbr"];
 
@@ -318,7 +514,8 @@ impl P {
     fn flush(&mut self) {
         if let Some(b) = self.cur.take() {
             let has = b.spans.iter().any(|s| !s.text.trim().is_empty() || s.input != NO_EL);
-            if has || b.kind == Kind::Hr || b.kind == Kind::Img {
+            let target = b.el != NO_EL && self.doc.elems.get(b.el as usize).is_some_and(|e| !e.id.is_empty());
+            if has || target || b.kind == Kind::Hr || b.kind == Kind::Img {
                 self.doc.blocks.push(b);
             }
         }
@@ -326,22 +523,35 @@ impl P {
     fn new_block(&self, k: Kind) -> Block {
         let st = self.top();
         // Fon: eng yaqin fonli ajdod (body/html dan taşqari) — butun konteyner bölib bo'yaladi
-        let cont = self.stack.iter().rev().take_while(|o| o.tag != "body" && o.tag != "html").find(|o| o.sty.is_box());
+        // Eng yaqin flex/grid konteyner va uning bevosita bolasi (ustun)
+        let fl = match self.stack.iter().rposition(|o| o.sty.flex == 1 || o.sty.flex == 3) {
+            Some(k) => {
+                let c = &self.stack[k];
+                let (col, fw, grow) = match self.stack.get(k + 1) {
+                    Some(ch) => (ch.serial, ch.sty.maxw, ch.sty.grow),
+                    None => (c.serial, None, 0.0),
+                };
+                (c.serial, col, c.sty.flex, c.sty.gap, c.sty.gcols, c.sty.justify, fw, grow)
+            }
+            None => (0, 0, 0, 0.0, 0, 0, None, 0.0),
+        };
+        // Quti: flex konteynerdan içkaridagisi (aks holda butun qator bitta qutiga tuşib qoladi)
+        let fk = self.stack.iter().rposition(|o| o.sty.flex == 1 || o.sty.flex == 3).map(|k| k + 1).unwrap_or(0);
+        let cont = self.stack[fk.min(self.stack.len())..].iter().rev().take_while(|o| o.tag != "body" && o.tag != "html").find(|o| o.sty.is_box());
         let (bg, bgk, cs) = match cont {
             Some(o) => (o.sty.bg, o.serial, o.sty),
             None => (None, 0, Sty::root()),
         };
         Block {
-            kind: k, spans: Vec::new(), bg, align: st.align, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: false, bgk,
+            kind: k, spans: Vec::new(), bg, align: st.align, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: st.hidden, bgk,
             pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, maxw: cs.maxw, center: cs.center, mt: st.mt, mb: st.mb,
             bmt: cs.mt, bmb: cs.mb,
+            flex: fl.0, fcol: fl.1, fmode: fl.2, fgap: fl.3, gcols: fl.4, fjust: fl.5, fw: fl.6, fgrow: fl.7,
         }
     }
     fn start(&mut self, k: Kind) {
         self.flush();
-        if self.hidden() {
-            return;
-        }
+        // display:none bölsa ham blok yaratiladi (hidden) — JS keyin körsatişi mumkin
         self.cur = Some(self.new_block(k));
     }
     fn text(&mut self, t: &str) {
@@ -349,7 +559,8 @@ impl P {
             self.doc.title.push_str(&decode_entities(t));
             return;
         }
-        if self.hidden() {
+        // Körinadigan blok içidagi yaşirin qator elementi — taşlanadi
+        if self.hidden() && self.cur.as_ref().is_some_and(|b| !b.hidden) {
             return;
         }
         let mut s = decode_entities(t);
@@ -394,12 +605,10 @@ impl P {
         let el = el.unwrap_or_else(|| {
             let id = attr(tag, "id").unwrap_or_default();
             let onclick = attr(tag, "onclick");
-            if !id.is_empty() || onclick.is_some() {
-                self.doc.elems.push(ElInfo { id, tag: String::from("input"), onclick });
-                (self.doc.elems.len() - 1) as u16
-            } else {
-                NO_EL
-            }
+            let classes: Vec<String> = attr(tag, "class").map(|c| c.split_whitespace().map(String::from).collect()).unwrap_or_default();
+            let parent = self.el();
+            self.doc.elems.push(ElInfo { id, tag: String::from("input"), onclick, classes, parent });
+            (self.doc.elems.len() - 1) as u16
         });
         let size = attr(tag, "size").and_then(|v| v.parse().ok()).unwrap_or(if kind == 0 || kind == 3 { 20 } else { 0 });
         self.doc.inputs.push(Input {
@@ -411,12 +620,13 @@ impl P {
             el,
             size,
             checked: attr(tag, "checked").is_some() || tag.split_whitespace().any(|w| w.eq_ignore_ascii_case("checked")),
+            options: Vec::new(),
         });
         (self.doc.inputs.len() - 1) as u16
     }
     /// Maydonni joriy blokka qöyadi.
     fn input_span(&mut self, idx: u16) {
-        if self.hidden() || self.doc.inputs[idx as usize].kind == 4 {
+        if self.doc.inputs[idx as usize].kind == 4 || (self.hidden() && self.cur.as_ref().is_some_and(|b| !b.hidden)) {
             return;
         }
         if self.cur.is_none() {
@@ -463,8 +673,9 @@ impl P {
             st.hidden = true;
         }
         let onclick = attr(tag, "onclick");
-        let el = if !id.is_empty() || onclick.is_some() {
-            self.doc.elems.push(ElInfo { id: id.clone(), tag: String::from(name), onclick });
+        // Har bir element ro'yxatga olinadi (JS: querySelectorAll, classList, hodisalar qalqişi)
+        let el = if self.doc.elems.len() < 60_000 {
+            self.doc.elems.push(ElInfo { id: id.clone(), tag: String::from(name), onclick, classes: classes.clone(), parent: self.el() });
             (self.doc.elems.len() - 1) as u16
         } else {
             self.el()
@@ -534,10 +745,20 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
     let mut sheet = String::from(UA_CSS);
     sheet.push_str(extra_css);
     sheet.push_str(&inline_css(src));
-    let mut p = P { doc: Doc::empty(), rules: css::parse_sheet(&sheet), stack: Vec::new(), cur: None, pre: 0, lists: Vec::new(), in_title: false, serial: 0, form: NO_EL };
+    let rules = css::parse_sheet(&sheet);
+    let mut d = parse_inner(src, &rules, true);
+    d.rules = rules;
+    d
+}
+
+fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool) -> Doc {
+    let rules: Vec<Rule> = rules.to_vec();
+    let mut p = P { doc: Doc::empty(), rules, stack: Vec::new(), cur: None, pre: 0, lists: Vec::new(), in_title: false, serial: 0, form: NO_EL };
     // Yaşirin <html> va <body> (teglar bölmasa ham uslublari qöllanadi)
-    p.open("html", "html");
-    p.open("body", "body");
+    if implicit_body {
+        p.open("html", "html");
+        p.open("body", "body");
+    }
     let mut i = 0;
     let b = src.as_bytes();
     while i < b.len() {
@@ -553,6 +774,37 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
             let t = tag.trim_start_matches('/');
             let name: String = t.chars().take_while(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
             if name.is_empty() {
+                continue;
+            }
+            if !closing && name == "select" {
+                // <option value>yozuv</option> lar; tanlangani (selected) yoki birinçisi
+                let low = src[i..].to_ascii_lowercase();
+                let e = low.find("</select").map(|j| i + j).unwrap_or(b.len());
+                let inner = &src[i..e];
+                let mut opts: Vec<(String, String)> = Vec::new();
+                let mut sel = 0;
+                let mut from = 0;
+                let il = inner.to_ascii_lowercase();
+                while let Some(k) = il[from..].find("<option") {
+                    let st = from + k;
+                    let Some(gt) = inner[st..].find('>').map(|g| st + g) else { break };
+                    let otag = &inner[st + 1..gt];
+                    let end = il[gt..].find("</option").map(|x| gt + x).or_else(|| il[gt + 1..].find("<option").map(|x| gt + 1 + x)).unwrap_or(inner.len());
+                    let label = decode_entities(strip_tags(&inner[gt + 1..end]).trim());
+                    let value = attr(otag, "value").unwrap_or_else(|| label.clone());
+                    if otag.to_ascii_lowercase().contains("selected") {
+                        sel = opts.len();
+                    }
+                    opts.push((value, label));
+                    from = end;
+                }
+                let v = opts.get(sel).map(|o| o.0.clone()).unwrap_or_default();
+                let k = p.add_input(6, t, v, None);
+                let w = opts.iter().map(|o| o.1.chars().count()).max().unwrap_or(4) as u16 + 6;
+                p.doc.inputs[k as usize].size = w.clamp(6, 40);
+                p.doc.inputs[k as usize].options = opts;
+                p.input_span(k);
+                i = e;
                 continue;
             }
             if !closing && name == "textarea" {
@@ -598,7 +850,7 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
                         p.form = NO_EL;
                     }
                     "title" => p.in_title = false,
-                    "p" | "div" | "section" | "article" | "header" | "footer" | "nav" | "main" | "tr" | "table" | "center" | "aside" | "figure" | "dd" | "dt" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "blockquote" => p.flush(),
+                    "p" | "div" | "section" | "article" | "header" | "footer" | "nav" | "main" | "tr" | "td" | "th" | "table" | "center" | "aside" | "figure" | "dd" | "dt" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "blockquote" => p.flush(),
                     "ul" | "ol" => {
                         p.flush();
                         p.lists.pop();
@@ -661,7 +913,7 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
                         p.doc.blocks.push(blk);
                     }
                 }
-                "td" | "th" => p.text(" "),
+                "td" | "th" => p.flush(),
                 "input" => {
                     let ty = attr(t, "type").unwrap_or_default().to_ascii_lowercase();
                     let kind = match ty.as_str() {
@@ -715,6 +967,28 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
     p.doc
 }
 
+/// Teglarsiz matn (innerHTML qator içida).
+fn strip_tags(s: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    decode_entities(&out)
+}
+
+/// HTML bölagi (innerHTML / appendChild) — hujjatning uslub qoidalari bilan.
+fn parse_frag(src: &str, rules: &[Rule]) -> Doc {
+    let mut d = parse_inner(src, rules, false);
+    d.title.clear();
+    d
+}
+
 /// Oddiy matnni hujjatga (bitta <pre>) aylantiradi.
 pub fn plain(text: &str) -> Doc {
     let mut d = Doc::empty();
@@ -730,6 +1004,7 @@ pub fn plain(text: &str) -> Doc {
         hidden: false,
         bgk: 0,
         pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false, mt: 0.0, mb: 0.0, bmt: 0.0, bmb: 0.0,
+        flex: 0, fcol: 0, fmode: 0, fgap: 0.0, gcols: 0, fjust: 0, fw: None, fgrow: 0.0,
     });
     d
 }

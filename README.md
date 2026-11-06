@@ -102,6 +102,32 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   papka yöq bölsa — uyga) va **Böşatiş**; dokdagi savat töla bölsa — qogʻozlar körinadi.
   Nuqta bilan boşlanadigan yaşirin fayllar körsatilmaydi.
 
+### Brauzer: flex, grid, jadvallar, async/await va tablar
+
+| Flex (yonma-yon kartalar), grid, jadval | async/await, appendChild, classList |
+|---|---|
+| ![Flex va grid](docs/web-flex-grid.png) | ![Zamonaviy JS](docs/web-modern-js.png) |
+| **`<select>` ochiluvchi ro'yxat** | **Tablar (`Alt+T`, `+`, `×`)** |
+| ![Select](docs/web-select.png) | ![Tablar](docs/web-tabs.png) |
+
+- **CSS joylashuvi** — `display:flex` (bolalar yonma-yon ustunlar, `gap`, `justify-content`,
+  `flex: N`, ustun `width`), `display:grid` (`grid-template-columns: repeat(n, …)`),
+  **jadvallar** (`<tr>` — qator, `<td>/<th>` — ustunlar); `>` (bevosita bola) tanlagichi.
+  Joylashuv rekursiv: har ustun o'z kengligida qayta joylanadi.
+- **JS** — `async function`, `async () =>`, `await` (fetch va taymerlarni kutadi),
+  `localStorage`/`sessionStorage`, `document.cookie`.
+- **DOM** — har bir element ro'yxatda (ota-bolasi bilan): `innerHTML = "<b>…</b>"` (HTML
+  tahlil qilinadi), `createElement` + `appendChild`/`append`, `insertAdjacentHTML`,
+  `querySelector(All)` (`#id`, `.klass`, `teg`, `teg.klass`), `getElementsByClassName/TagName`,
+  `classList.add/remove/toggle/contains` (uslub qayta qo'llanadi), `className`, `hidden`,
+  `parentElement`, `children`, `remove()`, `setAttribute`; bosish hodisasi **qalqib chiqadi**
+  (ota elementlar ishlovchilari ham ishlaydi). `display:none` elementlar ham quriladi —
+  JS keyin ko'rsata oladi.
+- **HTTP cookie** — `Set-Cookie` saqlanadi, keyingi so'rovlarda `Cookie:` yuboriladi.
+- **`<select>/<option>`** — ochiluvchi ro'yxat, forma bilan yuboriladi, JS `.value`.
+- **Tablar** — `Alt+T` yoki `+` — yangi tab, `×` yoki `Alt+W` — yopish; har tab o'z sahifasi,
+  tarixi va JS holati bilan; nofaol tablar ham fonda yuklanadi.
+
 ### Brauzer: formalar, fetch() va quti modeli
 
 | Forma (quti modeli: border, radius, max-width, margin:auto) | Natija: `location.search` + `URLSearchParams` |
@@ -781,7 +807,7 @@ Tizim çaqiruvlari fuzz-sinovi (15000 tasodifiy çaqiruv) har yuklanişda ötadi
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.24**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.25**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -840,5 +866,9 @@ bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.24 — **Interaktiv veb**: formalar (GET/POST, matn/parol/belgilash/textarea, klaviatura bilan
   to'ldirish), `fetch()` + Promise + `JSON.parse`, CSS quti modeli (margin/padding/border/
   radius/max-width), `zamin://tarix`, HTTP POST.
+- 0.0.25 — **To'liqroq veb**: CSS flex/grid va jadvallar (rekursiv ustunli joylashuv), `>`
+  tanlagichi, `async/await`, `localStorage`, cookie (HTTP va `document.cookie`), to'liq DOM
+  (innerHTML bilan HTML, createElement/appendChild, querySelectorAll, classList, hodisa
+  qalqishi), `<select>`, brauzer tablari.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

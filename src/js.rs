@@ -223,6 +223,7 @@ enum Expr {
     Cond(Box<Expr>, Box<Expr>, Box<Expr>),
     New(Box<Expr>, Vec<Expr>),
     Spread(Box<Expr>),
+    Await(Box<Expr>),
 }
 
 #[derive(Clone)]
@@ -248,6 +249,7 @@ pub struct FDef {
     params: Vec<String>,
     body: Vec<Stmt>,
     expr: Option<Expr>, // strelkali funksiya: qisqa tana
+    is_async: core::cell::Cell<bool>,
 }
 
 // ---------------- Tahlilçi ----------------
@@ -348,6 +350,13 @@ impl Parser {
                     self.i += 1;
                     let n = self.ident()?;
                     let f = self.fn_rest()?;
+                    return Ok(Stmt::Fun(n, f));
+                }
+                "async" if matches!(self.peek2(), Tok::Id(k) if k == "function") => {
+                    self.i += 2;
+                    let n = self.ident()?;
+                    let f = self.fn_rest()?;
+                    f.is_async.set(true);
                     return Ok(Stmt::Fun(n, f));
                 }
                 "if" => {
@@ -483,7 +492,7 @@ impl Parser {
         }
         self.expect(")")?;
         let body = self.block()?;
-        Ok(Rc::new(FDef { params, body, expr: None }))
+        Ok(Rc::new(FDef { params, body, expr: None, is_async: core::cell::Cell::new(false) }))
     }
     fn expr(&mut self) -> PR<Expr> {
         let e = self.assign()?;
@@ -545,13 +554,25 @@ impl Parser {
         self.expect("=>")?;
         if self.is("{") {
             let body = self.block()?;
-            Ok(Expr::Fun(Rc::new(FDef { params, body, expr: None })))
+            Ok(Expr::Fun(Rc::new(FDef { params, body, expr: None, is_async: core::cell::Cell::new(false) })))
         } else {
             let e = self.assign()?;
-            Ok(Expr::Fun(Rc::new(FDef { params, body: Vec::new(), expr: Some(e) })))
+            Ok(Expr::Fun(Rc::new(FDef { params, body: Vec::new(), expr: Some(e), is_async: core::cell::Cell::new(false) })))
         }
     }
     fn assign(&mut self) -> PR<Expr> {
+        if self.is_id("async") && !matches!(self.peek2(), Tok::Id(k) if k == "function") {
+            let save = self.i;
+            self.i += 1;
+            if self.arrow_ahead() {
+                let f = self.arrow()?;
+                if let Expr::Fun(d) = &f {
+                    d.is_async.set(true);
+                }
+                return Ok(f);
+            }
+            self.i = save;
+        }
         if self.arrow_ahead() {
             return self.arrow();
         }
@@ -636,7 +657,12 @@ impl Parser {
                     self.i += 1;
                     return Ok(Expr::Un("typeof", Box::new(self.unary()?)));
                 }
-                "void" | "delete" | "await" => {
+                "await" => {
+                    self.i += 1;
+                    let e = self.unary()?;
+                    return Ok(Expr::Await(Box::new(e)));
+                }
+                "void" | "delete" => {
                     self.i += 1;
                     let e = self.unary()?;
                     return Ok(if k == "void" { Expr::Un("void", Box::new(e)) } else { e });
@@ -764,7 +790,9 @@ impl Parser {
                     if matches!(self.peek(), Tok::Id(_)) {
                         self.i += 1;
                     }
-                    Expr::Fun(self.fn_rest()?)
+                    let f = self.fn_rest()?;
+                    f.is_async.set(true);
+                    Expr::Fun(f)
                 }
                 _ => Expr::Id(k),
             }),
@@ -1006,6 +1034,8 @@ pub struct Engine {
     prevented: bool,
     /// Joriy sahifa manzili (location uçun)
     pub url: String,
+    /// await uçun: fetch ni joyida (sinxron) bajariş — GUI beradi
+    pub fetch_hook: Option<fn(&str, &str, Option<&str>) -> Result<(u16, String, String), String>>,
 }
 
 const MAX_STEPS: u32 = 3_000_000;
@@ -1013,7 +1043,7 @@ const MAX_STEPS: u32 = 3_000_000;
 impl Engine {
     pub fn new() -> Engine {
         let g = new_env(None);
-        for h in ["document", "console", "Math", "window", "JSON", "Object", "Array", "Date", "Number", "String", "navigator", "location"] {
+        for h in ["document", "console", "Math", "window", "JSON", "Object", "Array", "Date", "Number", "String", "navigator", "location", "localStorage", "sessionStorage"] {
             g.borrow_mut().vars.push((String::from(h), Value::Host(h)));
         }
         g.borrow_mut().vars.push((String::from("Promise"), Value::Host("Promise")));
@@ -1037,6 +1067,7 @@ impl Engine {
             submit_handlers: Vec::new(),
             prevented: false,
             url: String::new(),
+            fetch_hook: None,
         }
     }
 
@@ -1091,6 +1122,31 @@ impl Engine {
             self.drain(doc);
         }
         ran
+    }
+
+    /// await kutayotganda bir qadam: kutilayotgan fetch lar joyida bajariladi, aks holda
+    /// eng yaqin taymergaça uxlab, uni işga tuşiradi. Hech narsa bölmasa — false.
+    fn pump_sync(&mut self, doc: &mut Doc) -> bool {
+        if !self.fetch_out.is_empty() {
+            if let Some(hook) = self.fetch_hook {
+                for (id, method, url, body) in core::mem::take(&mut self.fetch_out) {
+                    let full = crate::net::http::join(&self.url, &url);
+                    let r = hook(&method, &full, body.as_deref());
+                    self.fetch_done(id, r, doc);
+                }
+                return true;
+            }
+        }
+        if let Some(at) = self.timers.iter().map(|t| t.at).min() {
+            let now = crate::timer::uptime_ms();
+            if at > now {
+                crate::task::sleep_ms((at - now).min(50));
+            }
+            let now = crate::timer::uptime_ms();
+            self.tick(doc, now);
+            return true;
+        }
+        false
     }
 
     /// Promise davomlarini (then) bajaradi.
@@ -1195,6 +1251,21 @@ impl Engine {
 
     /// Element bosildi: onclick atributi va addEventListener işlovçilari.
     pub fn click(&mut self, el: usize, doc: &mut Doc, now: u64) -> bool {
+        // Hodisa qalqişi: element va uning ajdodlari işlovçilari
+        let mut chain = Vec::new();
+        let mut cur = el as u16;
+        while cur != crate::html::NO_EL && chain.len() < 64 {
+            chain.push(cur as usize);
+            cur = doc.elems.get(cur as usize).map(|e| e.parent).unwrap_or(crate::html::NO_EL);
+        }
+        let mut ran = false;
+        for el in chain {
+            ran |= self.click_one(el, doc, now);
+        }
+        ran
+    }
+
+    fn click_one(&mut self, el: usize, doc: &mut Doc, now: u64) -> bool {
         let mut ran = false;
         if let Some(code) = doc.elems.get(el).and_then(|e| e.onclick.clone()) {
             let _ = self.run(&code, doc, now);
@@ -1214,7 +1285,17 @@ impl Engine {
     }
 
     pub fn has_handler(&self, el: usize, doc: &Doc) -> bool {
-        self.handlers.iter().any(|(e, _)| *e == el) || doc.elems.get(el).is_some_and(|e| e.onclick.is_some())
+        let mut cur = el as u16;
+        let mut n = 0;
+        while cur != crate::html::NO_EL && n < 64 {
+            let c = cur as usize;
+            if self.handlers.iter().any(|(e, _)| *e == c) || doc.elems.get(c).is_some_and(|e| e.onclick.is_some()) {
+                return true;
+            }
+            cur = doc.elems.get(c).map(|e| e.parent).unwrap_or(crate::html::NO_EL);
+            n += 1;
+        }
+        false
     }
 
     fn call_top(&mut self, f: &Value, args: Vec<Value>, doc: &mut Doc) {
@@ -1409,15 +1490,27 @@ impl Engine {
                     b.vars.push((String::from("this"), this));
                     b.vars.push((String::from("arguments"), Value::Arr(Rc::new(RefCell::new(args.clone())))));
                 }
-                if let Some(x) = &def.expr {
-                    return self.eval(x, &e, doc);
+                let r = if let Some(x) = &def.expr {
+                    self.eval(x, &e, doc)
+                } else {
+                    match self.exec_block(&def.body, &e, doc) {
+                        Ok(_) => Ok(Value::Undef),
+                        Err(Ctl::Ret(v)) => Ok(v),
+                        Err(Ctl::Brk) | Err(Ctl::Cont) => Ok(Value::Undef),
+                        Err(e) => Err(e),
+                    }
+                };
+                if def.is_async.get() {
+                    // async funksiya doim Promise qaytaradi
+                    let p = new_prom();
+                    match r {
+                        Ok(v) => self.resolve(&p, v),
+                        Err(Ctl::Throw(x)) => self.settle(&p, false, x),
+                        Err(e) => return Err(e),
+                    }
+                    return Ok(Value::Promise(p));
                 }
-                match self.exec_block(&def.body, &e, doc) {
-                    Ok(_) => Ok(Value::Undef),
-                    Err(Ctl::Ret(v)) => Ok(v),
-                    Err(Ctl::Brk) | Err(Ctl::Cont) => Ok(Value::Undef),
-                    Err(e) => Err(e),
-                }
+                r
             }
             Value::Native(name, recv) => self.native(name, (**recv).clone(), args, doc),
             Value::Host(h) => {
@@ -1520,6 +1613,19 @@ impl Engine {
                 ("console", _) => Value::Native("console.log", Box::new(Value::Undef)),
                 ("document", "getElementById") => Value::Native("doc.byId", Box::new(Value::Undef)),
                 ("document", "querySelector") => Value::Native("doc.query", Box::new(Value::Undef)),
+                ("document", "querySelectorAll") => Value::Native("doc.queryAll", Box::new(Value::Undef)),
+                ("document", "getElementsByClassName") => Value::Native("doc.byClass", Box::new(Value::Undef)),
+                ("document", "getElementsByTagName") => Value::Native("doc.byTag", Box::new(Value::Undef)),
+                ("document", "createElement") => Value::Native("doc.create", Box::new(Value::Undef)),
+                ("document", "cookie") => Value::str(&crate::net::http::cookies_for(&self.url)),
+                ("localStorage", k) | ("sessionStorage", k) => match k {
+                    "getItem" => Value::Native("ls.get", Box::new(Value::Undef)),
+                    "setItem" => Value::Native("ls.set", Box::new(Value::Undef)),
+                    "removeItem" => Value::Native("ls.remove", Box::new(Value::Undef)),
+                    "clear" => Value::Native("ls.clear", Box::new(Value::Undef)),
+                    "length" => Value::Num(LS.lock().iter().filter(|(o, _, _)| *o == origin(&self.url)).count() as f64),
+                    key => LS.lock().iter().find(|(o, kk, _)| *o == origin(&self.url) && kk == key).map(|(_, _, v)| Value::str(v)).unwrap_or(Value::Undef),
+                },
                 ("document", "write") | ("document", "writeln") => Value::Native("doc.write", Box::new(Value::Undef)),
                 ("document", "addEventListener") | ("window", "addEventListener") => Value::Native("noop", Box::new(Value::Undef)),
                 ("document", "title") => Value::str(&doc.title),
@@ -1551,10 +1657,35 @@ impl Engine {
                 ("location", "pathname") => Value::str(&format!("/{}", self.url.split("://").nth(1).and_then(|r| r.split_once('/')).map(|(_, p)| p.split('?').next().unwrap_or("")).unwrap_or(""))),
                 ("location", "protocol") => Value::str(&format!("{}:", self.url.split("://").next().unwrap_or(""))),
                 ("body", "style") => Value::Style(usize::MAX),
+                ("body", "appendChild") | ("body", "append") | ("body", "insertAdjacentHTML") => {
+                    let b = doc.elems.iter().position(|e| e.tag == "body").unwrap_or(0);
+                    Value::Native(if key == "insertAdjacentHTML" { "el.insertHTML" } else { "el.append" }, Box::new(Value::Elem(b)))
+                }
                 _ => Value::Undef,
             },
             Value::Elem(i) => match key {
                 "textContent" | "innerText" | "innerHTML" => Value::str(&doc.text_of(*i)),
+                "className" => Value::str(&doc.elems.get(*i).map(|e| e.classes.join(" ")).unwrap_or_default()),
+                "classList" => Value::Obj(Rc::new(RefCell::new(alloc::vec![
+                    (String::from("add"), nat("cl.add", obj)),
+                    (String::from("remove"), nat("cl.remove", obj)),
+                    (String::from("toggle"), nat("cl.toggle", obj)),
+                    (String::from("contains"), nat("cl.contains", obj)),
+                ]))),
+                "parentElement" | "parentNode" => match doc.elems.get(*i).map(|e| e.parent) {
+                    Some(p) if p != crate::html::NO_EL => Value::Elem(p as usize),
+                    _ => Value::Null,
+                },
+                "children" => Value::Arr(Rc::new(RefCell::new(
+                    (0..doc.elems.len()).filter(|&k| doc.elems[k].parent as usize == *i).map(Value::Elem).collect(),
+                ))),
+                "appendChild" | "append" => nat("el.append", obj),
+                "insertAdjacentHTML" => nat("el.insertHTML", obj),
+                "remove" => nat("el.remove", obj),
+                "querySelector" => nat("doc.query", obj),
+                "querySelectorAll" => nat("doc.queryAll", obj),
+                "setAttribute" => nat("el.setAttr", obj),
+                "focus" | "blur" | "click" | "scrollIntoView" => nat("noop", obj),
                 "id" => Value::str(&doc.elems.get(*i).map(|e| e.id.clone()).unwrap_or_default()),
                 "tagName" => Value::str(&doc.elems.get(*i).map(|e| e.tag.to_ascii_uppercase()).unwrap_or_default()),
                 "style" => Value::Style(*i),
@@ -1592,11 +1723,15 @@ impl Engine {
                 }
             }
             Value::Elem(i) => match key {
-                "textContent" | "innerText" | "innerHTML" => {
-                    let s = v.to_string();
-                    let text = if key == "innerHTML" { strip_tags(&s) } else { s };
-                    doc.set_text(*i, &text);
+                "textContent" | "innerText" => doc.set_content(*i, &v.to_string(), false),
+                "innerHTML" => doc.set_content(*i, &v.to_string(), true),
+                "className" => {
+                    if let Some(e) = doc.elems.get_mut(*i) {
+                        e.classes = v.to_string().split_whitespace().map(String::from).collect();
+                    }
+                    doc.restyle(*i);
                 }
+                "hidden" => doc.set_style(*i, "display", if v.truthy() { "none" } else { "block" }),
                 "value" => {
                     if let Some(k) = doc.input_of(*i) {
                         doc.inputs[k].value = v.to_string();
@@ -1630,6 +1765,8 @@ impl Engine {
                 }
             }
             Value::Host("document") if key == "title" => doc.title = v.to_string(),
+            Value::Host("document") if key == "cookie" => crate::net::http::set_cookie(&self.url, &v.to_string()),
+            Value::Host("localStorage") | Value::Host("sessionStorage") => ls_set(&self.url, key, &v.to_string()),
             Value::Host("window") => self.set_var(&self.globals.clone(), key, v),
             _ => {}
         }
@@ -1660,6 +1797,24 @@ impl Engine {
             },
             Expr::Arr(items) => Value::Arr(Rc::new(RefCell::new(self.eval_list(items, env, doc)?))),
             Expr::Spread(x) => self.eval(x, env, doc)?,
+            Expr::Await(x) => {
+                let v = self.eval(x, env, doc)?;
+                let Value::Promise(p) = &v else { return Ok(v) };
+                // Kutiş: fetch so'rovlarini va taymerlarni joyida bajarib, promise yeçilgunça
+                let deadline = crate::timer::uptime_ms() + 20_000;
+                loop {
+                    self.drain(doc);
+                    let st = p.borrow().state.clone();
+                    match st {
+                        PState::Ok(v) => break v,
+                        PState::Err(e) => return Err(Ctl::Throw(e)),
+                        PState::Pending => {}
+                    }
+                    if crate::timer::uptime_ms() > deadline || !self.pump_sync(doc) {
+                        return Err(err("await: Promise yeçilmadi (vaqt tugadi yoki kutiladigan hodisa yöq)"));
+                    }
+                }
+            }
             Expr::Obj(props) => {
                 let mut v = Vec::new();
                 for (k, x) in props {
@@ -2069,12 +2224,131 @@ impl Engine {
                 Some(i) => Value::Elem(i),
                 None => Value::Null,
             },
-            "doc.query" => {
+            "doc.query" | "doc.queryAll" | "doc.byClass" | "doc.byTag" => {
                 let s = arg(0).to_string();
-                match s.strip_prefix('#').and_then(|id| doc.find_id(id)) {
-                    Some(i) => Value::Elem(i),
-                    None => Value::Null,
+                let sel = match name {
+                    "doc.byClass" => format!(".{}", s),
+                    _ => s.clone(),
+                };
+                let mut found: Vec<usize> = match sel.strip_prefix('#').and_then(|id| doc.find_id(id)) {
+                    Some(i) if !sel.contains(['.', ' ']) => alloc::vec![i],
+                    _ => doc.query_all(&sel),
+                };
+                // element.querySelector — faqat uning avlodlari
+                if let Value::Elem(root) = this {
+                    found.retain(|&k| k != root && doc.within(k as u16, root as u16));
                 }
+                if name == "doc.query" {
+                    found.first().map(|&i| Value::Elem(i)).unwrap_or(Value::Null)
+                } else {
+                    Value::Arr(Rc::new(RefCell::new(found.into_iter().map(Value::Elem).collect())))
+                }
+            }
+            "doc.create" => Value::Obj(Rc::new(RefCell::new(alloc::vec![
+                (String::from("__tag"), Value::str(&arg(0).to_string().to_ascii_lowercase())),
+                (String::from("textContent"), Value::str("")),
+                (String::from("innerHTML"), Value::str("")),
+                (String::from("className"), Value::str("")),
+                (String::from("id"), Value::str("")),
+            ]))),
+            "el.append" | "el.insertHTML" => {
+                let Value::Elem(target) = this else { return Ok(Value::Undef) };
+                let html = if name == "el.insertHTML" {
+                    arg(1).to_string()
+                } else {
+                    match arg(0) {
+                        Value::Obj(o) => {
+                            let g = |k: &str| o.borrow().iter().find(|(x, _)| x == k).map(|(_, v)| v.to_string()).unwrap_or_default();
+                            let tag = if g("__tag").is_empty() { String::from("div") } else { g("__tag") };
+                            let inner = if g("innerHTML").is_empty() {
+                                g("textContent").replace('&', "&amp;").replace('<', "&lt;")
+                            } else {
+                                g("innerHTML")
+                            };
+                            let mut attrs = String::new();
+                            if !g("id").is_empty() {
+                                attrs.push_str(&format!(" id=\"{}\"", g("id")));
+                            }
+                            if !g("className").is_empty() {
+                                attrs.push_str(&format!(" class=\"{}\"", g("className")));
+                            }
+                            format!("<{}{}>{}</{}>", tag, attrs, inner, tag)
+                        }
+                        Value::Elem(src) => format!("<p>{}</p>", doc.text_of(src).replace('<', "&lt;")),
+                        v => v.to_string().replace('<', "&lt;"),
+                    }
+                };
+                doc.append_into(target, &html);
+                Value::Undef
+            }
+            "el.remove" => {
+                if let Value::Elem(i) = this {
+                    doc.set_style(i, "display", "none");
+                }
+                Value::Undef
+            }
+            "el.setAttr" => {
+                if let Value::Elem(i) = this {
+                    match arg(0).to_string().as_str() {
+                        "class" => {
+                            if let Some(e) = doc.elems.get_mut(i) {
+                                e.classes = arg(1).to_string().split_whitespace().map(String::from).collect();
+                            }
+                            doc.restyle(i);
+                        }
+                        "style" => {
+                            for (k, v) in crate::css::parse_decls(&arg(1).to_string()) {
+                                doc.set_style(i, &k, &v);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Value::Undef
+            }
+            "cl.add" | "cl.remove" | "cl.toggle" | "cl.contains" => {
+                let Value::Elem(i) = this else { return Ok(Value::Undef) };
+                let c = arg(0).to_string();
+                let Some(e) = doc.elems.get_mut(i) else { return Ok(Value::Undef) };
+                let has = e.classes.contains(&c);
+                let r = match name {
+                    "cl.contains" => return Ok(Value::Bool(has)),
+                    "cl.add" => {
+                        if !has {
+                            e.classes.push(c);
+                        }
+                        true
+                    }
+                    "cl.remove" => {
+                        e.classes.retain(|x| *x != c);
+                        false
+                    }
+                    _ => {
+                        if has {
+                            e.classes.retain(|x| *x != c);
+                        } else {
+                            e.classes.push(c);
+                        }
+                        !has
+                    }
+                };
+                doc.restyle(i);
+                Value::Bool(r)
+            }
+            "ls.get" => LS.lock().iter().find(|(o, k, _)| *o == origin(&self.url) && *k == arg(0).to_string()).map(|(_, _, v)| Value::str(v)).unwrap_or(Value::Null),
+            "ls.set" => {
+                ls_set(&self.url, &arg(0).to_string(), &arg(1).to_string());
+                Value::Undef
+            }
+            "ls.remove" => {
+                let (o, k) = (origin(&self.url), arg(0).to_string());
+                LS.lock().retain(|(oo, kk, _)| !(*oo == o && *kk == k));
+                Value::Undef
+            }
+            "ls.clear" => {
+                let o = origin(&self.url);
+                LS.lock().retain(|(oo, _, _)| *oo != o);
+                Value::Undef
             }
             "doc.write" => {
                 let s: String = a.iter().map(|v| v.to_string()).collect();
@@ -2259,6 +2533,30 @@ fn gfx_h() -> usize {
     crate::gfx::size().1
 }
 
+/// localStorage: (manba, kalit, qiymat). Tizim içida — qayta yuklanguncha saqlanadi.
+static LS: crate::sync::SpinLock<Vec<(String, String, String)>> = crate::sync::SpinLock::new(Vec::new());
+
+/// Manba (origin): "sxema://host" yoki ichki/mahalliy sahifalar uçun "zamin".
+fn origin(url: &str) -> String {
+    match url.split_once("://") {
+        Some((sc, rest)) if sc != "zamin" => format!("{}://{}", sc, rest.split('/').next().unwrap_or("")),
+        _ => String::from("zamin"),
+    }
+}
+
+fn ls_set(url: &str, k: &str, v: &str) {
+    let o = origin(url);
+    let mut ls = LS.lock();
+    match ls.iter_mut().find(|(oo, kk, _)| *oo == o && kk == k) {
+        Some(e) => e.2 = String::from(v),
+        None => {
+            if ls.len() < 2000 {
+                ls.push((o, String::from(k), String::from(v)));
+            }
+        }
+    }
+}
+
 /// URL kodlaş (UTF-8 baytlar %XX).
 pub fn url_encode(s: &str, keep_reserved: bool) -> String {
     let mut out = String::new();
@@ -2425,19 +2723,6 @@ pub fn json_parse(src: &str) -> Option<Value> {
     if i == b.len() { Some(v) } else { None }
 }
 
-fn strip_tags(s: &str) -> String {
-    let mut out = String::new();
-    let mut in_tag = false;
-    for c in s.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            c if !in_tag => out.push(c),
-            _ => {}
-        }
-    }
-    crate::html::decode_entities(&out)
-}
 
 fn slice_range(len: usize, a: &Value, b: &Value) -> (usize, usize) {
     let norm = |v: &Value, d: usize| -> usize {
@@ -2759,7 +3044,9 @@ fn date_call(n: &str, this: &Value) -> Value {
 
 /// O'z-o'zini sinaş (yuklanişda): asosiy til imkoniyatlari.
 pub fn self_test() -> Result<usize, String> {
-    let cases: [(&str, &str); 17] = [
+    let cases: [(&str, &str); 19] = [
+        ("async function f(x) { return x * 2; } let r = 0; f(21).then(v => { r = v; }); r", "0"),
+        ("async function g() { const a = await Promise.resolve(5); const b = await new Promise(r => r(7)); return a + b; } let z = 0; g().then(v => { z = v; }); z", "0"),
         ("JSON.parse('{\"a\": [1, 2, {\"b\": \"x\"}], \"n\": -3.5}').a[2].b + JSON.parse('[1,2]').length", "x2"),
         ("JSON.stringify(JSON.parse('{\"k\":[true,null,\"s\"]}'))", "{\"k\":[true,null,\"s\"]}"),
         ("decodeURIComponent(encodeURIComponent('Salom dunyo & ş'))", "Salom dunyo & ş"),

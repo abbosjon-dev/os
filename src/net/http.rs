@@ -92,6 +92,33 @@ pub fn join(base: &str, href: &str) -> String {
     out
 }
 
+/// Cookie qutisi: (host, nom, qiymat). Tizim içida — qayta yuklanguncha.
+static JAR: crate::sync::SpinLock<Vec<(String, String, String)>> = crate::sync::SpinLock::new(Vec::new());
+
+fn host_of(url: &str) -> String {
+    parse_url(url).map(|u| u.host).unwrap_or_else(|| String::from("zamin"))
+}
+
+/// Host uçun cookie satri: "a=1; b=2".
+pub fn cookies_for(url: &str) -> String {
+    let h = host_of(url);
+    JAR.lock().iter().filter(|(hh, _, _)| *hh == h).map(|(_, n, v)| format!("{}={}", n, v)).collect::<Vec<_>>().join("; ")
+}
+
+/// "nom=qiymat; Path=/; Max-Age=…" — saqlaydi (Max-Age=0 yoki böş qiymat — öçiradi).
+pub fn set_cookie(url: &str, header: &str) {
+    let h = host_of(url);
+    let first = header.split(';').next().unwrap_or("");
+    let Some((n, v)) = first.split_once('=') else { return };
+    let (n, v) = (String::from(n.trim()), String::from(v.trim()));
+    let expire = header.to_ascii_lowercase().split(';').any(|a| a.trim() == "max-age=0");
+    let mut jar = JAR.lock();
+    jar.retain(|(hh, nn, _)| !(*hh == h && *nn == n));
+    if !expire && !n.is_empty() && jar.len() < 500 {
+        jar.push((h, n, v));
+    }
+}
+
 pub struct Response {
     pub status: u16,
     pub headers: Vec<(String, String)>,
@@ -157,6 +184,10 @@ fn request(u: &Url, method: &str, body: Option<(&str, &[u8])>) -> Result<(u16, V
         method, u.path, host_hdr, env!("CARGO_PKG_VERSION")
     )
     .into_bytes();
+    let ck = cookies_for(&format!("{}://{}/", if u.https { "https" } else { "http" }, u.host));
+    if !ck.is_empty() {
+        req.extend_from_slice(format!("Cookie: {}\r\n", ck).as_bytes());
+    }
     match body {
         Some((ct, b)) => {
             req.extend_from_slice(format!("Content-Type: {}\r\nContent-Length: {}\r\n\r\n", ct, b.len()).as_bytes());
@@ -205,6 +236,10 @@ fn request(u: &Url, method: &str, body: Option<(&str, &[u8])>) -> Result<(u16, V
         .filter_map(|l| l.split_once(':'))
         .map(|(k, v)| (String::from(k.trim()), String::from(v.trim())))
         .collect();
+    for (k, v) in headers.iter().filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie")) {
+        let _ = k;
+        set_cookie(&format!("http://{}/", u.host), v);
+    }
     let mut body = raw[he + 4..].to_vec();
     let chunked = headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().contains("chunked"));
     if chunked {

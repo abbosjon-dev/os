@@ -174,7 +174,8 @@ struct Window {
     scroll: usize,      // Muharrir: birinçi körinadigan qator
     dirty: bool,        // Muharrir: saqlanmagan özgarişlar
     tiles: Vec<u8>,     // Boşqotirma: 16 ta katak (0 — böş)
-    web: Option<Box<Web>>, // Brauzer holati
+    web: Option<Box<Web>>, // Brauzer holati (faol tab)
+    web_tabs: Vec<Box<Web>>, // Brauzer: boşqa (nofaol) tablar; faol tab örni — `tab`
     pen: Option<(usize, usize)>, // Chizma: oxirgi nuqta (tuvalda)
 }
 
@@ -349,6 +350,7 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         dirty: false,
         tiles: Vec::new(),
         web: None,
+        web_tabs: Vec::new(),
         pen: None,
     }
 }
@@ -1407,6 +1409,9 @@ fn desktop() {
                     // Alt+W — yopiş, Alt+M — yashiriş, Alt+F — kattalaştiriş
                     if let Some(i) = windows.iter().rposition(|w| !w.hidden) {
                         match e.code {
+                            17 if windows[i].kind == Kind::Browser && !windows[i].web_tabs.is_empty() => {
+                                tab_close(&mut windows[i]); // Alt+W — faol tabni yopiş
+                            }
                             17 => {
                                 let mut w = windows.remove(i);
                                 close_terminal(&mut w);
@@ -1461,6 +1466,13 @@ fn desktop() {
                     }
                 }
                 (input::EV_KEY, 99) if e.value == 1 => SHOT_REQ.store(true, Ordering::Relaxed),
+                (input::EV_KEY, 20) if e.value == 1 && alt => {
+                    // Alt+T — brauzerda yangi tab
+                    if let Some(w) = windows.last_mut().filter(|w| !w.hidden && w.kind == Kind::Browser) {
+                        tab_new(w, "zamin://bosh");
+                        changed = true;
+                    }
+                }
                 (input::EV_KEY, _) if alt => {}
                 (input::EV_KEY, code) if e.value == 1 => {
                     let top = windows.last().filter(|w| !w.hidden).map(|w| w.kind);
@@ -1739,7 +1751,9 @@ fn handle_click(
         };
         if hit {
             let w = windows.remove(i);
-            windows.push(w);
+            if !(w.kind == Kind::Browser && w.web.is_none()) {
+                windows.push(w); // (brauzerda oxirgi tab yopilgan bölsa — oyna yopiladi)
+            }
             return true;
         }
         if windows[i].on_grip(cx, cy) {
@@ -6382,6 +6396,7 @@ struct Web {
     t0: u64,
     focus: Option<usize>,         // fokusdagi forma maydoni
     fetches: Vec<(u64, u32)>,     // (yuklaş vazifasi, JS fetch raqami)
+    select_open: Option<usize>,   // oçiq <select> ro'yxati
 }
 
 struct WItem {
@@ -6448,7 +6463,79 @@ static WEB_WORKER: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBo
 fn builtin_page(url: &str) -> Option<&'static str> {
     let url = url.split(['?', '#']).next().unwrap_or(url);
     Some(match url.trim_end_matches('/') {
-        "zamin://malumot.json" => r##"{"tizim": "Zamin OS", "versiya": "0.0.24", "til": "Rust", "imkoniyatlar": ["JavaScript", "CSS", "fetch", "Promise", "formalar"], "yadrolar": 4, "ochiq": true}"##,
+        "zamin://veb" => r##"<title>Töliqroq veb</title>
+<style>
+body { background: #0f1724; color: #dbe3ee; }
+h1 { text-align: center; color: #ffffff; }
+.qator { display: flex; gap: 12px; }
+.karta { background: #13213a; border: 1px solid #3a7bd5; border-radius: 10px; padding: 10px; }
+.karta > h3 { color: #64d2ff; }
+.panjara { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.yacheyka { background: #1d2a40; border-radius: 8px; padding: 8px; text-align: center; }
+table { border: 1px solid #3a4458; }
+th { color: #ffd166; }
+.yashirin { display: none; }
+.faol { color: #2fbf5f; font-weight: bold; }
+#natija { color: #ffd166; }
+</style>
+<h1>Flex, grid, jadval va zamonaviy JS</h1>
+<div class="qator">
+  <div class="karta"><h3>Flex 1</h3><p>display:flex — ustunlar yonma-yon.</p></div>
+  <div class="karta"><h3>Flex 2</h3><p>gap: 12px, teng kenglik.</p></div>
+  <div class="karta"><h3>Flex 3</h3><p id="sanoq">querySelectorAll…</p></div>
+</div>
+<h2>Grid (2 ustun)</h2>
+<div class="panjara">
+  <div class="yacheyka">A</div><div class="yacheyka">B</div><div class="yacheyka">C</div><div class="yacheyka">D</div>
+</div>
+<h2>Jadval</h2>
+<table>
+<tr><th>Til</th><th>Imkoniyat</th><th>Holat</th></tr>
+<tr><td>HTML</td><td>formalar, jadval, select</td><td>tayyor</td></tr>
+<tr><td>CSS</td><td>flex, grid, quti modeli</td><td>tayyor</td></tr>
+<tr><td>JS</td><td>async/await, DOM, localStorage</td><td>tayyor</td></tr>
+</table>
+<h2>Tanlov va JS</h2>
+<p>Shahar: <select id="shahar"><option value="tsh">Toshkent</option><option value="sam" selected>Samarqand</option><option value="bux">Buxoro</option></select>
+<button id="kor">Körsat</button> <button id="almash">Yaşir / körsat</button></p>
+<p id="tanlov" class="faol">—</p>
+<p id="sir" class="yashirin">Bu matn classList.toggle bilan körinadi!</p>
+<p><button id="kel">async/await fetch</button> <button id="qosh">Element qöşiş</button></p>
+<p id="natija">—</p>
+<ul id="royxat"><li>Boşlanğiç element</li></ul>
+<p id="xotira">—</p>
+<script>
+document.getElementById("sanoq").textContent = "Kartalar soni: " + document.querySelectorAll(".karta").length + ", yacheykalar: " + document.querySelectorAll(".yacheyka").length;
+document.getElementById("kor").onclick = () => {
+  const s = document.getElementById("shahar");
+  document.getElementById("tanlov").innerHTML = "Tanlandi: <b>" + s.value + "</b>";
+};
+document.getElementById("almash").addEventListener("click", () => {
+  document.getElementById("sir").classList.toggle("yashirin");
+});
+async function yukla() {
+  const r = await fetch("zamin://malumot.json");
+  const d = await r.json();
+  return d.tizim + " " + d.versiya + " — " + d.imkoniyatlar.length + " ta imkoniyat";
+}
+document.getElementById("kel").onclick = async () => {
+  document.getElementById("natija").textContent = "Kutilmoqda…";
+  const t = await yukla();
+  document.getElementById("natija").textContent = "await natijasi: " + t;
+};
+let n = 0;
+document.getElementById("qosh").onclick = () => {
+  n++;
+  const li = document.createElement("li");
+  li.textContent = "Yangi element #" + n;
+  document.getElementById("royxat").appendChild(li);
+};
+const k = Number(localStorage.getItem("tashrif") || "0") + 1;
+localStorage.setItem("tashrif", String(k));
+document.cookie = "til=uz; path=/";
+document.getElementById("xotira").textContent = "localStorage: bu sahifa " + k + "-marta oçildi · cookie: " + document.cookie;
+</script>"##,
+        "zamin://malumot.json" => r##"{"tizim": "Zamin OS", "versiya": "0.0.25", "til": "Rust", "imkoniyatlar": ["JavaScript", "CSS", "fetch", "Promise", "formalar"], "yadrolar": 4, "ochiq": true}"##,
         "zamin://forma" => r##"<title>Formalar va fetch()</title>
 <style>
 body { background: #0f1724; color: #dbe3ee; }
@@ -6528,6 +6615,7 @@ document.getElementById("qs").textContent = location.search;
 <li><a href="zamin://sinov">JavaScript va CSS sinovi</a></li>
 <li><a href="~/Hujjatlar/zamin.html">Zamin OS qöllanmasi</a> — mahalliy HTML fayl</li>
 <li><a href="zamin://forma">Formalar va fetch() sinovi</a></li>
+<li><a href="zamin://veb">Flex, grid, jadval, async/await sinovi</a></li>
 <li><a href="zamin://tarix">Tarix</a> — körilgan sahifalar</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
 <li><a href="https://example.com/">example.com</a> (HTTPS, haqiqiy internet)</li>
@@ -6821,12 +6909,18 @@ fn web_new() -> Box<Web> {
         t0: 0,
         focus: None,
         fetches: Vec::new(),
+        select_open: None,
     })
 }
 
 /// Natijani oynaga qöllaydi va skriptlarni bajaradi.
 fn web_apply(win: &mut Window, res: WebRes) {
     let w = win.web.get_or_insert_with(web_new);
+    apply_web(w, res);
+    web_title(win);
+}
+
+fn apply_web(w: &mut Web, res: WebRes) {
     w.doc = res.doc;
     w.url = res.url;
     w.images = res.images;
@@ -6834,8 +6928,10 @@ fn web_apply(win: &mut Window, res: WebRes) {
     w.loading = None;
     w.focus = None;
     w.fetches.clear();
+    w.select_open = None;
     let mut eng = crate::js::Engine::new();
     eng.url = w.url.clone();
+    eng.fetch_hook = Some(web_raw); // await fetch(...) — joyida
     let now = crate::timer::uptime_ms();
     if !w.url.starts_with("zamin://tarix") {
         let t = time::now();
@@ -6862,8 +6958,124 @@ fn web_apply(win: &mut Window, res: WebRes) {
     };
     w.status = alloc::format!("{}{}", res.status, js_info);
     w.js = Some(eng);
-    let title = if w.doc.title.is_empty() { w.url.clone() } else { w.doc.title.clone() };
-    win.title = alloc::format!("{} — Zamin Brauzer", title);
+}
+
+fn web_title(win: &mut Window) {
+    if let Some(w) = &win.web {
+        let title = if w.doc.title.is_empty() { w.url.clone() } else { w.doc.title.clone() };
+        win.title = alloc::format!("{} — Zamin Brauzer", title);
+    }
+}
+
+// --- Tablar ---
+fn tab_count(win: &Window) -> usize {
+    win.web_tabs.len() + 1
+}
+
+/// k-tabga ötiş (faol tab boşqalari orasiga qaytadi).
+fn tab_switch(win: &mut Window, k: usize) {
+    if k == win.tab || k >= tab_count(win) {
+        return;
+    }
+    let Some(cur) = win.web.take() else { return };
+    let mut all = core::mem::take(&mut win.web_tabs);
+    all.insert(win.tab.min(all.len()), cur);
+    win.web = Some(all.remove(k));
+    win.web_tabs = all;
+    win.tab = k;
+    web_title(win);
+}
+
+fn tab_new(win: &mut Window, url: &str) {
+    if let Some(cur) = win.web.take() {
+        let at = win.tab.min(win.web_tabs.len());
+        win.web_tabs.insert(at, cur);
+    }
+    win.tab = win.web_tabs.len();
+    web_go(win, url, false);
+}
+
+/// Faol tabni yopadi. Oxirgi tab bölsa — false (oyna yopilsin).
+fn tab_close(win: &mut Window) -> bool {
+    if win.web_tabs.is_empty() {
+        return false;
+    }
+    let k = win.tab.min(win.web_tabs.len() - 1);
+    win.web = Some(win.web_tabs.remove(k));
+    win.tab = k;
+    web_title(win);
+    true
+}
+
+/// Tablar paneli: (y, balandlik, [(x, w)], "+" x).
+fn tab_geo(win: &Window) -> (usize, usize, Vec<(usize, usize)>, usize) {
+    let u = body();
+    let y = win.y + title_h();
+    let h = u * 3 / 2;
+    let n = tab_count(win);
+    let avail = win.w.saturating_sub(u * 3);
+    let tw = (avail / n).min(u * 11).max(u * 3);
+    let tabs = (0..n).map(|k| (win.x + u / 3 + k * tw, tw)).collect();
+    (y, h, tabs, win.x + u / 3 + n * tw + u / 4)
+}
+
+fn draw_tabs(win: &Window) {
+    let u = body();
+    let (y, h, tabs, plus) = tab_geo(win);
+    fill_rect(win.x + 1, y, win.w.saturating_sub(2), h, 0x1a2030);
+    for (k, &(x, w)) in tabs.iter().enumerate() {
+        let web = if k == win.tab { win.web.as_deref() } else { win.web_tabs.get(if k < win.tab { k } else { k - 1 }).map(|b| &**b) };
+        let Some(web) = web else { continue };
+        let active = k == win.tab;
+        if active {
+            gfx::fill_round_rect(x, y + 3, w - 2, h - 3, u / 3, WIN_BODY);
+            fill_rect(x, y + h - u / 3, w - 2, u / 3, WIN_BODY);
+        } else {
+            fill_rect(x + w - 2, y + u / 3, 1, h - u * 2 / 3, 0x34405a);
+        }
+        let t = if web.doc.title.is_empty() { web.url.clone() } else { web.doc.title.clone() };
+        let px = small() * 4 / 5;
+        let lbl = fit_text(&t, w.saturating_sub(u * 2), px);
+        let tx = x + u / 2;
+        if web.loading.is_some() {
+            gfx::fill_circle(tx + 3, y + h / 2 + 1, 3, accent());
+        }
+        gfx::draw_text(tx + if web.loading.is_some() { 9 } else { 0 }, y + (h - px) / 2 + 1, &lbl, if active { 0xeef3fa } else { 0x8696ac }, px);
+        // yopiş belgisi
+        let (cx, cy) = ((x + w - u * 3 / 4) as f32, (y + h / 2 + 1) as f32);
+        let d = u as f32 / 5.0;
+        seg(cx - d, cy - d, cx + d, cy + d, 1.1, 0x8696ac);
+        seg(cx - d, cy + d, cx + d, cy - d, 1.1, 0x8696ac);
+    }
+    let (pc, pm) = ((plus + u / 2) as f32, (y + h / 2 + 1) as f32);
+    let d = u as f32 / 3.5;
+    seg(pc - d, pm, pc + d, pm, 1.3, 0xaebccf);
+    seg(pc, pm - d, pc, pm + d, 1.3, 0xaebccf);
+}
+
+/// Tablar paneliga bosiş. Natija: Some(true) — işlandi, Some(false) — oxirgi tab yopildi (oynani yopiş).
+fn tabs_click(win: &mut Window, cx: usize, cy: usize) -> Option<bool> {
+    let u = body();
+    let (y, h, tabs, plus) = tab_geo(win);
+    if cy < y || cy >= y + h {
+        return None;
+    }
+    if cx >= plus && cx < plus + u {
+        tab_new(win, "zamin://bosh");
+        return Some(true);
+    }
+    for (k, &(x, w)) in tabs.iter().enumerate() {
+        if cx >= x && cx < x + w {
+            if cx + u + u / 4 >= x + w {
+                // × — yopiş
+                tab_switch(win, k);
+                return Some(tab_close(win));
+            }
+            tab_switch(win, k);
+            return Some(true);
+        }
+    }
+    Some(true)
 }
 
 fn web_go(win: &mut Window, url: &str, push: bool) {
@@ -6907,6 +7119,21 @@ fn web_poll(windows: &mut [Window]) -> bool {
     let mut changed = false;
     let now = crate::timer::uptime_ms();
     for win in windows.iter_mut().filter(|w| w.kind == Kind::Browser) {
+        // Nofaol tablarda tugagan yuklaşlar
+        for t in win.web_tabs.iter_mut() {
+            if let Some(id) = t.loading {
+                let res = {
+                    let mut q = WEB_Q.lock();
+                    q.iter().position(|j| j.id == id && j.result.is_some()).map(|k| q.remove(k).result.unwrap())
+                };
+                if let Some(r) = res {
+                    let mut tmp = core::mem::replace(t, web_new());
+                    apply_web(&mut tmp, r);
+                    *t = tmp;
+                    changed = true;
+                }
+            }
+        }
         // JS fetch(): yangi sörovlarni navbatga, tayyorlarini promise larga
         if let Some(w) = win.web.as_mut().filter(|w| w.loading.is_none()) {
             if let Some(eng) = w.js.as_mut() {
@@ -6977,7 +7204,7 @@ fn web_poll(windows: &mut [Window]) -> bool {
 /// Brauzer geometriyasi: (asboblar y, balandligi, tugmalar x[3], manzil (x,y,w,h), sahifa (x,y,w,h)).
 fn web_geo(win: &Window) -> (usize, usize, [usize; 3], (usize, usize, usize, usize), (usize, usize, usize, usize)) {
     let u = body();
-    let top = win.y + title_h();
+    let top = win.y + title_h() + u * 3 / 2; // tablar paneli ostida
     let bh = u * 3 / 2;
     let by = top + u / 3;
     let b0 = win.x + u / 2;
@@ -7021,22 +7248,92 @@ fn dfill(x: usize, y: usize, w: usize, h: usize, c: Color) -> Deco {
 
 /// Sahifa joylaşuvi: elementlar, bezaklar va toʻliq balandlik.
 /// Quti modeli: konteyner (fon / çegara / padding / kenglik) — qöşni bloklar bitta qutiga birlaşadi.
+/// Flex / grid / jadval: konteyner bolalari yonma-yon ustunlar bölib joylaşadi (rekursiv).
 fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
+    let u = body();
+    let mut items: Vec<WItem> = Vec::new();
+    let mut deco: Vec<Deco> = Vec::new();
+    let vis: Vec<&crate::html::Block> = web
+        .doc
+        .blocks
+        .iter()
+        .filter(|b| !b.hidden && !(b.kind == HK::P && b.spans.iter().all(|s| s.text.is_empty() && s.input == NO_EL)))
+        .collect();
+    let y = lay(web, &vis, u, width.saturating_sub(u * 2), u / 2, 0, &mut items, &mut deco);
+    (items, deco, y + u)
+}
+
+/// Bloklar ro'yxatini (x, kenglik) sohaga joylaydi; `skip` — joriy ustun içidagi flex (qayta guruhlamaslik uçun).
+#[allow(clippy::too_many_arguments)]
+fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0: usize, skip: u32, items: &mut Vec<WItem>, deco: &mut Vec<Deco>) -> usize {
     let doc = &web.doc;
     let u = body();
-    let page_pad = u;
     let k = (small() * 11 / 10) as f32 / 16.0;
     let pxs = |size: f32| ((size * k) as usize).clamp(8, 90);
     let lpx = |v: f32| (v * k) as usize;
     let (page_bg, text_col, link_col, code_col, head_col) = web_palette(doc);
     let dark = luma(page_bg) < 128;
-    let mut items: Vec<WItem> = Vec::new();
-    let mut deco: Vec<Deco> = Vec::new();
-    let mut y = u / 2;
-    let full = width.saturating_sub(page_pad * 2);
-    let vis: Vec<&crate::html::Block> = doc.blocks.iter().filter(|b| !b.hidden).collect();
-    let mut open_box: Option<(u32, usize, usize)> = None; // (konteyner kaliti, deco indeksi, içki çekiniş)
-    for (bi, b) in vis.iter().enumerate() {
+    let mut y = y0;
+    let mut open_box: Option<(u32, usize, usize)> = None;
+    let mut bi = 0;
+    while bi < vis.len() {
+        let b = vis[bi];
+        // --- Flex / grid / jadval: ketma-ket bloklarni ustunlarga ajratamiz ---
+        if b.flex != 0 && b.flex != skip && (b.fmode == 1 || b.fmode == 3) {
+            let mut j = bi;
+            while j < vis.len() && vis[j].flex == b.flex {
+                j += 1;
+            }
+            let run = &vis[bi..j];
+            let mut cols: Vec<(u32, Vec<&crate::html::Block>)> = Vec::new();
+            for x in run {
+                match cols.iter_mut().find(|c| c.0 == x.fcol) {
+                    Some(c) => c.1.push(x),
+                    None => cols.push((x.fcol, alloc::vec![*x])),
+                }
+            }
+            let per_row = if b.fmode == 3 { (b.gcols.max(1) as usize).min(cols.len().max(1)) } else { cols.len().clamp(1, 8) };
+            let gap = if b.fgap > 0.0 { lpx(b.fgap) } else { u / 2 };
+            y += u / 4;
+            for row in cols.chunks(per_row) {
+                let n = row.len();
+                let avail = full.saturating_sub(gap * (n.saturating_sub(1)));
+                // Kengliklar: belgilanganlari (px / %) — qolgani teng (yoki flex-grow ulushida)
+                let fixed: Vec<Option<usize>> = row
+                    .iter()
+                    .map(|c| match c.1[0].fw {
+                        Some((v, true)) if b.fmode != 3 => Some(full * (v as usize).min(100) / 100),
+                        Some((v, false)) if b.fmode != 3 => Some(lpx(v).min(avail)),
+                        _ => None,
+                    })
+                    .collect();
+                let used: usize = fixed.iter().flatten().sum();
+                let grows: Vec<f32> = row.iter().zip(fixed.iter()).map(|(c, f)| if f.is_some() { 0.0 } else if c.1[0].fgrow > 0.0 { c.1[0].fgrow } else { 1.0 }).collect();
+                let gsum: f32 = grows.iter().sum::<f32>().max(0.001);
+                let rest = avail.saturating_sub(used);
+                let widths: Vec<usize> = fixed.iter().zip(grows.iter()).map(|(f, g)| f.unwrap_or((rest as f32 * g / gsum) as usize).max(u * 2)).collect();
+                let total: usize = widths.iter().sum::<usize>() + gap * (n.saturating_sub(1));
+                let extra = full.saturating_sub(total);
+                let (mut x, step_extra) = match b.fjust {
+                    1 => (page_pad + extra / 2, 0),
+                    3 => (page_pad + extra, 0),
+                    2 if n > 1 => (page_pad, extra / (n - 1)),
+                    _ => (page_pad, 0),
+                };
+                let mut bottom = y;
+                for (c, w) in row.iter().zip(widths.iter()) {
+                    let yy = lay(web, &c.1, x, *w, y, b.flex, items, deco);
+                    bottom = bottom.max(yy);
+                    x += w + gap + step_extra;
+                }
+                y = bottom + u / 4;
+            }
+            open_box = None;
+            bi = j;
+            continue;
+        }
+        bi += 1;
+        let bi = bi - 1;
         let base_px = pxs(b.size);
         // --- Konteyner (quti) geometriyasi ---
         let (bx, bwid, inset) = if b.bgk != 0 {
@@ -7099,7 +7396,7 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
         if b.kind == HK::Hr {
             deco.push(dfill(pad, y, maxw, 1, if dark { 0x34405a } else { 0xc7ccd6 }));
             y += 1 + gap_bot;
-            close_box(&mut y, &mut deco, &mut open_box);
+            close_box(&mut y, deco, &mut open_box);
             continue;
         }
         if b.kind == HK::Img {
@@ -7129,7 +7426,7 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
                 px: small(), mono: false, link, el: b.el, button: false, underline: false, img: found, input: NO_EL,
             });
             y += h + if last_in_box { 0 } else { gap_bot };
-            close_box(&mut y, &mut deco, &mut open_box);
+            close_box(&mut y, deco, &mut open_box);
             continue;
         }
         let x0 = pad + indent;
@@ -7155,7 +7452,7 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
                 yy += lhm;
             }
             y += h + if last_in_box { 0 } else { gap_bot };
-            close_box(&mut y, &mut deco, &mut open_box);
+            close_box(&mut y, deco, &mut open_box);
             continue;
         }
         // Qatorlarga bölib joylaş (tekislaş bilan)
@@ -7175,7 +7472,7 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
         for s in &b.spans {
             let spx = pxs(s.size);
             if s.br {
-                finish(&mut items, line_start, x);
+                finish(items, line_start, x);
                 x = x0;
                 y += line_h;
                 line_start = items.len();
@@ -7191,7 +7488,7 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
                     _ => ((inp.size.clamp(4, 60) as usize * spx * 11 / 20).min(maxw), spx * 8 / 5),
                 };
                 if x + ww > pad + maxw && x > x0 {
-                    finish(&mut items, line_start, x);
+                    finish(items, line_start, x);
                     x = x0;
                     y += line_h;
                     line_start = items.len();
@@ -7209,7 +7506,7 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
                 rest = &rest[cut..];
                 let ww = if s.code { gfx::text_width_mono(word, spx) } else { gfx::text_width(word, spx) } + if s.button { u / 2 } else { 0 };
                 if x + ww > pad + maxw && x > x0 {
-                    finish(&mut items, line_start, x);
+                    finish(items, line_start, x);
                     x = x0;
                     y += line_h;
                     line_start = items.len();
@@ -7223,7 +7520,7 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
                 x += ww;
             }
         }
-        finish(&mut items, line_start, x);
+        finish(items, line_start, x);
         y += line_h;
         if b.kind == HK::Quote {
             deco.push(dfill(pad + u / 2, y_block, 3, y - y_block, accent()));
@@ -7238,13 +7535,14 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
         if b.bgk == 0 {
             y += lpx(b.mb);
         }
-        close_box(&mut y, &mut deco, &mut open_box);
+        close_box(&mut y, deco, &mut open_box);
     }
-    (items, deco, y + u)
+    y
 }
 
 fn draw_browser(win: &Window) {
     let u = body();
+    draw_tabs(win);
     let Some(web) = &win.web else { return };
     let (by, bh, btns, (ax, ay, aw, ah), (px0, py0, pw, ph)) = web_geo(win);
     for (k, bx) in btns.iter().enumerate() {
@@ -7372,6 +7670,15 @@ fn draw_browser(win: &Window) {
                         seg(fx + q * 0.42, fy + q * 0.72, fx + q * 0.8, fy + q * 0.28, (q / 9.0).max(1.2), OQ);
                     }
                 }
+                6 => {
+                    gfx::fill_round_rect(x, y, it.w, it.h, u / 4, fbg);
+                    gfx::round_outline(x, y, it.w, it.h, u / 4, 1, if web.select_open == Some(it.input as usize) { accent() } else { fbd });
+                    let label = inp.options.iter().find(|o| o.0 == inp.value).map(|o| o.1.clone()).unwrap_or_default();
+                    gfx::draw_text(x + u / 3, y + (it.h - it.px) / 2, &fit_text(&label, it.w.saturating_sub(u * 3 / 2), it.px), ftx, it.px);
+                    let (ax, ay) = ((x + it.w - u * 2 / 3) as f32, (y + it.h / 2) as f32);
+                    let d = it.px as f32 / 4.0;
+                    gfx::fill_poly(&[(ax - d, ay - d * 0.5), (ax + d, ay - d * 0.5), (ax, ay + d * 0.7)], ftx);
+                }
                 1 => {
                     gfx::fill_round_rect(x, y, it.w, it.h, it.h / 3, if dark { 0x3a4458 } else { 0xe8ebf0 });
                     gfx::round_outline(x, y, it.w, it.h, it.h / 3, 1, fbd);
@@ -7421,6 +7728,19 @@ fn draw_browser(win: &Window) {
             fill_rect(x, y + it.px + 1, tw, 1, mix(it.col, page_bg, 90));
         }
     }
+    // Oçiq <select> ro'yxati
+    if let Some((x, y, w, rh, opts, cur)) = select_popup(web, &items, sc, px0, py0) {
+        let h = rh * opts.len();
+        gfx::shadow(x, y, w, h, 4, 8);
+        gfx::fill_round_rect(x, y, w, h, 4, 0x1a2131);
+        gfx::round_outline(x, y, w, h, 4, 1, 0x34405a);
+        for (k, (_, l)) in opts.iter().enumerate() {
+            if k == cur {
+                fill_rect(x + 2, y + k * rh + 1, w - 4, rh - 2, accent());
+            }
+            gfx::draw_text(x + u / 2, y + k * rh + (rh - small()) / 2, &fit_text(l, w - u, small()), OQ, small());
+        }
+    }
     if total > ph {
         let th = (ph * ph / total).max(u);
         let ty = py0 + sc * (ph - th) / (total - ph).max(1);
@@ -7445,6 +7765,16 @@ fn draw_browser(win: &Window) {
     gfx::draw_text(win.x + u / 2, py0 + ph + (small() + u / 2 - small() * 4 / 5) / 2, &fit_text(&web.status, win.w - u, small() * 4 / 5), 0x7d8ca3, small() * 4 / 5);
 }
 
+/// Oçiq <select> ro'yxati geometriyasi: (x, y, w, qator balandligi, variantlar, tanlangan).
+fn select_popup(web: &Web, items: &[WItem], sc: usize, px0: usize, py0: usize) -> Option<(usize, usize, usize, usize, Vec<(String, String)>, usize)> {
+    let k = web.select_open?;
+    let it = items.iter().find(|it| it.input as usize == k)?;
+    let inp = web.doc.inputs.get(k)?;
+    let rh = small() + body() / 2;
+    let cur = inp.options.iter().position(|o| o.0 == inp.value).unwrap_or(0);
+    Some((px0 + it.x, (py0 + it.y + it.h).saturating_sub(sc), it.w.max(body() * 6), rh, inp.options.clone(), cur))
+}
+
 fn web_max_scroll(win: &Window) -> usize {
     let Some(web) = &win.web else { return 0 };
     let (_, _, _, _, (_, _, pw, ph)) = web_geo(win);
@@ -7466,6 +7796,32 @@ fn web_back(win: &mut Window) {
 }
 
 fn web_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    if let Some(r) = tabs_click(win, cx, cy) {
+        if !r {
+            // oxirgi tab yopildi — oynaning özi yopilsin
+            win.web = None;
+        }
+        return true;
+    }
+    // Oçiq <select> ro'yxati: tanlaş
+    if let Some(web) = &win.web {
+        if web.select_open.is_some() {
+            let (_, _, _, _, (px0, py0, pw, ph)) = web_geo(win);
+            let (items, _, total) = web_layout(web, pw.saturating_sub(body()));
+            let sc = web.scroll.min(total.saturating_sub(ph));
+            let pop = select_popup(web, &items, sc, px0, py0);
+            let k = web.select_open.unwrap();
+            let w = win.web.as_mut().unwrap();
+            w.select_open = None;
+            if let Some((x, y, pw2, rh, opts, _)) = pop {
+                if cx >= x && cx < x + pw2 && cy >= y && cy < y + rh * opts.len() {
+                    let v = opts[(cy - y) / rh].0.clone();
+                    w.doc.inputs[k].value = v;
+                }
+            }
+            return true;
+        }
+    }
     let Some(web) = &win.web else { return false };
     let (by, bh, btns, addr, (px0, py0, pw, ph)) = web_geo(win);
     if cy >= by && cy < by + bh {
@@ -7513,6 +7869,10 @@ fn web_click(win: &mut Window, cx: usize, cy: usize) -> bool {
             match kind {
                 0 | 3 => {
                     w.focus = Some(inp as usize);
+                    return true;
+                }
+                6 => {
+                    w.select_open = Some(inp as usize);
                     return true;
                 }
                 2 => {
@@ -7589,7 +7949,7 @@ fn web_submit(win: &mut Window, f: usize, submitter: Option<usize>) {
     let mut q = String::new();
     for (k, i) in w.doc.inputs.iter().enumerate().filter(|(_, i)| i.form as usize == f && !i.name.is_empty()) {
         let v = match i.kind {
-            0 | 3 | 4 => Some(i.value.clone()),
+            0 | 3 | 4 | 6 => Some(i.value.clone()),
             2 if i.checked => Some(if i.value.is_empty() { String::from("on") } else { i.value.clone() }),
             1 | 5 if Some(k) == submitter => Some(i.value.clone()),
             _ => None,
