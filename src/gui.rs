@@ -1762,6 +1762,9 @@ fn desktop() {
                         }
                         *FDRAG_PENDING.lock() = None;
                         ED_DRAG.store(false, Ordering::Relaxed);
+                        if VOL_DRAG.swap(false, Ordering::Relaxed) {
+                            let _ = crate::config::save_current();
+                        }
                         TERM_DRAG.store(false, Ordering::Relaxed);
                         for w in windows.iter_mut() {
                             w.pen = None;
@@ -1981,6 +1984,13 @@ fn desktop() {
             if TERM_DRAG.load(Ordering::Relaxed) {
                 if let Some(w) = windows.last_mut().filter(|w| w.kind == Kind::Terminal && !w.hidden) {
                     term_drag(w, cx, cy);
+                    changed = true;
+                }
+            }
+            // Övoz slayderi
+            if VOL_DRAG.load(Ordering::Relaxed) {
+                if let Some(w) = windows.last().filter(|w| w.kind == Kind::Settings && !w.hidden) {
+                    vol_set_from(w, cx);
                     changed = true;
                 }
             }
@@ -2491,6 +2501,8 @@ fn draw_menubar(w: usize, open: Option<usize>) {
     sx = sx.saturating_sub(small() * 3 / 2);
     status_battery(sx, cy2, small());
     sx = sx.saturating_sub(small() * 3 / 2);
+    status_speaker(sx, cy2, small(), crate::audio::sound::muted() || crate::audio::sound::volume() == 0);
+    sx = sx.saturating_sub(small() * 3 / 2);
     status_wifi(sx, cy2, small());
     sx = sx.saturating_sub(small() * 3 / 2);
     status_bell(sx, cy2, small());
@@ -2565,6 +2577,27 @@ fn status_wifi(cx: usize, cy: usize, s: usize) {
     }
     gfx::fill_circle(cx, cy + s / 4, (s / 10).max(1), col);
 }
+/// Karnay belgisi; övozsiz bölsa ustidan qiya çiziq tortiladi.
+fn status_speaker(cx: usize, cy: usize, s: usize, muted: bool) {
+    let col = 0xdbe4f0;
+    let (fx, fy, q) = (cx as f32 - s as f32 * 0.45, cy as f32, s as f32);
+    gfx::fill_rect((fx) as usize, (fy - q * 0.14) as usize, (s / 6).max(2), (s * 3 / 10).max(2), col);
+    gfx::fill_poly(&[(fx + q * 0.15, fy - q * 0.14), (fx + q * 0.45, fy - q * 0.38), (fx + q * 0.45, fy + q * 0.38), (fx + q * 0.15, fy + q * 0.16)], col);
+    if muted {
+        let (a, b) = (fx - q * 0.05, fy - q * 0.42);
+        let (c, d) = (fx + q * 0.95, fy + q * 0.42);
+        let t = (q * 0.07).max(1.0);
+        gfx::fill_poly(&[(a, b - t), (a + t, b - t), (c, d + t), (c - t, d + t)], 0xff453a);
+    } else {
+        let lvl = crate::audio::sound::volume() as usize;
+        let bars = if lvl > 66 { 3 } else if lvl > 33 { 2 } else { 1 };
+        for i in 0..bars {
+            let bh = s * (3 + i * 2) / 12;
+            gfx::fill_rect(cx + s / 10 + i * (s / 6).max(2), cy - bh / 2, (s / 12).max(1), bh.max(1), col);
+        }
+    }
+}
+
 fn status_battery(cx: usize, cy: usize, s: usize) {
     let bw = s * 9 / 5;
     let bh = s * 4 / 5;
@@ -3263,7 +3296,12 @@ fn bell_pos(sw: usize) -> (usize, usize) {
         t.minute
     );
     let rx = sw.saturating_sub(gfx::text_width(&date, small()) + body());
-    (rx.saturating_sub(body() + small() * 9 / 2), menubar_h() / 2)
+    (rx.saturating_sub(body() + small() * 6), menubar_h() / 2)
+}
+
+/// Menyu panelidagi karnay belgisi markazi (x).
+fn speaker_x(sw: usize) -> usize {
+    bell_pos(sw).0 + small() * 3
 }
 
 fn notif_panel_geo(sw: usize, n: usize) -> (usize, usize, usize, usize) {
@@ -3352,6 +3390,14 @@ fn notif_click(desk: &mut Desk, cx: usize, cy: usize) -> bool {
         let _ = by;
         desk.notif_open = true;
         desk.menu = None;
+        return true;
+    }
+    let spx = speaker_x(sw);
+    if cy < menubar_h() && cx + small() * 2 / 3 >= spx && cx <= spx + small() * 2 / 3 {
+        let m = !crate::audio::sound::muted();
+        crate::audio::sound::set_muted(m);
+        let _ = crate::config::save_current();
+        notify("Övoz", if m { "Övozsiz rejim yoqildi" } else { "Övoz yoqildi" }, 0xff375f);
         return true;
     }
     for k in 0..desk.toasts.len() {
@@ -5033,6 +5079,26 @@ fn draw_settings(win: &Window) {
         }
         2 => {
             let present = crate::audio::sound::present();
+            let vol = crate::audio::sound::volume() as usize;
+            let muted = crate::audio::sound::muted();
+            gfx::draw_text(x, y, "Övoz balandligi", 0x9fb0c3, small() * 9 / 10);
+            let (tx, ty, tw, th) = vol_track(win);
+            gfx::fill_round_rect(tx, ty, tw, th, th / 2, 0x2a3346);
+            let fw = tw * vol / 100;
+            let on = if muted { 0x5a6578 } else { accent() };
+            if fw > 0 {
+                gfx::fill_round_rect(tx, ty, fw.max(th), th, th / 2, on);
+            }
+            let kr = body() * 2 / 3;
+            gfx::fill_circle(tx + fw, ty + th / 2, kr, OQ);
+            gfx::fill_circle(tx + fw, ty + th / 2, kr / 3, on);
+            let pct = if muted { String::from("Övozsiz") } else { alloc::format!("{}%", vol) };
+            gfx::draw_text(tx + tw + body(), ty + th / 2 - small() / 2, &pct, OQ, small());
+            let (bx, by, bw, bh) = mute_btn(win);
+            fill_round_rect_a(bx, by, bw, bh, bh / 2, if muted { 0xff453a } else { 0xffffff }, if muted { 200 } else { 26 });
+            status_speaker(bx + bh * 2 / 3, by + bh / 2, small(), true);
+            gfx::draw_text(bx + bh * 4 / 3, by + (bh - small()) / 2, if muted { "Övozni yoqiş" } else { "Övozsiz" }, OQ, small() * 9 / 10);
+            let y = by + bh + body();
             kv_table(x, y, rw, &[
                 ("Qurilma", String::from(if present { "virtio-sound (faol)" } else { "Topilmadi" })),
                 ("Çiqiş", String::from("PCM S16LE, 2 kanal")),
@@ -5040,7 +5106,7 @@ fn draw_settings(win: &Window) {
                 ("Kodeklar", String::from("PCM · mu-law · A-law · ADPCM")),
             ]);
             if !present {
-                gfx::draw_text(x, y + u * 7, "QEMU: -device virtio-sound-device bilan övoz eşitiladi", 0x6f7f95, small() * 4 / 5);
+                gfx::draw_text(x, y + u * 6, "QEMU: -device virtio-sound-device bilan övoz eşitiladi", 0x6f7f95, small() * 4 / 5);
             }
         }
         3 => {
@@ -5127,6 +5193,34 @@ fn draw_settings(win: &Window) {
     }
 }
 
+/// Övoz bölimidagi slayder yöli (x, y, eni, qalinligi).
+fn vol_track(win: &Window) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (_, x, y0, _) = settings_geo(win);
+    let rw = (win.x + win.w).saturating_sub(x + u);
+    let th = (u / 3).max(4);
+    let y = y0 + u * 2 + small() + u;
+    (x + u * 2 / 3, y, rw.saturating_sub(u * 5), th)
+}
+
+/// "Övozsiz" tugmasi.
+fn mute_btn(win: &Window) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (_, x, _, _) = settings_geo(win);
+    let (_, ty, _, _) = vol_track(win);
+    (x, ty + u * 3 / 2, u * 8, u * 3 / 2)
+}
+
+/// Slayder sudralayotganmi (tugma qöyib yuborilganda saqlanadi).
+static VOL_DRAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Kursor x boʻyiça övoz balandligini örnatadi.
+fn vol_set_from(win: &Window, cx: usize) {
+    let (tx, _, tw, _) = vol_track(win);
+    let v = (cx.saturating_sub(tx) * 100 + tw / 2) / tw.max(1);
+    crate::audio::sound::set_volume(v.min(100) as u8);
+}
+
 /// Sozlamalar oynasiga bosiş (bölim, fon, rang). Bosildi — true.
 fn settings_click(win: &mut Window, cx: usize, cy: usize) -> bool {
     let u = body();
@@ -5136,6 +5230,22 @@ fn settings_click(win: &mut Window, cx: usize, cy: usize) -> bool {
         let i = (cy - top - u / 2) / ih;
         if i < SETTINGS_TABS.len() {
             win.tab = i;
+            return true;
+        }
+    }
+    if win.tab == 2 {
+        let (tx, ty, tw, th) = vol_track(win);
+        let kr = u * 2 / 3;
+        if cx + kr >= tx && cx <= tx + tw + kr && cy + kr >= ty && cy <= ty + th + kr {
+            vol_set_from(win, cx);
+            VOL_DRAG.store(true, Ordering::Relaxed);
+            return true;
+        }
+        let (bx, by, bw, bh) = mute_btn(win);
+        if cx >= bx && cx < bx + bw && cy >= by && cy < by + bh {
+            let m = !crate::audio::sound::muted();
+            crate::audio::sound::set_muted(m);
+            let _ = crate::config::save_current();
             return true;
         }
     }

@@ -567,6 +567,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] localStorage/cookie diskka saqlaş (~/.zamin): kodlaş ({} yozuv)", n),
         Err(e) => panic!("localStorage/cookie saqlaş tekşiruvi yiqildi: {}", e),
     }
+    match drivers::virtio_snd::self_test_volume() {
+        Ok(n) => println!("  [ok] övoz balandligi: scale_samples 100%/50%/0%/övozsiz, i16 çegarasi ({} sinov)", n),
+        Err(e) => panic!("övoz balandligi tekşiruvi yiqildi: {}", e),
+    }
     // Audio dekoderi: WAV
     audio::self_test().expect("audio (WAV) dekoderi yiqildi");
     tprintln!(msg::TEST_AUDIO);

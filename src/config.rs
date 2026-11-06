@@ -106,6 +106,10 @@ pub fn load() -> Option<Settings> {
             *UI_WALL_PATH.lock() = String::from(v);
         } else if k == "rang" && !in_section {
             UI_ACCENT.store(v.parse().unwrap_or(0), core::sync::atomic::Ordering::Relaxed);
+        } else if k == "ovoz" && !in_section {
+            crate::drivers::virtio_snd::set_volume(v.parse().unwrap_or(100));
+        } else if k == "ovozsiz" && !in_section {
+            crate::drivers::virtio_snd::set_muted(v == "ha");
         } else if k == "mintaqa" && !in_section {
             if let Ok(m) = v.parse::<i32>() {
                 crate::time::set_tz_minutes(m);
@@ -124,12 +128,14 @@ pub fn save(s: &Settings) -> bool {
         return false;
     }
     let mut text = format!(
-        "# Zamin OS sozlamalari\ntil={}\nmintaqa={}\nfon={}\nrang={}\nfon_yol={}\n",
+        "# Zamin OS sozlamalari\ntil={}\nmintaqa={}\nfon={}\nrang={}\nfon_yol={}\novoz={}\novozsiz={}\n",
         lang_code(s.lang),
         crate::time::tz_minutes(),
         UI_WALL.load(core::sync::atomic::Ordering::Relaxed),
         UI_ACCENT.load(core::sync::atomic::Ordering::Relaxed),
-        UI_WALL_PATH.lock().as_str()
+        UI_WALL_PATH.lock().as_str(),
+        crate::drivers::virtio_snd::volume(),
+        if crate::drivers::virtio_snd::muted() { "ha" } else { "yöq" }
     );
     for a in &s.accounts {
         text += &format!(

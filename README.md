@@ -71,6 +71,19 @@ Boşqa bölimlar haqiqiy tizim maʼlumotini körsatadi: **Tarmoq** (virtio-net, 
 
 <img src="docs/settings-network.png" width="480">
 
+**Övoz balandligi va övozsiz rejim.** Sozlamalar → **Övoz** bölimida sudraladigan
+slayder (0–100 %, foiz körsatkiçi bilan) va **"Övozsiz"** tugmasi bor. Daraja global:
+musiqa pleeri, brauzerdagi `<audio>` va ish stolidagi pleer vidjeti — barçasi
+virtio-sound ga yuborilişidan oldin PCM namunalarini şu darajaga köpaytiradi
+(Q16 fixed-point, yaxlitlab, i16 çegarasida qirqiladi). Daraja har bir davr (period)
+uçun qayta öqiladi, şuning uçun ijro paytida ham darhol eşitiladi. Yuqori menyu
+panelida karnay belgisi bor (daraja böyiça 1–3 tölqin; övozsiz bölsa ustidan qizil
+çiziq) — unga bosiş övozsiz rejimni yoqadi/öçiradi. Sozlama diskka saqlanadi
+(`ovoz=`, `ovozsiz=`) va qayta yuklaşda tiklanadi. Self-test: `[ok] övoz balandligi`
+(100 % da özgarmaydi, 50 % da ±1 aniqlikda yarmi, 0 % va övozsizda nol, toşiş yöq).
+
+<img src="docs/settings-sound.png" width="480">
+
 ### Kontekst menyulari va öz rasmingiz fonda
 
 ![Kontekst menyulari](docs/context-menus.jpg)

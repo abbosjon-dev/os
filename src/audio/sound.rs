@@ -22,3 +22,5 @@ pub fn present() -> bool {
 pub fn playing() -> bool {
     virtio_snd::playing()
 }
+
+pub use crate::drivers::virtio_snd::{muted, set_muted, set_volume, volume};

@@ -11,7 +11,7 @@ use crate::memory::{frame, PAGE_SIZE};
 use crate::sync::Mutex;
 use alloc::vec::Vec;
 use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 const MMIO_BASE: usize = 0x0a00_0000;
 const MMIO_STRIDE: usize = 0x200;
@@ -161,6 +161,83 @@ static SND: Mutex<Option<Snd>> = Mutex::new(None);
 static READY: AtomicBool = AtomicBool::new(false);
 static PLAYING: AtomicBool = AtomicBool::new(false);
 static STOP: AtomicBool = AtomicBool::new(false);
+
+/// Global övoz balandligi (0..100) va övozsiz rejim — barça ijrolarga taʼsir qiladi.
+pub static VOLUME: AtomicU8 = AtomicU8::new(100);
+pub static MUTED: AtomicBool = AtomicBool::new(false);
+
+pub fn volume() -> u8 {
+    VOLUME.load(Ordering::Relaxed).min(100)
+}
+pub fn set_volume(v: u8) {
+    VOLUME.store(v.min(100), Ordering::Relaxed);
+}
+pub fn muted() -> bool {
+    MUTED.load(Ordering::Relaxed)
+}
+pub fn set_muted(m: bool) {
+    MUTED.store(m, Ordering::Relaxed);
+}
+
+/// Namunalarni `level`% (0..100) ga köpaytiradi (Q16 fixed-point, yaxlitlab);
+/// natija i16 çegarasida qirqiladi. `muted` yoki 0 — jimlik.
+pub fn scale_samples(samples: &mut [i16], level: u8, muted: bool) {
+    let level = level.min(100) as i64;
+    if muted || level == 0 {
+        samples.iter_mut().for_each(|s| *s = 0);
+        return;
+    }
+    if level == 100 {
+        return;
+    }
+    let gain = level * 65536 / 100;
+    for s in samples.iter_mut() {
+        let v = (*s as i64 * gain + 32768) >> 16;
+        *s = v.clamp(i16::MIN as i64, i16::MAX as i64) as i16;
+    }
+}
+
+/// Self-test: scale_samples xossalari. Natija — sinovlar soni.
+pub fn self_test_volume() -> Result<usize, &'static str> {
+    let src: [i16; 9] = [0, 1, -1, 1000, -1000, 12345, -12345, i16::MAX, i16::MIN];
+    let mut n = 0;
+    let mut a = src;
+    scale_samples(&mut a, 100, false);
+    if a != src {
+        return Err("100% namunalarni özgartirdi");
+    }
+    n += 1;
+    let mut a = src;
+    scale_samples(&mut a, 50, false);
+    for (x, y) in src.iter().zip(a.iter()) {
+        let want = *x as i32 / 2;
+        if (*y as i32 - want).abs() > 1 {
+            return Err("50% yarmiga tuşmadi");
+        }
+    }
+    n += 1;
+    let mut a = src;
+    scale_samples(&mut a, 0, false);
+    if a.iter().any(|&v| v != 0) {
+        return Err("0% jim emas");
+    }
+    n += 1;
+    let mut a = src;
+    scale_samples(&mut a, 100, true);
+    if a.iter().any(|&v| v != 0) {
+        return Err("övozsiz rejim jim emas");
+    }
+    n += 1;
+    for lvl in [1u8, 33, 99, 100, 200] {
+        let mut a = [i16::MAX, i16::MIN];
+        scale_samples(&mut a, lvl, false);
+        if a[0] < 0 || a[1] > 0 {
+            return Err("i16 çegarasida toşib ketdi");
+        }
+        n += 1;
+    }
+    Ok(n)
+}
 
 pub fn present() -> bool {
     READY.load(Ordering::Acquire)
@@ -317,14 +394,24 @@ fn play_job(job: &Job) {
     let data = s.buf + 8192; // PCM period
     let st = s.buf + 8192 + period; // status (8 bayt)
     unsafe { write_volatile(xfer as *mut u32, 0u32) };
+    let mut chunk: Vec<i16> = Vec::with_capacity(period / 2);
     let mut off = 0;
     while off < total {
         if STOP.load(Ordering::Acquire) {
             break;
         }
         let n = (total - off).min(period);
+        // Joriy övoz balandligi har davrda qöllanadi (ijro paytida özgarsa ham)
+        chunk.clear();
+        chunk.extend(job.bytes[off..off + n].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])));
+        scale_samples(&mut chunk, volume(), muted());
+        let n = chunk.len() * 2;
         unsafe {
-            core::ptr::copy_nonoverlapping(job.bytes.as_ptr().add(off), data as *mut u8, n);
+            for (i, v) in chunk.iter().enumerate() {
+                let b = v.to_le_bytes();
+                write_volatile((data + i * 2) as *mut u8, b[0]);
+                write_volatile((data + i * 2 + 1) as *mut u8, b[1]);
+            }
             if n < period {
                 core::ptr::write_bytes((data + n) as *mut u8, 0, period - n); // qolgani jim
             }

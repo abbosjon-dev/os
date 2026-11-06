@@ -157,7 +157,9 @@
       "id": "T20",
       "title": "Sozlamalar → Ovoz: ovoz balandligi slayderi va ovozsiz rejim (barcha ijrolarga ta'sir qiladi)",
       "detail": "Hozir Ovoz bo'limi (src/gui.rs ~4425) faqat ma'lumot ko'rsatadi. Fayllar: src/drivers/virtio_snd.rs yoki src/audio/sound.rs: global ovoz balandligi (0..100, atomik) va mute. PCM namunalar virtio-sound ga yuborishdan oldin shu daraja bilan ko'paytiriladi (fixed-point, chegaradan oshganda qirqiladi). src/gui.rs: Ovoz bo'limida sudraladigan slayder, % ko'rsatkichi va 'Ovozsiz' tugmasi bo'ladi; yuqori menyu paneliga ovoz belgisi qo'shiladi (mute bo'lsa ustidan chizilgan). Sozlama boshqa sozlamalar kabi diskka saqlanadi va qayta yuklashda tiklanadi. Musiqa pleeri, brauzer <audio> va pleer vidjeti shu darajaga bo'ysunadi. Qabul mezoni: self-test ([ok] ovoz balandligi): scale_samples daraja 100 da namunalarni o'zgartirmaydi, 50 da ±1 aniqlikda yarmiga tushiradi, 0 da va mute da nol beradi, i16 chegarasida toshib ketmaydi. Skrinshot docs/settings-sound.png (slayder ~40%) olinadi; README 'Sozlamalar' bo'limi yangilanadi; verify.sh full o'tadi.",
-      "batch": 3
+      "batch": 3,
+      "status": "done",
+      "done_at": "2026-11-06 17:36:12"
     },
     {
       "id": "T21",
