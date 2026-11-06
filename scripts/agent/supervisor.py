@@ -352,9 +352,7 @@ def loop(cfg, state):
             pushed = commit_and_push(cfg, task, cyc) if changed else False
             if changed and not pushed and cfg["push"] and git("rev-parse", "HEAD") != head0:
                 subprocess.run(["git", "push", "-u", "origin", cfg["branch"]], cwd=REPO, capture_output=True)
-            if changed and task.get("status") == "done":
-                task["commit"] = git("rev-parse", "--short", "HEAD")
-                jsave(TASKS, tasks)
+            state["last_commit"] = git("rev-parse", "--short", "HEAD")
         else:
             state["consecutive_failures"] += 1
             state["fail_log"] = vlog

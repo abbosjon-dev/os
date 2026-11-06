@@ -5,7 +5,8 @@
       "title": "HTML jadval: rowspan qo'llab-quvvatlash",
       "detail": "src/html.rs va src/gui.rs dagi jadval maketida rowspan atributini hisobga ol; zamin://html sahifasiga misol qo'sh; verify.sh full o'tsin.",
       "status": "done",
-      "done_at": "2026-11-06 10:12:38"
+      "done_at": "2026-11-06 10:12:38",
+      "commit": "c6faa87"
     },
     {
       "id": "T2",
