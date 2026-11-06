@@ -9650,7 +9650,8 @@ fn draw_browser(win: &Window) {
                 (None, None) => gfx::BoxFill::None,
             };
             match fill {
-                gfx::BoxFill::Solid(c) if al < 255 && d.bw == 0 => fill_round_rect_a(dx, dy, d.w, dh, if skip == 0 { r } else { 0 }, c, al),
+                // (aylantirilganda ham pastki burçaklar yumaloq qoladi — töliq geometriya, skip bilan)
+                gfx::BoxFill::Solid(c) if al < 255 && d.bw == 0 => gfx::round_box_a(dx, dy, d.w, d.h, skip, r, gfx::BoxFill::Solid(c), 0, c, al),
                 gfx::BoxFill::Solid(c) if al < 255 => gfx::round_box(dx, dy, d.w, d.h, skip, r, gfx::BoxFill::Solid(fade(c)), d.bw, fade(d.bc)),
                 // oddiy töğri burçakli quti — tez yöl
                 gfx::BoxFill::Solid(c) if r == 0 && d.bw == 0 => fill_rect(dx, dy, d.w, dh, c),

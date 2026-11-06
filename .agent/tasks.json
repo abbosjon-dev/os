@@ -181,7 +181,9 @@
       "id": "T23",
       "title": "Yumaloq burchaklar: check_corners.py ni verify.sh full ga regressiya tekshiruvi sifatida ulash (zamin://matn, zamin://bezak, zamin://overflo",
       "detail": "plan_notes dagi 'qora tishchalar' nuqsoni T9 va T16 da tuzatilgan. Lekin u faqat qo'lda olingan skrinshot bilan tekshiriladi va qaytib kelsa hech kim sezmaydi. Fayllar: scripts/agent/verify.sh (full rejimi), scripts/agent/shot.py, scripts/agent/check_corners.py (KNOWN ranglar ro'yxati, sahifa sohasi koordinatalari), src/gfx/mod.rs (corner_cov, fill_round_rect_a, round_ring/round_outline, shadow), src/gui.rs (zamin://matn ~7808, zamin://bezak, zamin://overflow sahifalari, web deco chizish sikli). Qilinadigan ishlar: (1) verify.sh full oxirida shot.py bilan uchta sahifa suratga olinadi: zamin://matn (boshi va yarim aylantirilgan holati), zamin://bezak, zamin://overflow. Har surat check_corners.py dan o'tkaziladi. Bezak/overflow sahifalaridagi rangli qutilarni ham taniy olishi uchun check_corners.py ga sahifa bo'yicha ranglar ro'yxati (yoki fon/blok rangini avtomatik aniqlash) qo'shiladi. (2) Yangi sahifalarda tishcha topilsa, sababini gfx/gui da tuzat. Ayniqsa opacity < 1 li yumaloq qutilar, overflow:hidden set_clip bilan kesilgan burchaklar va soya+gradient birikmasini tekshir. Qabul mezoni: verify.sh full '[ok] burchaklar: 4 surat toza' qatorini chiqaradi. Burchak yaqiniga ataylab bitta qora piksel chizilgan surat berilsa, check_corners.py 1 qaytaradi (verify.sh ichidagi kichik o'z-o'zini sinash). gfx::self_test_round() ga opacity 128 bilan chizilgan yumaloq quti holati qo'shiladi. verify.sh full o'tadi.",
-      "batch": 4
+      "batch": 4,
+      "status": "done",
+      "done_at": "2026-11-06 18:25:27"
     },
     {
       "id": "T24",

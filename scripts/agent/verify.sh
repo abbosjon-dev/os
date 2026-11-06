@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Zamin OS — mustaqil tekşiruv (supervisor "DONE" ga ishonmaydi, şuni işlatadi).
 #   verify.sh quick — yiğiş: xato va ogohlantirish yöq
-#   verify.sh full  — + QEMU da (grafikasiz) yuklaniş: barça self-test [ok], panic yöq
+#   verify.sh full  — + QEMU da (grafikasiz) yuklaniş: barça self-test [ok], panic yöq;
+#                     + brauzer sahifalari surati: yumaloq burçaklarda töq piksel yöq
 # Çiqiş kodi 0 — ötdi. Natija qisqa matn sifatida stdout ga.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -40,4 +41,38 @@ for _ in $(seq 1 140); do
 done
 kill $QPID 2>/dev/null; wait $QPID 2>/dev/null; rm -f "$DISK"
 echo "$RESULT"
-[[ "$RESULT" == OK* ]]
+[[ "$RESULT" == OK* ]] || exit 1
+
+# --- Yumaloq burçaklar regressiyasi: brauzer sahifalari suratga olinadi va
+#     check_corners.py dan ötkaziladi ("qora tişçalar" qaytmasligi uçun) ---
+CDIR="$LOG_DIR/corners"; mkdir -p "$CDIR" /tmp/claude-0; rm -f "$CDIR"/*.png
+# brauzer (dock) → kattalaştiriş → zamin://matn (boşi, yarim aylantirilgan) → bosh → zamin://bezak → bosh → zamin://overflow
+M="m,1275,795;w,1"
+CLICKS="354,756;w,2;221,85;w,1;300,585;w,2;$M;snap,matn;m,640,400;wd,8;$M;snap,matn2;93,120;w,1;300,611;w,2;$M;snap,bezak;93,120;w,1;300,637;w,2;$M" \
+    timeout 240 python3 scripts/agent/shot.py "$KERNEL" "$CDIR/overflow.png" fresh >"$CDIR/shot.log" 2>&1
+SHOTS=("$CDIR/overflow_matn.png" "$CDIR/overflow_matn2.png" "$CDIR/overflow_bezak.png" "$CDIR/overflow.png")
+for f in "${SHOTS[@]}"; do
+    [ -s "$f" ] || { echo "FAIL burçaklar: surat olinmadi ($f, qarang $CDIR/shot.log)"; exit 1; }
+done
+NBAD=0
+for f in "${SHOTS[@]}"; do
+    if ! python3 scripts/agent/check_corners.py "$f" >"$f.txt" 2>&1; then
+        NBAD=$((NBAD + 1)); echo "  $(basename "$f"): $(grep -m2 -E 'NUQSON|burchaklar' "$f.txt" | tr '\n' ' ')"
+    fi
+done
+[ "$NBAD" -eq 0 ] || { echo "FAIL burçaklar: $NBAD surat nuqsonli (qarang $CDIR)"; exit 1; }
+# o'z-o'zini sinaş: burçak yaqiniga bitta qora piksel — tekşiruvçi 1 qaytarişi şart
+python3 - "$CDIR/overflow_bezak.png" "$CDIR/selftest.png" <<'PY' || { echo "FAIL burçaklar: o'z-o'zini sinaş surati yasalmadi"; exit 1; }
+import subprocess, sys
+from PIL import Image
+out = subprocess.run([sys.executable, "scripts/agent/check_corners.py", sys.argv[1], "-v"], capture_output=True, text=True).stdout
+ln = next(l for l in out.splitlines() if l.startswith("BURCHAK"))
+cx, cy, sx, sy = map(int, ln.split()[1:5])
+im = Image.open(sys.argv[1]).convert("RGB")
+im.putpixel((cx + 2 * sx, cy + 2 * sy), (0, 0, 0))
+im.save(sys.argv[2])
+PY
+if python3 scripts/agent/check_corners.py "$CDIR/selftest.png" >"$CDIR/selftest.txt" 2>&1; then
+    echo "FAIL burçaklar: qora pikselli surat tekşiruvdan ötib ketdi (check_corners.py buzilgan)"; exit 1
+fi
+echo "[ok] burchaklar: ${#SHOTS[@]} surat toza"

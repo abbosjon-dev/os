@@ -228,6 +228,19 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   va blok rangidan to'qroq piksel qidiradi. (Eslatma: joylashuv bloklarni hozircha tekis
   joylaydi — haqiqiy ichma-ich quti modeli yo'q, bola blok `position: relative` bilan suriladi.)
 
+  **Regressiya tekshiruvi:** `scripts/agent/verify.sh full` endi yuklanish sinovidan keyin
+  `shot.py` bilan brauzerni ochib, to'rtta surat oladi — `zamin://matn` (boshi va yarim
+  aylantirilgan holati), `zamin://bezak`, `zamin://overflow` — va har birini
+  `check_corners.py` dan o'tkazadi (`[ok] burchaklar: 4 surat toza`). Tekshiruvchi bloklarni
+  sahifa bo'yicha avtomatik taniydi: fon — sahifa chap chetidagi rang, qutilar — sahifada ko'p
+  uchraydigan aniq ranglar (opacity bilan aralashganlari ham) va to'yingan piksellar
+  (gradientli qutilar); `-v` bilan bloklar va burchaklar ro'yxatini chiqaradi. Tekshiruvchining
+  o'zi ham sinanadi: burchak yaqiniga bitta qora piksel chizilgan surat 1 qaytarishi shart.
+  Tuzatildi: `opacity < 1` li yumaloq quti aylantirilganda pastki burchaklari to'g'ri burchakka
+  aylanib qolardi — endi `gfx::round_box_a` (alfa bilan, to'liq geometriya + `skip`) ishlatiladi.
+  `self_test_round` ga alfa 128 bilan chizilgan qutilar qo'shildi (bir rangli va chegarali,
+  yorug'/to'q fon, aylantirilgan holat).
+
   ![Yumaloq burchaklar: zamin://matn](docs/web-text-align.png)
 
   ![Aylantirilgan holat: pastdan kesilgan flex/rtl bloklar](docs/web-round-scroll.png)

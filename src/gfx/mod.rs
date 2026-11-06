@@ -515,6 +515,15 @@ pub fn round_box(x: usize, y: usize, w: usize, h: usize, skip: usize, r: usize, 
     round_box_on(f, x, y, w, h, skip, r, r, fill, t, bc, 255);
 }
 
+/// `round_box` ning yarim şaffof (opacity) varianti: butun quti alfa (0..255) bilan
+/// fonga qöyiladi; aylantirilganda ham burçaklar töliq geometriya böyiça çiqadi.
+#[allow(clippy::too_many_arguments)]
+pub fn round_box_a(x: usize, y: usize, w: usize, h: usize, skip: usize, r: usize, fill: BoxFill, t: usize, bc: Color, alpha: u32) {
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return };
+    round_box_on(f, x, y, w, h, skip, r, r, fill, t, bc, alpha);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn round_box_on(f: &Fb, x: usize, y: usize, w: usize, h: usize, skip: usize, rt: usize, rb: usize, fill: BoxFill, t: usize, bc: Color, alpha: u32) {
     if w == 0 || h == 0 || skip >= h || alpha == 0 {
@@ -644,6 +653,7 @@ pub fn self_test_round() -> Result<usize, &'static str> {
         }
     }
     n += self_test_round_box()?;
+    n += self_test_round_alpha()?;
     Ok(n)
 }
 
@@ -719,6 +729,72 @@ fn self_test_round_box() -> Result<usize, &'static str> {
                 round_rect_on(&fr, 3, 2, 2 * r + 4, 2 * r + 2, r, r, c, 255);
                 if buf != ref_buf {
                     return Err("fon+çegara bir xil rangda oddiy qutidan farq qiladi");
+                }
+                n += 1;
+            }
+        }
+    }
+    Ok(n)
+}
+
+/// opacity: alfa 128 bilan çizilgan yumaloq quti (bir rangli va çegarali) yorugʻ va töq
+/// fon ustida: (1) hech bir piksel fon va (fon+rang aralaşmasi)dan töqroq emas; (2) burçak
+/// nuqtasi fon bölib qoladi, markaz — aralaşma; (3) `fill_round_rect_a` va `round_box_on`
+/// (alfa) bir xil natija beradi; (4) aylantirilgan (skip) quti — töliq qutining pastki qismi.
+fn self_test_round_alpha() -> Result<usize, &'static str> {
+    let (bw, bh) = (72usize, 72usize);
+    let mut buf = alloc::vec![0u32; bw * bh];
+    let mut ref_buf = alloc::vec![0u32; bw * bh];
+    let f = Fb { ptr: buf.as_mut_ptr() as usize, w: bw, h: bh, noclip: true };
+    let fr = Fb { ptr: ref_buf.as_mut_ptr() as usize, w: bw, h: bh, noclip: true };
+    let lum = |c: u32| (c >> 16 & 0xff) + (c >> 8 & 0xff) + (c & 0xff);
+    let a = 128u32;
+    let mut n = 0;
+    for &bg in &[0xf3f5f9u32, 0x161b26] {
+        for &fg in &[0x1e3a8au32, 0xeef2f8] {
+            for r in 1..=30usize {
+                let (w, h) = (2 * r + 9, 2 * r + 6);
+                let mid = mix_rgb(bg, fg, a);
+                let min = lum(bg).min(lum(mid)).min(lum(fg));
+                // (3) bir rangli: ikki yöl bir xil
+                buf.fill(bg);
+                round_rect_on(&f, 3, 2, w, h, r, r, fg, a);
+                ref_buf.fill(bg);
+                round_box_on(&fr, 3, 2, w, h, 0, r, r, BoxFill::Solid(fg), 0, fg, a);
+                if buf != ref_buf {
+                    return Err("opacity: fill_round_rect_a va round_box farq qiladi");
+                }
+                // (1)
+                if buf.iter().any(|&p| lum(p) + 8 < min) {
+                    return Err("opacity: burçakda fon va rangdan töqroq piksel");
+                }
+                // (2)
+                if r >= 4 && buf[2 * bw + 3] != bg {
+                    return Err("opacity: yumaloq burçak nuqtasi böyalgan");
+                }
+                let c = buf[(2 + h / 2) * bw + 3 + w / 2];
+                if lum(c).abs_diff(lum(mid)) > 6 {
+                    return Err("opacity: quti markazi aralaşma rangi emas");
+                }
+                // çegarali yarim şaffof quti
+                for t in 1..=3usize {
+                    let bc = 0x3a7bd5;
+                    buf.fill(bg);
+                    round_box_on(&f, 3, 2, w, h, 0, r, r, BoxFill::Solid(fg), t, bc, a);
+                    let min2 = min.min(lum(mix_rgb(bg, bc, a)));
+                    if buf.iter().any(|&p| lum(p) + 8 < min2) {
+                        return Err("opacity: çegarali burçakda töq piksel");
+                    }
+                    // (4) aylantirilgan
+                    let skip = (r + t) / 2 + 1;
+                    ref_buf.fill(bg);
+                    round_box_on(&fr, 3, 2, w, h, skip, r, r, BoxFill::Solid(fg), t, bc, a);
+                    for yy in 2..2 + h - skip {
+                        if ref_buf[yy * bw..(yy + 1) * bw] != buf[(yy + skip) * bw..(yy + skip + 1) * bw] {
+                            return Err("opacity: aylantirilgan quti töliq qutidan farq qiladi");
+                        }
+                    }
+                    n += 1;
                 }
                 n += 1;
             }
