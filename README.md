@@ -334,6 +334,15 @@ Tuzatilgan tizim xatolari (shu bosqichda topildi):
 - **Matn muharriri**: haqiqiy kursor (strelkalar, Home/End, PgUp/PgDn, Delete, Tab),
   siçqon bilan joylaş, aylantiriş, "Qator, ustun" körsatkiçi, saqlanmagan özgariş belgisi `*`,
   `Alt+S` — saqlaş.
+  - **Bekor qiliş / qaytariş**: `Alt+Z` / `Alt+Shift+Z`, 200 qadamgaça, kursor örni bilan
+    tiklanadi. Ketma-ket yozilgan söz — bitta qadam; Enter, öçiriş, joylaş — alohida qadam;
+    yangi tahrir qaytariş stekini tozalaydi.
+  - **Qidiruv**: `Alt+K` (`Alt+F` — oynani kattalaştiriş bilan band) — pastda "Qidir:" maydoni,
+    mosliklar sariq fon bilan belgilanadi, `Enter` — keyingisi (oxiridan boşiga aylanadi),
+    `Esc` — yopiş; holat qatorida `k/n moslik`. UTF-8 (ş, ö, ʼ) ustunlari belgilarda hisoblanadi.
+    Mantiq sof `src/edit.rs` modulida (`EditHistory`, `find_all`) va self-testda tekşiriladi.
+
+  ![Muharrirda qidiruv](docs/apps/editor-find.png)
 - **Oʻzbekça harflar**: `AltGr` (öng Alt) + `s` `c` `o` `g` `'` → **ş ç ö ğ ʼ**
   (Shift bilan — Ş Ç Ö Ğ) — barça ilovalarda va terminalda.
 
@@ -388,6 +397,8 @@ pastda "2 / 4". Video oynasida **ijro/pauza** tugmasi (`Space`), kadrlar böyiç
 | `Alt+C` / `Alt+X` / `Alt+V` | Fayllarda: nusxa olish / kesiş / joylaş |
 | `F2`, `Delete` | Fayllarda: nomini özgartiriş, savatga tashlaş |
 | `Alt+S` | Matn muharririda saqlaş |
+| `Alt+Z` / `Alt+Shift+Z` | Matn muharririda bekor qiliş / qaytariş |
+| `Alt+K` | Matn muharririda qidiruv (`Enter` — keyingisi, `Esc` — yopiş) |
 | `PrtSc` | Ekran rasmi (PNG, ~/Rasmlar) |
 | `AltGr` + s/c/o/g/' | ş ç ö ğ ʼ |
 | `Esc` | Menyu, bildirişnomalar paneli va almaştirgiçni yopiş |

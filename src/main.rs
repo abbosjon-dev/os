@@ -14,6 +14,7 @@ mod config;
 mod crypto;
 mod drivers;
 mod dtb;
+mod edit;
 mod exceptions;
 mod fs;
 mod gfx;
@@ -544,6 +545,10 @@ fn self_tests() {
     match termbuf::self_test() {
         Ok(n) => println!("  [ok] terminal scrollback: {} qator çegarasi, söz/belgi böyiça öraş, UTF-8 ({} sinov)", termbuf::MAX_LINES, n),
         Err(e) => panic!("terminal scrollback tekşiruvi yiqildi: {}", e),
+    }
+    match edit::self_test() {
+        Ok(n) => println!("  [ok] muharrir undo/qidiruv: söz guruhlaş, {} qadam, UTF-8 ustun ({} sinov)", edit::MAX_STEPS, n),
+        Err(e) => panic!("muharrir undo/qidiruv tekşiruvi yiqildi: {}", e),
     }
     match net::webstore::self_test() {
         Ok(n) => println!("  [ok] localStorage/cookie diskka saqlaş (~/.zamin): kodlaş ({} yozuv)", n),

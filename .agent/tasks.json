@@ -93,7 +93,9 @@
       "id": "T12",
       "title": "Matn muharriri: bekor qilish/qaytarish (Alt+Z / Alt+Shift+Z) va qidiruv (Alt+F)",
       "detail": "Fayl: src/gui.rs — Kind::Editor oynasining klaviatura ishlovi va chizish funksiyasi (qator raqamlari bor joy), Window dagi muharrir holati. Alt yorliqlari loyiha uslubiga mos (Alt+V, Alt+W kabi), Alt+F global yorliq bilan to'qnashsa muharrir fokusda bo'lganda muharrirga ustunlik ber yoki Alt+K (Qidir) ishlat va README dagi 'Klaviatura yorliqlari' bo'limiga yoz. Undo: tahrirlar guruhlanadi (ketma-ket yozilgan so'z — bitta qadam, Enter/o'chirish/joylash — alohida qadam), 200 qadamgacha, kursor o'rni bilan birga tiklanadi; har yangi tahrir redo stekini tozalaydi. Qidiruv: pastki qatorda kiritish maydoni, mosliklar sariq fon bilan belgilanadi, Enter — keyingisi (oxiridan boshiga aylanadi), Esc — yopish; holat qatorida 'k/n moslik'. Qabul mezoni: undo/redo va qidiruv mantiqi sof struct (EditHistory, find_all(text, query) -> Vec<(qator, ustun)>) sifatida, main.rs self_tests ga ulangan '[ok] muharrir undo/qidiruv' testi (yozish→undo→redo matnni aynan tiklaydi; UTF-8 bilan 'ö' qidiruvi to'g'ri ustun beradi); skrinshot docs/apps/editor-find.png; verify.sh full o'tadi.",
-      "batch": 2
+      "batch": 2,
+      "status": "done",
+      "done_at": "2026-11-06 15:20:31"
     },
     {
       "id": "T13",

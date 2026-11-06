@@ -178,6 +178,9 @@ struct Window {
     web: Option<Box<Web>>, // Brauzer holati (faol tab)
     web_tabs: Vec<Box<Web>>, // Brauzer: boşqa (nofaol) tablar; faol tab örni — `tab`
     pen: Option<(usize, usize)>, // Chizma: oxirgi nuqta (tuvalda)
+    hist: crate::edit::EditHistory, // Muharrir: bekor qiliş/qaytariş tarixi
+    find: Option<String>, // Muharrir: qidiruv maydoni (oçiq bölsa — so'rov)
+    find_at: usize,     // Muharrir: joriy moslik indeksi
 }
 
 impl Window {
@@ -354,6 +357,9 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         web: None,
         web_tabs: Vec::new(),
         pen: None,
+        hist: crate::edit::EditHistory::new(),
+        find: None,
+        find_at: 0,
     }
 }
 
@@ -1456,6 +1462,11 @@ fn desktop() {
                         changed = true;
                     }
                 }
+                (input::EV_KEY, 1) if e.value == 1 && windows.last().is_some_and(|w| !w.hidden && w.kind == Kind::Editor && w.find.is_some()) => {
+                    // Esc — muharrir qidiruvini yopiş
+                    editor_find_toggle(windows.last_mut().unwrap());
+                    changed = true;
+                }
                 (input::EV_KEY, 1) if e.value == 1 && windows.last().is_some_and(|w| w.rename.is_some()) => {
                     windows.last_mut().unwrap().rename = None; // nomini özgartirişni bekor qiliş
                     changed = true;
@@ -1507,6 +1518,17 @@ fn desktop() {
                     // Alt+T — brauzerda yangi tab
                     if let Some(w) = windows.last_mut().filter(|w| !w.hidden && w.kind == Kind::Browser) {
                         tab_new(w, "zamin://bosh");
+                        changed = true;
+                    }
+                }
+                (input::EV_KEY, 44) | (input::EV_KEY, 37) if e.value == 1 && alt => {
+                    // Alt+Z — bekor qiliş, Alt+Shift+Z — qaytariş, Alt+K — qidiruv (muharrir)
+                    if let Some(w) = windows.last_mut().filter(|w| !w.hidden && w.kind == Kind::Editor) {
+                        if e.code == 37 {
+                            editor_find_toggle(w);
+                        } else {
+                            editor_undo(w, shift);
+                        }
                         changed = true;
                     }
                 }
@@ -6004,8 +6026,14 @@ fn editor_geo(win: &Window) -> (usize, usize, usize, usize, usize) {
     let ty0 = top + u / 3;
     let digits = if win.lines.len() > 999 { 4 } else { 3 };
     let gut = gfx::mono_advance(px) * digits + u / 2;
-    let rows = ((win.y + win.h).saturating_sub(u / 2 + ty0) / lh).max(1);
+    let bar = if win.find.is_some() { find_bar_h() } else { 0 };
+    let rows = ((win.y + win.h).saturating_sub(u / 2 + ty0 + bar) / lh).max(1);
     (ty0, win.x + gut + u / 2, lh, rows, gut)
+}
+
+/// Qidiruv paneli balandligi (muharrir pastida).
+fn find_bar_h() -> usize {
+    body() * 2
 }
 
 fn editor_fix(w: &mut Window) {
@@ -6024,23 +6052,108 @@ fn editor_fix(w: &mut Window) {
 }
 
 fn editor_insert(w: &mut Window, s: &str) {
-    let line = &mut w.lines[w.crow];
-    if line.chars().count() >= 400 {
+    if w.lines[w.crow].chars().count() >= 400 {
         return;
     }
+    let ws = s.chars().all(|c| c == ' ' || c == '\t');
+    editor_record(w, if s.chars().count() == 1 || ws { crate::edit::EditKind::Type { ws } } else { crate::edit::EditKind::Paste });
+    let line = &mut w.lines[w.crow];
     let b = byte_at(line, w.ccol);
     line.insert_str(b, s);
     w.ccol += s.chars().count();
     w.dirty = true;
 }
 
+/// Tahrirdan oldin holatni tarixga yozadi.
+fn editor_record(w: &mut Window, kind: crate::edit::EditKind) {
+    let (lines, r, c) = (&w.lines, w.crow, w.ccol);
+    w.hist.record(kind, lines, r, c);
+}
+
+/// Alt+Z — bekor qiliş, Alt+Shift+Z — qaytariş. Holat va kursor tiklanadi.
+fn editor_undo(w: &mut Window, redo: bool) -> bool {
+    let cur = crate::edit::Snapshot { lines: core::mem::take(&mut w.lines), row: w.crow, col: w.ccol };
+    let back = cur.clone();
+    let got = if redo { w.hist.redo(cur) } else { w.hist.undo(cur) };
+    let ok = got.is_some();
+    let snap = got.unwrap_or(back);
+    w.lines = snap.lines;
+    w.crow = snap.row;
+    w.ccol = snap.col;
+    if ok {
+        w.dirty = true;
+        w.cur = Vec::new();
+    } else {
+        w.cur = String::from(if redo { "Qaytariladigan amal yöq" } else { "Bekor qilinadigan amal yöq" }).into_bytes();
+    }
+    editor_fix(w);
+    ok
+}
+
+/// Alt+K — qidiruv panelini oçadi/yopadi.
+fn editor_find_toggle(w: &mut Window) {
+    w.find = if w.find.is_some() { None } else { Some(String::new()) };
+    w.find_at = 0;
+    editor_fix(w);
+}
+
+/// Qidiruv: `step` — keyingi moslikka ötiş (oxiridan boşiga aylanadi);
+/// aks holda kursordan boşlab birinçi moslikka.
+fn editor_find_go(w: &mut Window, step: bool) {
+    let Some(q) = w.find.as_ref() else { return };
+    let m = crate::edit::find_in_lines(&w.lines, q);
+    if m.is_empty() {
+        w.find_at = 0;
+        return;
+    }
+    w.find_at = if step {
+        (w.find_at + 1) % m.len()
+    } else {
+        m.iter().position(|&p| p >= (w.crow, w.ccol)).unwrap_or(0)
+    };
+    let (r, c) = m[w.find_at];
+    w.crow = r;
+    w.ccol = c;
+    w.hist.break_group();
+    editor_fix(w);
+}
+
+/// Qidiruv maydoni oçiq: tugmalar unga tegişli.
+fn editor_find_key(w: &mut Window, code: u16, shift: bool) {
+    let Some(q) = w.find.as_mut() else { return };
+    match code {
+        28 => editor_find_go(w, true),
+        14 => {
+            q.pop();
+            editor_find_go(w, false);
+        }
+        _ => {
+            if let Some(ch) = keycode_char(code, shift) {
+                if q.chars().count() < 60 {
+                    q.push(ch);
+                }
+                editor_find_go(w, false);
+            }
+        }
+    }
+}
+
 fn editor_key(w: &mut Window, code: u16, shift: bool) {
     editor_fix(w);
+    if w.find.is_some() {
+        editor_find_key(w, code, shift);
+        return;
+    }
+    use crate::edit::EditKind;
     let (_, _, _, rows, _) = editor_geo(w);
     let (r, c) = (w.crow, w.ccol);
     let len = w.lines[r].chars().count();
+    if matches!(code, 102..=109) {
+        w.hist.break_group(); // kursor harakati — söz guruhi yopiladi
+    }
     match code {
         28 => {
+            editor_record(w, EditKind::Enter);
             let b = byte_at(&w.lines[r], c);
             let rest = w.lines[r].split_off(b);
             w.lines.insert(r + 1, rest);
@@ -6049,6 +6162,9 @@ fn editor_key(w: &mut Window, code: u16, shift: bool) {
             w.dirty = true;
         }
         14 => {
+            if c > 0 || r > 0 {
+                editor_record(w, EditKind::Delete);
+            }
             if c > 0 {
                 let b = byte_at(&w.lines[r], c - 1);
                 w.lines[r].remove(b);
@@ -6063,6 +6179,9 @@ fn editor_key(w: &mut Window, code: u16, shift: bool) {
             }
         }
         111 => {
+            if c < len || r + 1 < w.lines.len() {
+                editor_record(w, EditKind::Delete);
+            }
             if c < len {
                 let b = byte_at(&w.lines[r], c);
                 w.lines[r].remove(b);
@@ -6113,6 +6232,7 @@ fn editor_click(w: &mut Window, cx: usize, cy: usize) -> bool {
         return false;
     }
     w.crow = w.scroll + (cy - ty0) / lh;
+    w.hist.break_group();
     let adv = gfx::mono_advance(small()).max(1);
     w.ccol = (cx.saturating_sub(tx) + adv / 2) / adv;
     editor_fix(w);
@@ -6127,7 +6247,15 @@ fn draw_editor(win: &Window) {
     let status = String::from_utf8_lossy(&win.cur);
     let name = if win.dirty { alloc::format!("{} *", fname) } else { String::from(fname) };
     let left = if status.is_empty() { name } else { alloc::format!("{}  ·  {}", name, status) };
-    let pos = alloc::format!("Qator {}, ustun {}", win.crow + 1, win.ccol + 1);
+    let matches = win.find.as_ref().map(|q| crate::edit::find_in_lines(&win.lines, q)).unwrap_or_default();
+    let mtxt = match win.find.as_ref() {
+        Some(q) if !q.is_empty() => {
+            let k = if matches.is_empty() { 0 } else { win.find_at.min(matches.len() - 1) + 1 };
+            alloc::format!("{}/{} moslik  ·  ", k, matches.len())
+        }
+        _ => String::new(),
+    };
+    let pos = alloc::format!("{}Qator {}, ustun {}", mtxt, win.crow + 1, win.ccol + 1);
     let pw = gfx::text_width(&pos, small() * 4 / 5);
     let px_pos = bx.saturating_sub(pw + u);
     gfx::draw_text(win.x + u, by + (bh.saturating_sub(small())) / 2, &fit_text(&left, px_pos.saturating_sub(win.x + u * 2), small()), 0x9fb0c3, small());
@@ -6151,11 +6279,60 @@ fn draw_editor(win: &Window) {
         let num = alloc::format!("{:>w$}", li + 1, w = digits);
         gfx::draw_text_mono(win.x + u / 4, ty, &num, if cur { 0x9fb0c3 } else { 0x55627a }, px);
         gfx::draw_text_mono(tx, ty, line, 0xe7edf6, px);
+        // Qidiruv mosliklari — sariq fon (joriysi yorqinroq)
+        if let Some(q) = win.find.as_ref() {
+            let qw = gfx::text_width_mono(q, px);
+            for (mi, &(mr, mc)) in matches.iter().enumerate() {
+                if mr != li {
+                    continue;
+                }
+                let pre: String = line.chars().take(mc).collect();
+                let mx = tx + gfx::text_width_mono(&pre, px);
+                let right = (win.x + win.w).saturating_sub(2);
+                if mx >= right {
+                    continue;
+                }
+                let col = if mi == win.find_at { 0xffd426 } else { 0xb8961c };
+                fill_rect(mx, ty.saturating_sub(1), qw.min(right - mx), lh, col);
+                gfx::draw_text_mono(mx, ty, q, 0x1b1400, px);
+            }
+        }
         if cur {
             let pre: String = line.chars().take(win.ccol).collect();
             let cw = gfx::text_width_mono(&pre, px);
             fill_rect(tx + cw, ty, (px / 10).max(2), px + 2, 0x7fb0ea);
         }
+    }
+    // Qidiruv paneli (pastki qator)
+    if let Some(q) = win.find.as_ref() {
+        let fh = find_bar_h();
+        let fy = bottom.saturating_sub(fh);
+        fill_rect(win.x + 1, fy, win.w.saturating_sub(2), fh, 0x161b26);
+        fill_rect(win.x + 1, fy, win.w.saturating_sub(2), 1, 0x2a3346);
+        let lbl = "Qidir:";
+        let lx = win.x + u;
+        let ly = fy + (fh.saturating_sub(small())) / 2;
+        gfx::draw_text(lx, ly, lbl, 0x9fb0c3, small());
+        let ix = lx + gfx::text_width(lbl, small()) + u / 2;
+        let info = if q.is_empty() {
+            String::from("Enter — keyingisi · Esc — yopiş")
+        } else if matches.is_empty() {
+            String::from("Topilmadi")
+        } else {
+            alloc::format!("{}/{} moslik", win.find_at.min(matches.len() - 1) + 1, matches.len())
+        };
+        let iw = gfx::text_width(&info, small() * 4 / 5);
+        let ir = (win.x + win.w).saturating_sub(u);
+        let fw = ir.saturating_sub(iw + u + ix);
+        let ih = fh * 3 / 4;
+        let iy = fy + (fh - ih) / 2;
+        gfx::fill_round_rect(ix, iy, fw, ih, ih / 3, 0x0f131c);
+        let shown = fit_text(q, fw.saturating_sub(u), small());
+        gfx::draw_text_mono(ix + u / 3, iy + (ih.saturating_sub(px)) / 2, &shown, 0xe7edf6, px);
+        let cw = gfx::text_width_mono(&shown, px);
+        fill_rect(ix + u / 3 + cw, iy + (ih.saturating_sub(px + 2)) / 2, (px / 10).max(2), px + 2, 0xffd426);
+        let icol = if !q.is_empty() && matches.is_empty() { 0xff6b5e } else { 0x6f7f95 };
+        gfx::draw_text(ir.saturating_sub(iw), fy + (fh.saturating_sub(small() * 4 / 5)) / 2, &info, icol, small() * 4 / 5);
     }
 }
 
