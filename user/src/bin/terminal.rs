@@ -66,10 +66,199 @@ fn find(table: &[Cmd], name: &str) -> Option<usize> {
     table.iter().position(|(names, aliases, _)| names.contains(&name) || aliases.contains(&name))
 }
 
+// --- Buyruqlar tarixi va Tab bilan töldiriş (sof funksiyalar, --self-test tekşiradi) ---
+
+const HISTORY_MAX: usize = 100;
+const HISTORY_DIR: &str = "~/.zamin";
+const HISTORY_PATH: &str = "~/.zamin/terminal_tarix";
+
+/// Buyruqlar tarixi: ↑ — oldingisi, ↓ — keyingisi (oxirida — terilayotgan qoralama).
+struct History {
+    items: Vec<String>,
+    /// Joriy körsatilayotgan element; `items.len()` — qoralama
+    pos: usize,
+    draft: String,
+}
+
+impl History {
+    fn new() -> History {
+        History { items: Vec::new(), pos: 0, draft: String::new() }
+    }
+
+    /// Fayl mazmunidan (har qatorda bitta buyruq).
+    fn from_text(text: &str) -> History {
+        let mut h = History::new();
+        for line in text.lines() {
+            h.push(line);
+        }
+        h
+    }
+
+    fn to_text(&self) -> String {
+        let mut s = self.items.join("\n");
+        if !s.is_empty() {
+            s.push('\n');
+        }
+        s
+    }
+
+    /// Qöşadi (böş va oldingisi bilan bir xil qator qöşilmaydi). Natija: qöşildimi.
+    fn push(&mut self, line: &str) -> bool {
+        let line = line.trim();
+        let added = !line.is_empty() && self.items.last().map(|l| l.as_str()) != Some(line);
+        if added {
+            self.items.push(String::from(line));
+            if self.items.len() > HISTORY_MAX {
+                self.items.remove(0);
+            }
+        }
+        self.pos = self.items.len();
+        self.draft.clear();
+        added
+    }
+
+    /// ↑: oldingi buyruq. `current` — hozir terilgan matn (qoralama sifatida eslab qolinadi).
+    fn prev(&mut self, current: &str) -> Option<&str> {
+        if self.pos >= self.items.len() {
+            self.pos = self.items.len();
+            self.draft = String::from(current);
+        }
+        if self.pos == 0 {
+            return None;
+        }
+        self.pos -= 1;
+        Some(&self.items[self.pos])
+    }
+
+    /// ↓: keyingi buyruq yoki oxirida qoralama.
+    fn next(&mut self) -> Option<&str> {
+        if self.pos >= self.items.len() {
+            return None;
+        }
+        self.pos += 1;
+        Some(if self.pos == self.items.len() { &self.draft } else { &self.items[self.pos] })
+    }
+}
+
+/// Tab: `prefix` bilan boşlanadigan nomzodlar. Natija: (umumiy prefiksgaça töldirilgan
+/// matn, saralangan moslar). Moslik yöq bölsa — (prefix, böş röyxat).
+fn complete(prefix: &str, candidates: &[String]) -> (String, Vec<String>) {
+    let mut matches: Vec<String> = candidates.iter().filter(|c| c.starts_with(prefix)).cloned().collect();
+    matches.sort();
+    matches.dedup();
+    let Some(first) = matches.first() else {
+        return (String::from(prefix), matches);
+    };
+    // Umumiy prefiks (belgi çegarasida)
+    let mut common = first.as_str();
+    for m in &matches[1..] {
+        let end = common.char_indices().zip(m.char_indices()).find(|((_, a), (_, b))| a != b).map_or(common.len().min(m.len()), |((i, _), _)| i);
+        common = &common[..end];
+    }
+    (String::from(common), matches)
+}
+
+/// Qatorni Tab bilan töldiriş natijasi.
+enum Tab {
+    /// Yangi qator
+    Replace(String),
+    /// Variantlar röyxatini körsatiş
+    List(Vec<String>),
+    None,
+}
+
+/// Qatorning oxirgi sözini töldiradi. `cmds` — birinçi söz uçun nomzodlar,
+/// `files(papka)` — papkadagi nomlar (papkalar '/' bilan). `second` — ketma-ket ikkinçi Tab.
+fn tab_line(line: &str, second: bool, cmds: &[String], files: &dyn Fn(&str) -> Vec<String>) -> Tab {
+    let start = line.rfind(' ').map_or(0, |i| i + 1);
+    let before = line[..start].trim_end();
+    let word = &line[start..];
+    let is_cmd = before.is_empty() || before.ends_with('|');
+    let (dir, cands) = if is_cmd && !word.contains('/') {
+        ("", cmds.to_vec())
+    } else {
+        let dir = word.rfind('/').map_or("", |i| &word[..=i]);
+        let rest = &word[dir.len()..];
+        let names = files(dir).into_iter().filter(|n| rest.starts_with('.') || !n.starts_with('.'));
+        (dir, names.map(|n| format!("{}{}", dir, n)).collect())
+    };
+    let (done, variants) = complete(word, &cands);
+    let head = &line[..start];
+    match variants.len() {
+        0 => Tab::None,
+        1 => {
+            let sep = if done.ends_with('/') { "" } else { " " };
+            Tab::Replace(format!("{}{}{}", head, done, sep))
+        }
+        _ if done.len() > word.len() => Tab::Replace(format!("{}{}", head, done)),
+        _ if second => Tab::List(variants.iter().map(|v| String::from(&v[dir.len()..])).collect()),
+        _ => Tab::None,
+    }
+}
+
+/// `terminal --self-test`: tarix va Tab mantiqini tekşiradi.
+fn self_test() -> i64 {
+    let s = |v: &[&str]| v.iter().map(|x| String::from(*x)).collect::<Vec<String>>();
+    // Tarix
+    let mut h = History::new();
+    if !h.push("salom") || h.push("salom") || h.push("   ") || !h.push("fayllar") {
+        return 1;
+    }
+    if h.prev("qoralama") != Some("fayllar") || h.prev("") != Some("salom") || h.prev("").is_some() {
+        return 2;
+    }
+    if h.next() != Some("fayllar") || h.next() != Some("qoralama") || h.next().is_some() {
+        return 3;
+    }
+    for i in 0..150 {
+        h.push(&format!("b{}", i));
+    }
+    if h.items.len() != HISTORY_MAX || h.items[0] != "b50" {
+        return 4;
+    }
+    let h2 = History::from_text(&h.to_text());
+    if h2.items != h.items {
+        return 5;
+    }
+    // Tab
+    let cmds = s(&["kir", "kimman", "katta", "fayllar"]);
+    if complete("ki", &cmds) != (String::from("ki"), s(&["kimman", "kir"])) {
+        return 6;
+    }
+    if complete("fa", &cmds) != (String::from("fayllar"), s(&["fayllar"])) || complete("x", &cmds).1.len() != 0 {
+        return 7;
+    }
+    if complete("ö", &s(&["öqi", "öçir"])).0 != "ö" || complete("öq", &s(&["öqi", "öçir"])).0 != "öqi" {
+        return 8;
+    }
+    let files = |d: &str| if d.is_empty() { s(&["Hujjatlar/", "Hisob.txt", ".yashirin"]) } else { s(&["xat.txt"]) };
+    let ok = |t: Tab, want: &str| matches!(t, Tab::Replace(ref r) if r == want);
+    if !ok(tab_line("kir", false, &cmds, &files), "kir ") || !matches!(tab_line("ki", false, &cmds, &files), Tab::None) {
+        return 9;
+    }
+    if !matches!(tab_line("ki", true, &cmds, &files), Tab::List(ref v) if *v == s(&["kimman", "kir"])) {
+        return 10;
+    }
+    if !ok(tab_line("kir Hu", false, &cmds, &files), "kir Hujjatlar/") || !ok(tab_line("öqi Hujjatlar/x", false, &cmds, &files), "öqi Hujjatlar/xat.txt ") {
+        return 11;
+    }
+    if !matches!(tab_line("öqi H", false, &cmds, &files), Tab::None) {
+        return 12;
+    }
+    if !ok(tab_line("aks 1 | fa", false, &cmds, &files), "aks 1 | fayllar ") {
+        return 13;
+    }
+    println!("[ok] terminal tarix/tab: History push/prev/next, {} ta çeklov, complete() va tab_line()", HISTORY_MAX);
+    0
+}
+
 struct Shell {
     cwd: String,
     /// Fondagi jarayonlar: (PID, nomi)
     background: Vec<(u64, String)>,
+    history: History,
+    /// Standart kirişdan kelgan, hali işlanmagan baytlar
+    inbuf: Vec<u8>,
 }
 
 impl Shell {
@@ -84,9 +273,112 @@ impl Shell {
         }
     }
 
-    fn prompt(&self) {
+    fn prompt_str(&self) -> String {
         let user = zamin::env("FOYDALANUVCHI").unwrap_or_default();
-        print!("{}@zamin:{}> ", user, self.cwd);
+        format!("{}@zamin:{}> ", user, self.cwd)
+    }
+
+    fn prompt(&self) {
+        print!("{}", self.prompt_str());
+    }
+
+    /// Joriy qatorni qayta çizadi: \r + taklif + matn + ESC[K.
+    fn redraw(&self, edit: &str) {
+        print!("\r{}{}\x1b[K", self.prompt_str(), edit);
+    }
+
+    /// Navbatdagi bayt (kerak bölsa stdin dan öqiydi). `None` — kiriş tugadi.
+    fn next_byte(&mut self) -> Option<u8> {
+        if self.inbuf.is_empty() {
+            let mut chunk = [0u8; 512];
+            match zamin::read(zamin::abi::STDIN, &mut chunk) {
+                Ok(n) if n > 0 => self.inbuf.extend_from_slice(&chunk[..n]),
+                _ => return None,
+            }
+        }
+        Some(self.inbuf.remove(0))
+    }
+
+    /// Qator öqiş: oddiy matn + boşqaruv baytlari (grafik terminal yuboradi):
+    /// ESC[A / ESC[B — tarix, \t — töldiriş, 0x7f / 0x08 — oxirgi belgini öçiriş.
+    fn read_line(&mut self) -> Option<String> {
+        let mut edit: Vec<u8> = Vec::new();
+        let mut last_tab = false;
+        loop {
+            let Some(b) = self.next_byte() else {
+                return (!edit.is_empty()).then(|| String::from_utf8_lossy(&edit).into_owned());
+            };
+            let mut is_tab = false;
+            match b {
+                b'\n' => return Some(String::from_utf8_lossy(&edit).into_owned()),
+                b'\r' => {}
+                b'\t' => {
+                    let cur = String::from_utf8_lossy(&edit).into_owned();
+                    match tab_line(&cur, last_tab, &self.command_names(), &|d| self.dir_names(d)) {
+                        Tab::Replace(new) => {
+                            edit = new.into_bytes();
+                            self.redraw(&String::from_utf8_lossy(&edit));
+                        }
+                        Tab::List(variants) => {
+                            print!("\r{}{}\n  {}\n", self.prompt_str(), cur, variants.join("  "));
+                            self.redraw(&cur);
+                        }
+                        Tab::None => self.redraw(&cur),
+                    }
+                    is_tab = true;
+                }
+                0x1b => {
+                    // ESC [ A / ESC [ B
+                    let (Some(b'['), Some(k)) = (self.next_byte(), self.next_byte()) else { continue };
+                    let cur = String::from_utf8_lossy(&edit).into_owned();
+                    let new = match k {
+                        b'A' => self.history.prev(&cur).map(String::from),
+                        b'B' => self.history.next().map(String::from),
+                        _ => None,
+                    };
+                    if let Some(n) = new {
+                        edit = n.into_bytes();
+                    }
+                    self.redraw(&String::from_utf8_lossy(&edit));
+                }
+                0x7f | 0x08 => {
+                    let mut cur = String::from_utf8_lossy(&edit).into_owned();
+                    cur.pop();
+                    edit = cur.into_bytes();
+                    self.redraw(&String::from_utf8_lossy(&edit));
+                }
+                0..=0x1f => {}
+                _ => edit.push(b),
+            }
+            last_tab = is_tab;
+        }
+    }
+
+    /// Birinçi söz uçun nomzodlar: içki buyruqlar (uç tilda) va PATH dagi dasturlar.
+    fn command_names(&self) -> Vec<String> {
+        let mut out: Vec<String> = BUILTINS.iter().chain(ADMIN.iter()).flat_map(|(names, _, _)| names.iter().map(|n| String::from(*n))).collect();
+        let path = zamin::env("PATH").unwrap_or_else(|| String::from("/dasturlar"));
+        for dir in path.split(':') {
+            if let Ok(list) = fs::entries(dir) {
+                out.extend(list.into_iter().filter(|e| !e.is_dir).map(|e| e.name));
+            }
+        }
+        out
+    }
+
+    /// Papkadagi nomlar (joriy papkaga nisbatan); papkalarga '/' qöşiladi.
+    fn dir_names(&self, dir: &str) -> Vec<String> {
+        fs::entries(&self.resolve(dir))
+            .map(|list| list.into_iter().map(|e| if e.is_dir { format!("{}/", e.name) } else { e.name }).collect())
+            .unwrap_or_default()
+    }
+
+    /// Qatorni tarixga qöşadi va ~/.zamin/terminal_tarix ga saqlaydi.
+    fn remember(&mut self, line: &str) {
+        if self.history.push(line) {
+            let _ = fs::mkdir(HISTORY_DIR);
+            let _ = fs::write(HISTORY_PATH, self.history.to_text().as_bytes());
+        }
     }
 
     /// Dastur faylini topadi: yöl bölsa — özi, aks holda PATH böyiça.
@@ -455,7 +747,11 @@ fn normalize(path: &str) -> String {
 }
 
 fn main() -> i64 {
-    let mut sh = Shell { cwd: String::from("~"), background: Vec::new() };
+    if zamin::args() == "--self-test" {
+        return self_test();
+    }
+    let history = fs::read(HISTORY_PATH).map(|d| History::from_text(&String::from_utf8_lossy(&d))).unwrap_or_else(|_| History::new());
+    let mut sh = Shell { cwd: String::from("~"), background: Vec::new(), history, inbuf: Vec::new() };
     println!("{}", tr([
         "Zamin terminali. Buyruqlar röyxati uçun: yordam",
         "Терминал Zamin. Список команд: помощь",
@@ -464,7 +760,8 @@ fn main() -> i64 {
     loop {
         sh.reap_background();
         sh.prompt();
-        let Some(line) = zamin::read_line() else { return 0 }; // Ctrl+D — çiqiş
+        let Some(line) = sh.read_line() else { return 0 }; // Ctrl+D — çiqiş
+        sh.remember(&line);
         if !sh.run_line(&line) {
             return 0;
         }

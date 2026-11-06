@@ -791,6 +791,8 @@ fn feed(win: &mut Window, bytes: &[u8]) {
                     win.lines.clear();
                     win.cur.clear();
                 }
+                // \x1b[K (qator oxirigaça öçiriş): \r allaqaçon qatorni böşatadi, kursor doim
+                // oxirida — qöşimça iş kerak emas.
                 // boşqa ketma-ketliklar (kursor, \x1b[H) — eʼtiborsiz
             } else if esc.len() > 24 {
                 win.esc = None;
@@ -1639,6 +1641,19 @@ fn type_key(w: &mut Window, code: u16, shift: bool) {
             while w.lines.len() > max {
                 w.lines.remove(0);
             }
+        }
+        // ↑ / ↓ / Tab (va böş qatorda Backspace): terminalning özi qatorni tahrirlaydi —
+        // terilgan matn + boşqaruv baytlarini quvurga yuboramiz, u \r + qator + ESC[K bilan qayta çizadi.
+        // Faqat terminalning özi kiriş kutayotganda (oldingi planda dastur yöq).
+        103 | 108 | 15 | 14 if w.pin != NONE_PIPE && task::foreground() == 0 && (code != 14 || w.input.is_empty()) => {
+            let mut data = core::mem::take(&mut w.input).into_bytes();
+            data.extend_from_slice(match code {
+                103 => b"\x1b[A",
+                108 => b"\x1b[B",
+                15 => b"\t",
+                _ => b"\x7f",
+            });
+            let _ = pipe::try_write(w.pin, &data);
         }
         14 => {
             w.input.pop();

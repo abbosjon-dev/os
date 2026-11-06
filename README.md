@@ -673,6 +673,22 @@ abbosjon@zamin:~> çiqiş                                    # çiqiş (qayta ki
 - töxtatiş xavfsiz: jarayon yadro içida (masalan, qulf uşlab turganda) uzilmaydi, foydalanuvçi
   rejimiga qaytayotganda özi tugaydi.
 
+### Buyruqlar tarixi va Tab bilan töldiriş
+
+- **↑ / ↓** — oldingi / keyingi buyruq; oxirida terilayotgan qator (qoralama) qaytadi.
+  Oxirgi 100 buyruq `~/.zamin/terminal_tarix` ga saqlanadi va keyingi oçilişda yuklanadi;
+  böş va ketma-ket takroriy qatorlar qöşilmaydi.
+- **Tab** — birinçi sözda (va `|` dan keyin) içki buyruqlar (uz/ru/en nomlari) va `PATH`
+  dagi dasturlar, keyingi sözlarda joriy papkadagi fayl/papka nomlari (papkaga `/` qöşiladi,
+  `Hujjatlar/x` kabi yöllar ham). Bir neçta moslik bölsa umumiy prefiks töldiriladi,
+  ikkinçi Tab variantlarni röyxat qilib çiqaradi.
+- Grafik oyna terilgan matnni boşqaruv baytlari bilan (`ESC[A`, `ESC[B`, `\t`, `0x7f`)
+  quvurga yuboradi; terminal qatorni `\r` + taklif + matn + `ESC[K` bilan qayta çizadi.
+- Mantiq sof funksiyalarda (`History::push/prev/next`, `complete`, `tab_line`) —
+  yuklanişda `terminal --self-test` ularni tekşiradi: `[ok] terminal tarix/tab`.
+
+![Terminal: Tab bilan töldiriş](docs/apps/terminal-tab.png)
+
 ## Oqimlar
 
 Bitta jarayon içida bir neçta oqim parallel (turli yadrolarda) işlaydi. Ular jarayonning

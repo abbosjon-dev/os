@@ -77,7 +77,9 @@
       "id": "T10",
       "title": "Terminal: buyruqlar tarixi (↑/↓) va Tab bilan to'ldirish",
       "detail": "Fayllar: user/src/bin/terminal.rs (qator o'qish sikli, find()/COMMANDS jadvali, find_program), user/src/lib.rs (stdin/qator o'qish yordamchisi bo'lsa), src/gui.rs (Terminal oynasiga klaviatura yuborish — strelka va Tab uchun ESC [A / ESC [B / 0x09 baytlarini quvurga yozish; feed() dagi ANSI tahlili qatorni qayta chizish uchun \\r va ESC[K ni tushunsin). Tarix: oxirgi 100 buyruq xotirada, ~/.zamin/terminal_tarix ga saqlanadi va keyingi ochilishda yuklanadi; bo'sh/takroriy ketma-ket qatorlar qo'shilmaydi. Tab: birinchi so'zda ichki buyruqlar (uz/ru/en nomlari) va /dasturlar dagi dasturlar, keyingi so'zlarda joriy papkadagi fayl/papka nomlari (papkaga '/' qo'shiladi); bir nechta moslik bo'lsa umumiy prefiks to'ldiriladi, ikkinchi Tab variantlarni ro'yxat qilib chiqaradi. Qabul mezoni: terminal.rs ichida mantiqni sof funksiyalarga ajrat (complete(prefix, candidates) -> (to'ldirish, variantlar), History::push/prev/next) va ularni yadro self-testi bilan emas, `sinov` dasturi yoki terminal ishga tushishidagi --self-test rejimi orqali '[ok] terminal tarix/tab' chiqaradigan qilib tekshir (yoki shu mantiqni src/ dagi umumiy modulga qo'yib main.rs self_tests ga ula); skrinshot docs/apps/terminal-tab.png da 'ki' + Tab -> 'kir ' va variantlar ro'yxati ko'rinadi; verify.sh full o'tadi.",
-      "batch": 2
+      "batch": 2,
+      "status": "done",
+      "done_at": "2026-11-06 15:01:49"
     },
     {
       "id": "T11",

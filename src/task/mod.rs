@@ -959,6 +959,11 @@ pub fn set_foreground(pid: Pid) {
     FOREGROUND.store(pid, Ordering::Release);
 }
 
+/// Oldingi plandagi jarayon (0 — terminalning özi kiriş kutyapti).
+pub fn foreground() -> Pid {
+    FOREGROUND.load(Ordering::Acquire)
+}
+
 /// Joriy jarayon raqami (oqimdan çaqirilsa — jarayonniki).
 pub fn current_pid() -> Pid {
     let s = SCHED.lock();

@@ -396,6 +396,11 @@ extern "C" fn boot_tests(_: usize) {
     assert_eq!(frame::stats().0, frames_before, "jarayon xotirasi töliq qaytmadi");
     tprintln!(msg::TEST_USER, 42);
 
+    // Terminal: buyruqlar tarixi va Tab bilan töldiriş (sof mantiq, `terminal --self-test`)
+    let image = task::programs::find("terminal").expect("terminal dasturi yöq");
+    let pid = task::spawn_user("terminal", image, "--self-test", task::SpawnOptions::kernel(false)).expect("terminal");
+    assert_eq!(task::wait(pid), Some(0), "terminal tarix/tab sinovi yiqildi");
+
     // FAT yoziş: ikkinçi disk bölsa — fayl yozib, qayta öqib tekşiramiz
     if drivers::virtio_blk::fat_present() {
         use crate::fs::fat;
