@@ -181,6 +181,7 @@ struct Window {
     hist: crate::edit::EditHistory, // Muharrir: bekor qiliş/qaytariş tarixi
     find: Option<String>, // Muharrir: qidiruv maydoni (oçiq bölsa — so'rov)
     find_at: usize,     // Muharrir: joriy moslik indeksi
+    sel: Option<(usize, usize)>, // Muharrir: tanlaş langari (qator, ustun); oxiri — kursor
 }
 
 impl Window {
@@ -360,6 +361,7 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         hist: crate::edit::EditHistory::new(),
         find: None,
         find_at: 0,
+        sel: None,
     }
 }
 
@@ -1390,6 +1392,7 @@ fn desktop() {
                             drop_file(&mut windows, &mut desk, d, cx, cy, shift);
                         }
                         *FDRAG_PENDING.lock() = None;
+                        ED_DRAG.store(false, Ordering::Relaxed);
                         for w in windows.iter_mut() {
                             w.pen = None;
                         }
@@ -1499,8 +1502,27 @@ fn desktop() {
                     changed = true;
                 }
                 (input::EV_KEY, 46) | (input::EV_KEY, 45) | (input::EV_KEY, 47) if e.value == 1 && alt => {
-                    // Alt+C — nusxa, Alt+X — kesiş, Alt+V — joylaş (Fayllar)
-                    if files_clip_key(&mut windows, &mut desk, e.code) {
+                    // Alt+C — nusxa, Alt+X — kesiş, Alt+V — joylaş: muharrirda matn (tizim
+                    // almaşuv buferi), brauzer manzil qatori / <input> da joylaş, Fayllarda fayllar
+                    let top = windows.last().filter(|w| !w.hidden).map(|w| w.kind);
+                    if top == Some(Kind::Editor) {
+                        editor_clip(windows.last_mut().unwrap(), e.code);
+                        changed = true;
+                    } else if top == Some(Kind::Browser) && e.code == 47 && web_paste(windows.last_mut().unwrap()) {
+                        changed = true;
+                    } else if files_clip_key(&mut windows, &mut desk, e.code) {
+                        changed = true;
+                    }
+                }
+                (input::EV_KEY, 30) if e.value == 1 && alt => {
+                    // Alt+A — muharrirda hammasini tanlaş
+                    if let Some(w) = windows.last_mut().filter(|w| !w.hidden && w.kind == Kind::Editor && w.find.is_none()) {
+                        editor_fix(w);
+                        w.sel = Some((0, 0));
+                        w.crow = w.lines.len() - 1;
+                        w.ccol = w.lines[w.crow].chars().count();
+                        w.hist.break_group();
+                        editor_fix(w);
                         changed = true;
                     }
                 }
@@ -1579,6 +1601,13 @@ fn desktop() {
             if let Some(w) = windows.last_mut().filter(|w| w.kind == Kind::Paint && w.pen.is_some()) {
                 paint_drag(w, cx, cy);
                 changed = true;
+            }
+            // Muharrirda siçqon bilan sudrab tanlaş
+            if ED_DRAG.load(Ordering::Relaxed) {
+                if let Some(w) = windows.last_mut().filter(|w| w.kind == Kind::Editor && !w.hidden) {
+                    editor_drag(w, cx, cy);
+                    changed = true;
+                }
             }
             // Yopiştirilgan / kattalaştirilgan oyna sudralsa — oldingi ölçamiga qaytadi
             if let Some((idx, off)) = drag {
@@ -6148,8 +6177,26 @@ fn editor_key(w: &mut Window, code: u16, shift: bool) {
     let (_, _, _, rows, _) = editor_geo(w);
     let (r, c) = (w.crow, w.ccol);
     let len = w.lines[r].chars().count();
-    if matches!(code, 102..=109) {
+    if w.sel == Some((r, c)) {
+        w.sel = None; // böş tanlaş
+    }
+    let nav = matches!(code, 102..=109);
+    if nav {
         w.hist.break_group(); // kursor harakati — söz guruhi yopiladi
+    } else if w.sel.is_some() {
+        // Tanlangan matn ustiga yoziş / Enter / öçiriş — tanlaş almaştiriladi (bitta qadam)
+        let mut b = [0u8; 4];
+        let rep: Option<(EditKind, &str)> = match code {
+            28 => Some((EditKind::Enter, "\n")),
+            14 | 111 => Some((EditKind::Delete, "")),
+            15 => Some((EditKind::Type { ws: true }, "    ")),
+            _ => keycode_char(code, shift).map(|ch| (EditKind::Type { ws: ch == ' ' }, &*ch.encode_utf8(&mut b))),
+        };
+        if let Some((kind, txt)) = rep {
+            editor_replace(w, kind, txt);
+            editor_fix(w);
+        }
+        return;
     }
     match code {
         28 => {
@@ -6224,6 +6271,91 @@ fn editor_key(w: &mut Window, code: u16, shift: bool) {
         }
     }
     editor_fix(w);
+    if nav {
+        // Shift+strelka/Home/End — tanlaşni kengaytiradi/toraytiradi (langarga qaytilsa —
+        // bekor); Shift siz — tanlaş bekor qilinadi
+        crate::edit::nav_select(&mut w.sel, (r, c), (w.crow, w.ccol), shift);
+    }
+}
+
+/// Tanlangan matnni (bölsa) `s` bilan almaştiradi (bitta tarix qadami).
+fn editor_replace(w: &mut Window, kind: crate::edit::EditKind, s: &str) {
+    let mut cur = (w.crow, w.ccol);
+    let mut anchor = w.sel;
+    if crate::edit::replace_sel(&mut w.hist, kind, &mut w.lines, &mut cur, &mut anchor, s) {
+        w.dirty = true;
+        w.cur = Vec::new();
+    }
+    w.sel = anchor;
+    (w.crow, w.ccol) = cur;
+    editor_fix(w);
+}
+
+/// Tanlangan matn (böş bölmasa).
+fn editor_sel_text(w: &Window) -> Option<String> {
+    let a = w.sel.filter(|&a| a != (w.crow, w.ccol))?;
+    Some(crate::edit::range_text(&w.lines, a, (w.crow, w.ccol)))
+}
+
+/// Alt+C — nusxa, Alt+X — kesiş, Alt+V — joylaş (tizim almaşuv buferi orqali).
+fn editor_clip(w: &mut Window, code: u16) {
+    if w.find.is_some() {
+        return;
+    }
+    editor_fix(w);
+    match code {
+        46 | 45 => {
+            let Some(t) = editor_sel_text(w) else {
+                w.cur = String::from("Avval matnni tanlang (Shift+strelka yoki siçqon)").into_bytes();
+                return;
+            };
+            crate::clip::set(&t);
+            let n = t.chars().count();
+            if code == 45 {
+                editor_replace(w, crate::edit::EditKind::Paste, "");
+                w.cur = alloc::format!("Kesildi: {} belgi", n).into_bytes();
+            } else {
+                w.cur = alloc::format!("Nusxa olindi: {} belgi", n).into_bytes();
+            }
+        }
+        _ => {
+            let t = crate::clip::get();
+            if t.is_empty() && editor_sel_text(w).is_none() {
+                w.cur = String::from("Almaşuv buferi böş").into_bytes();
+                return;
+            }
+            editor_replace(w, crate::edit::EditKind::Paste, &t);
+        }
+    }
+}
+
+/// Muharrir matn sohasida siçqon sudralmoqda (tanlaş).
+static ED_DRAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Ekran nuqtasi → (qator, ustun) — matn sohasidan taşqarisi çekka qatorga keltiriladi.
+fn editor_pos_at(w: &Window, cx: usize, cy: usize) -> (usize, usize) {
+    let (ty0, tx, lh, rows, _) = editor_geo(w);
+    let k = (cy.saturating_sub(ty0) / lh).min(rows.saturating_sub(1));
+    let row = (w.scroll + k).min(w.lines.len().saturating_sub(1));
+    let adv = gfx::mono_advance(small()).max(1);
+    let col = (cx.saturating_sub(tx) + adv / 2) / adv;
+    (row, col.min(w.lines.get(row).map_or(0, |l| l.chars().count())))
+}
+
+/// Sudraş: kursor siljiydi, langar joyida qoladi.
+fn editor_drag(w: &mut Window, cx: usize, cy: usize) {
+    let (ty0, _, lh, rows, _) = editor_geo(w);
+    // çekkadan taşqariga sudralsa — aylantiriş
+    if cy < ty0 && w.scroll > 0 {
+        w.scroll -= 1;
+    } else if cy >= ty0 + rows * lh && w.scroll + rows < w.lines.len() {
+        w.scroll += 1;
+    }
+    let p = editor_pos_at(w, cx, cy);
+    (w.crow, w.ccol) = p;
+    if w.sel.is_none() {
+        w.sel = Some(p);
+    }
 }
 
 fn editor_click(w: &mut Window, cx: usize, cy: usize) -> bool {
@@ -6231,11 +6363,13 @@ fn editor_click(w: &mut Window, cx: usize, cy: usize) -> bool {
     if cy < ty0 || cy >= ty0 + rows * lh || cx < w.x || cx >= w.x + w.w {
         return false;
     }
-    w.crow = w.scroll + (cy - ty0) / lh;
+    let _ = tx;
     w.hist.break_group();
-    let adv = gfx::mono_advance(small()).max(1);
-    w.ccol = (cx.saturating_sub(tx) + adv / 2) / adv;
+    (w.crow, w.ccol) = editor_pos_at(w, cx, cy);
     editor_fix(w);
+    // yangi bosiş — eski tanlaş bekor, langar shu nuqtada (sudralsa tanlaş boşlanadi)
+    w.sel = Some((w.crow, w.ccol));
+    ED_DRAG.store(true, Ordering::Relaxed);
     true
 }
 
@@ -6255,7 +6389,11 @@ fn draw_editor(win: &Window) {
         }
         _ => String::new(),
     };
-    let pos = alloc::format!("{}Qator {}, ustun {}", mtxt, win.crow + 1, win.ccol + 1);
+    let stxt = match editor_sel_text(win) {
+        Some(t) => alloc::format!("  ·  tanlangan: {} belgi", t.chars().count()),
+        None => String::new(),
+    };
+    let pos = alloc::format!("{}Qator {}, ustun {}{}", mtxt, win.crow + 1, win.ccol + 1, stxt);
     let pw = gfx::text_width(&pos, small() * 4 / 5);
     let px_pos = bx.saturating_sub(pw + u);
     gfx::draw_text(win.x + u, by + (bh.saturating_sub(small())) / 2, &fit_text(&left, px_pos.saturating_sub(win.x + u * 2), small()), 0x9fb0c3, small());
@@ -6268,6 +6406,7 @@ fn draw_editor(win: &Window) {
     let bottom = (win.y + win.h).saturating_sub(radius());
     fill_rect(win.x + 1, top, gut, bottom.saturating_sub(top), 0x161b26);
     let digits = if win.lines.len() > 999 { 4 } else { 3 };
+    let sel = win.sel.map(|a| crate::edit::ordered(a, (win.crow, win.ccol)));
     for k in 0..rows {
         let li = win.scroll + k;
         let Some(line) = win.lines.get(li) else { break };
@@ -6275,6 +6414,20 @@ fn draw_editor(win: &Window) {
         let cur = li == win.crow;
         if cur {
             gfx::blend_rect(win.x + gut, ty.saturating_sub(1), win.w.saturating_sub(gut + 2), lh, accent(), 28);
+        }
+        // Tanlangan hudud — asosiy rang (accent) foni; qator oxiri ham tanlangan bölsa,
+        // yangi qator belgisi örnida bir belgi kenglik qöşiladi
+        if let Some((sa, sb)) = sel.filter(|&(sa, sb)| li >= sa.0 && li <= sb.0 && sa != sb) {
+            let n = line.chars().count();
+            let c0 = if li == sa.0 { sa.1.min(n) } else { 0 };
+            let c1 = if li == sb.0 { sb.1.min(n) } else { n };
+            let adv = gfx::mono_advance(px);
+            let x0 = tx + gfx::text_width_mono(&line.chars().take(c0).collect::<String>(), px);
+            let x1 = tx + gfx::text_width_mono(&line.chars().take(c1).collect::<String>(), px) + if li < sb.0 { adv / 2 } else { 0 };
+            let right = (win.x + win.w).saturating_sub(2);
+            if x1 > x0 && x0 < right {
+                gfx::blend_rect(x0, ty.saturating_sub(1), x1.min(right) - x0, lh, accent(), 150);
+            }
         }
         let num = alloc::format!("{:>w$}", li + 1, w = digits);
         gfx::draw_text_mono(win.x + u / 4, ty, &num, if cur { 0x9fb0c3 } else { 0x55627a }, px);
@@ -9131,6 +9284,35 @@ fn web_submit(win: &mut Window, f: usize, submitter: Option<usize>) {
         let target = alloc::format!("{}?{}", a, q);
         web_go(win, &target, true);
     }
+}
+
+/// Alt+V — brauzerda joylaş: fokusdagi <input> maydoniga yoki tahrirlanayotgan manzil
+/// qatoriga (bir qatorli: yangi qatorlar boşliqqa aylanadi). Joylaş bölsa — true.
+fn web_paste(win: &mut Window) -> bool {
+    let t = crate::clip::get();
+    let one: String = t.trim_end_matches(['\n', '\r']).chars().map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c }).collect();
+    if one.is_empty() {
+        return false;
+    }
+    let Some(w) = win.web.as_mut() else { return false };
+    if let Some(k) = w.focus {
+        if let Some(i) = w.doc.inputs.get_mut(k) {
+            let room = 500usize.saturating_sub(i.value.chars().count());
+            i.value.extend(one.chars().take(room));
+            return true;
+        }
+        return false;
+    }
+    if w.editing {
+        for c in one.chars() {
+            if w.edit.len() + c.len_utf8() > 300 {
+                break;
+            }
+            w.edit.push(c);
+        }
+        return true;
+    }
+    false
 }
 
 fn web_key(win: &mut Window, code: u16, shift: bool) {

@@ -388,6 +388,21 @@ Tuzatilgan tizim xatolari (shu bosqichda topildi):
     Mantiq sof `src/edit.rs` modulida (`EditHistory`, `find_all`) va self-testda tekşiriladi.
 
   ![Muharrirda qidiruv](docs/apps/editor-find.png)
+  - **Matn tanlaş va tizim almaşuv buferi**: `Shift` + strelkalar / `Home` / `End` / `PgUp` /
+    `PgDn` tanlaşni kengaytiradi va toraytiradi (kursor langarga qaytsa — tanlaş bekor),
+    `Shift` siz harakat tanlaşni bekor qiladi; siçqon bilan sudrab tanlaş (çekkadan taşqariga
+    sudralsa matn aylanadi); `Alt+A` — hammasini tanlaş. Tanlangan hudud asosiy rang (accent)
+    foni bilan körsatiladi, holat qatorida `tanlangan: N belgi`. `Alt+C` — nusxa, `Alt+X` —
+    kesiş, `Alt+V` — joylaş (köp qatorli ham); tanlangan matn ustiga yozilsa (yoki Enter,
+    Backspace/Delete) u almaştiriladi. Kesiş, joylaş va tanlaşni almaştiriş tarixga **bitta**
+    qadam bölib yoziladi (`Alt+Z` bilan bir marta qaytariladi). Bufer umumiy (`src/clip.rs`,
+    spin-qulf bilan `set`/`get`): muharrirdan nusxa olingan matnni brauzer manzil qatoriga va
+    `<input>` maydonlariga ham `Alt+V` bilan joylaş mumkin (yangi qatorlar boşliqqa aylanadi).
+    Mantiq `src/edit.rs` da (`range_text`, `delete_range`, `insert_text`, `replace_sel`,
+    `nav_select`); self-test köp qatorli tanlaş, nusxa, kesiş, joylaş, ustiga yoziş va Alt+Z ni
+    ğ, ö, ç harflari bilan tekşiradi.
+
+  ![Muharrirda köp qatorli tanlaş](docs/apps/editor-select.png)
 - **Oʻzbekça harflar**: `AltGr` (öng Alt) + `s` `c` `o` `g` `'` → **ş ç ö ğ ʼ**
   (Shift bilan — Ş Ç Ö Ğ) — barça ilovalarda va terminalda.
 
@@ -439,7 +454,8 @@ pastda "2 / 4". Video oynasida **ijro/pauza** tugmasi (`Space`), kadrlar böyiç
 | `Alt+W` | Faol oynani yopiş |
 | `Alt+M` | Faol oynani dokka yashiriş |
 | `Alt+F` | Kattalaştiriş / oldingi ölçam |
-| `Alt+C` / `Alt+X` / `Alt+V` | Fayllarda: nusxa olish / kesiş / joylaş |
+| `Alt+C` / `Alt+X` / `Alt+V` | Fayllarda: nusxa olish / kesiş / joylaş; muharrirda — tanlangan matn (tizim almaşuv buferi); brauzer manzil qatori va `<input>` da — joylaş |
+| `Shift` + strelkalar / `Home` / `End`, `Alt+A` | Matn muharririda tanlaş / hammasini tanlaş |
 | `F2`, `Delete` | Fayllarda: nomini özgartiriş, savatga tashlaş |
 | `Alt+S` | Matn muharririda saqlaş |
 | `Alt+Z` / `Alt+Shift+Z` | Matn muharririda bekor qiliş / qaytariş |

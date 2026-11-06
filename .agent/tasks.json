@@ -133,7 +133,9 @@
       "id": "T17",
       "title": "Tizim almashuv buferi va matn muharririda matn tanlash (Shift+strelkalar, sichqoncha, Alt+C/X/V)",
       "detail": "Hozir tizim bo'ylab umumiy almashuv buferi yo'q, muharrirda esa tanlash yo'q. Fayllar: yangi src/clip.rs (yoki gui.rs ichida modul): umumiy matn buferi, pub fn set(&str) / get() -> String, spin-qulf bilan. src/edit.rs: tanlash langari (anchor) va kursor; Shift+←/→/↑/↓/Home/End tanlashni kengaytiradi, sichqoncha bilan sudrab tanlash mumkin; Alt+A — hammasini tanlash; Alt+C — nusxa, Alt+X — kesish, Alt+V — joylash; tanlangan matn ustiga yozilsa, u almashtiriladi. Kesish/joylash undo tarixiga (Alt+Z) bitta qadam bo'lib yoziladi. src/gui.rs: muharrir chizishida tanlangan hudud asosiy rang (accent) foni bilan ko'rsatiladi; brauzer manzil qatori va <input> maydonlariga Alt+V bilan joylash qo'shiladi. Qabul mezoni: edit::self_test() kengaytiriladi: ko'p qatorli tanlash, nusxa, kesish, joylash, tanlangan matn ustiga yozish va Alt+Z bilan qaytarish UTF-8 o'zbek harflari (ğ, ö, ç) bilan to'g'ri ishlaydi. Shift+strelkalar tanlashni ham, tanlashni bekor qilishni ham bajaradi. Skrinshot docs/apps/editor-select.png (bir necha qatorli tanlov) olinadi; README dagi muharrir bo'limi yangilanadi; verify.sh full o'tadi.",
-      "batch": 3
+      "batch": 3,
+      "status": "done",
+      "done_at": "2026-11-06 16:43:39"
     },
     {
       "id": "T18",

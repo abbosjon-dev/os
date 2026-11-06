@@ -22,6 +22,7 @@ mod gfx_font;
 mod gic;
 mod gui;
 mod canvas;
+mod clip;
 mod css;
 mod html;
 mod i18n;
@@ -555,7 +556,7 @@ fn self_tests() {
         Err(e) => panic!("terminal scrollback tekşiruvi yiqildi: {}", e),
     }
     match edit::self_test() {
-        Ok(n) => println!("  [ok] muharrir undo/qidiruv: söz guruhlaş, {} qadam, UTF-8 ustun ({} sinov)", edit::MAX_STEPS, n),
+        Ok(n) => println!("  [ok] muharrir undo/qidiruv/tanlaş: söz guruhlaş, {} qadam, UTF-8 ustun, köp qatorli nusxa/kesiş/joylaş ({} sinov)", edit::MAX_STEPS, n),
         Err(e) => panic!("muharrir undo/qidiruv tekşiruvi yiqildi: {}", e),
     }
     match net::webstore::self_test() {
