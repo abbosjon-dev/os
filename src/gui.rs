@@ -6704,6 +6704,26 @@ document.getElementById("qs").textContent = location.search;
 <p>Bu matn ikki float element orasidan oqadi. Zamin Brauzer endi CSS position (relative, absolute, fixed) va float (left, right) xossalarini, shuningdek clear xossasini tuşunadi. Matn float lar yonida toraygan sohada joylaşadi.</p>
 <p style="clear:both;background:#eee;color:#222;padding:6px">clear: both — bu blok float lar ostidan boşlanadi.</p>
 "##,
+        "zamin://matn" => r##"<title>Matn tekislaşi va dir=rtl</title>
+<style>
+.q{background:#eef2f8;color:#1a2233;padding:8px;border-radius:6px}
+.j{text-align:justify}
+.e{text-align:end}
+</style>
+<h1>text-align va dir</h1>
+<p class="q" style="text-align:left">text-align: left — çapga tekislangan matn.</p>
+<p class="q" style="text-align:center">text-align: center — markazda.</p>
+<p class="q" style="text-align:right">text-align: right — öngga tekislangan matn.</p>
+<p class="q j">text-align: justify — bu paragrafdagi sözlar orasidagi bo'şliqlar kengaytiriladi, şunda har bir qator (oxirgisidan taşqari) ikkala çetga ham teng taqaladi. Zamin Brauzer buni noldan hisoblaydi.</p>
+<h2>dir="rtl"</h2>
+<div dir="rtl">
+<p class="q">dir="rtl" — matn öngdan boşlanadi (text-align: start).</p>
+<p class="q e">text-align: end — rtl da çapga.</p>
+<ul><li>Birinçi band</li><li>Ikkinçi band</li></ul>
+<blockquote>Iqtibos çizig'i öng tomonda.</blockquote>
+<div style="display:flex;gap:8px"><p class="q">1</p><p class="q">2</p><p class="q">3</p></div>
+</div>
+"##,
         "zamin://bosh" => r##"<title>Bosh sahifa</title>
 <style>
 .hero{background:#1e3a8a;color:#ffffff;text-align:center}
@@ -6723,6 +6743,7 @@ document.getElementById("qs").textContent = location.search;
 <li><a href="zamin://veb">Flex, grid, jadval, async/await sinovi</a></li>
 <li><a href="zamin://html">Barça HTML elementlari sinovi</a></li>
 <li><a href="zamin://joylasuv">CSS position va float sinovi</a></li>
+<li><a href="zamin://matn">text-align va dir=rtl sinovi</a></li>
 <li><a href="zamin://tarix">Tarix</a> — körilgan sahifalar</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
 <li><a href="https://example.com/">example.com</a> (HTTPS, haqiqiy internet)</li>
@@ -7710,7 +7731,9 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 let mut rs_new: Vec<(usize, u8)> = Vec::new();
                 for (c, w) in row.iter().zip(widths.iter()) {
                     let d0 = deco.len();
-                    let yy = lay(web, &c.1, x, *w, y, b.flex, items, deco, anc);
+                    // dir="rtl": ustunlar (flex / grid / jadval kataklari) öngdan çapga
+                    let cx = if b.rtl { (page_pad * 2 + full).saturating_sub(x + w) } else { x };
+                    let yy = lay(web, &c.1, cx, *w, y, b.flex, items, deco, anc);
                     bottom = bottom.max(yy);
                     if c.1[0].rspan > 1 && deco.len() > d0 {
                         rs_new.push((d0, c.1[0].rspan - 1));
@@ -7865,15 +7888,21 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
             close_box(&mut y, deco, &mut open_box);
             continue;
         }
-        let x0 = pad + indent;
+        // dir="rtl": chekiniş (ro'yxat, iqtibos) öng tomonda, belgilar — öngda
+        let rtl = b.rtl;
+        let x0 = pad + if rtl { 0 } else { indent };
+        let xr = pad + maxw - if rtl { indent } else { 0 };
         if b.summary {
             // ▶ / ▼ — bosilsa <details> oçiladi
             let open = doc.details.get(b.det as usize).copied().unwrap_or(false);
             let t = String::from(if open { "▼" } else { "▶" });
             let tw = gfx::text_width(&t, base_px);
-            items.push(WItem { x: x0, y, w: tw + u / 2, h: base_px, text: t, col: mix(bcol, page_bg, 60), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: b.det });
+            items.push(WItem { x: if rtl { xr.saturating_sub(tw) } else { x0 }, y, w: tw + u / 2, h: base_px, text: t, col: mix(bcol, page_bg, 60), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: b.det });
         }
-        let x0 = if b.summary { x0 + base_px + u / 3 } else { x0 };
+        let x0 = if b.summary && !rtl { x0 + base_px + u / 3 } else { x0 };
+        let xr = if b.summary && rtl { xr.saturating_sub(base_px + u / 3) } else { xr };
+        // ro'yxat belgisi: ltr — matndan çapda, rtl — öngda
+        let mark_x = |tw: usize| if rtl { xr + u / 3 } else { x0.saturating_sub(tw + u / 3) };
         if let HK::Li(d, n) = b.kind {
             if n == 0 || b.mark.is_empty() && n == 0 {
                 // ichma-ich ro'yxatlar: ● ○ ■
@@ -7883,11 +7912,11 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                     _ => "▪",
                 });
                 let tw = gfx::text_width(&t, base_px);
-                items.push(WItem { x: x0.saturating_sub(tw + u / 3), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 60), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
+                items.push(WItem { x: mark_x(tw), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 60), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
             } else {
                 let t = if b.mark.is_empty() { alloc::format!("{}.", n) } else { b.mark.clone() };
                 let tw = gfx::text_width(&t, base_px);
-                items.push(WItem { x: x0.saturating_sub(tw + u / 3), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 70), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
+                items.push(WItem { x: mark_x(tw), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 70), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
             }
         }
         if b.kind == HK::Pre {
@@ -7899,7 +7928,12 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
             let mut yy = y + u / 2;
             for l in lines {
                 let w = gfx::text_width_mono(l, base_px);
-                items.push(WItem { x: x0, y: yy, w, h: base_px, text: String::from(l), col: b.color.unwrap_or(if dark { 0xd7e3c8 } else { 0x24292f }), px: base_px, mono: true, link: None, el: b.el, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
+                let off = match b.align {
+                    1 => (xr - x0).saturating_sub(w) / 2,
+                    2 => (xr - x0).saturating_sub(w),
+                    _ => 0,
+                };
+                items.push(WItem { x: x0 + off, y: yy, w, h: base_px, text: String::from(l), col: b.color.unwrap_or(if dark { 0xd7e3c8 } else { 0x24292f }), px: base_px, mono: true, link: None, el: b.el, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
                 yy += lhm;
             }
             y += h + if last_in_box { 0 } else { gap_bot };
@@ -7910,20 +7944,55 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
         let mut x = x0;
         let mut line_start = items.len();
         let mut line_h = base_px * 14 / 10;
-        let line_w = pad + maxw - x0;
-        let finish = |items: &mut Vec<WItem>, start: usize, x: usize| {
-            if b.align != 0 {
-                let used = x - x0;
-                let off = line_w.saturating_sub(used) * b.align as usize / 2;
-                for it in items[start..].iter_mut() {
-                    it.x += off;
+        let line_w = xr - x0;
+        // Qatorni tekislaş: 1 — markaz, 2 — öng, 3 — justify (oxirgi qatordan taşqari).
+        // Qator oxiridagi böşliq hisobga olinmaydi (öngga tekislangan matn çetga taqaladi).
+        let finish = |items: &mut Vec<WItem>, start: usize, x: usize, last: bool| {
+            if b.align == 0 || start >= items.len() {
+                return;
+            }
+            let tail = items.last().map(|it| {
+                if it.img.is_none() && it.input == NO_EL && it.text.ends_with(' ') {
+                    if it.mono { gfx::text_width_mono(" ", it.px) } else { gfx::text_width(" ", it.px) }
+                } else {
+                    0
                 }
+            }).unwrap_or(0);
+            let used = (x - x0).saturating_sub(tail);
+            let free = line_w.saturating_sub(used);
+            if b.align == 3 {
+                if last {
+                    if rtl {
+                        for it in items[start..].iter_mut() {
+                            it.x += free;
+                        }
+                    }
+                    return;
+                }
+                // bo'şliqlar (söz oxiridagi ' ') orasida teng taqsimlaymiz
+                let n = items.len() - start;
+                let gaps = items[start..n + start - 1].iter().filter(|it| it.text.ends_with(' ')).count();
+                if gaps == 0 {
+                    return;
+                }
+                let mut k = 0;
+                for it in items[start..].iter_mut() {
+                    it.x += free * k / gaps;
+                    if it.text.ends_with(' ') {
+                        k += 1;
+                    }
+                }
+                return;
+            }
+            let off = if b.align == 1 { free / 2 } else { free };
+            for it in items[start..].iter_mut() {
+                it.x += off;
             }
         };
         for s in &b.spans {
             let spx = pxs(s.size);
             if s.br {
-                finish(items, line_start, x);
+                finish(items, line_start, x, true);
                 x = x0;
                 y += line_h;
                 line_start = items.len();
@@ -7941,8 +8010,8 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                     1 => (gfx::text_width(&inp.value, spx) + u * 3 / 2, spx * 7 / 5),
                     _ => ((inp.size.clamp(4, 60) as usize * spx * 11 / 20).min(maxw), spx * 8 / 5),
                 };
-                if x + ww > pad + maxw && x > x0 {
-                    finish(items, line_start, x);
+                if x + ww > xr && x > x0 {
+                    finish(items, line_start, x, false);
                     x = x0;
                     y += line_h;
                     line_start = items.len();
@@ -7961,8 +8030,8 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 let ww = if s.code { gfx::text_width_mono(word, spx) } else { gfx::text_width(word, spx) }
                     + if s.button || s.fx & crate::html::FX_KBD != 0 { u / 2 } else { 0 }
                     + if s.bold { 1 } else { 0 };
-                if x + ww > pad + maxw && x > x0 {
-                    finish(items, line_start, x);
+                if x + ww > xr && x > x0 {
+                    finish(items, line_start, x, false);
                     x = x0;
                     y += line_h;
                     line_start = items.len();
@@ -7979,10 +8048,10 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 x += ww;
             }
         }
-        finish(items, line_start, x);
+        finish(items, line_start, x, true);
         y += line_h;
         if b.kind == HK::Quote {
-            deco.push(dfill(pad + u / 2, y_block, 3, y - y_block, accent()));
+            deco.push(dfill(if rtl { (pad + maxw).saturating_sub(u / 2 + 3) } else { pad + u / 2 }, y_block, 3, y - y_block, accent()));
         }
         if b.kind == HK::H(1) && b.bgk == 0 {
             deco.push(dfill(pad, y + u / 6, maxw, 1, if dark { 0x2a3346 } else { 0xd0d5dd }));

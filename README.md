@@ -164,6 +164,15 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   Sinov: `zamin://html` (Canvas 2D bo'limi), yuklanish self-testida piksellar tekshiriladi.
 
   ![Canvas 2D](docs/web-canvas.png)
+- **text-align va dir=rtl** — `text-align`: `left`/`right`/`center`/`justify` hamda yo'nalishga
+  bog'liq `start`/`end` (meros bilan; `-webkit-center` ham). `justify` — so'zlar orasidagi bo'shliq
+  kengaytiriladi, oxirgi qator start tomonda qoladi. Qator oxiridagi bo'shliq hisobga olinmaydi —
+  o'ngga tekislangan matn chetga aniq taqaladi. `dir="rtl"`/`dir="ltr"` atributi va CSS `direction`:
+  blok matni o'ngdan boshlanadi, ro'yxat va iqtibos chekinishi o'ng tomonga o'tadi (belgi `•`/`1.`
+  va iqtibos chizig'i o'ngda), `<pre>` qatorlari ham tekislanadi, flex/grid/jadval ustunlari
+  o'ngdan chapga joylashadi. JS: `el.style.textAlign`/`direction`. Sinov: `zamin://matn`.
+
+  ![text-align va dir=rtl](docs/web-rtl.png)
 - **JS** — `async function`, `async () =>`, `await` (fetch va taymerlarni kutadi),
   `localStorage`/`sessionStorage`, `document.cookie`.
 - **DOM** — har bir element ro'yxatda (ota-bolasi bilan): `innerHTML = "<b>…</b>"` (HTML
@@ -219,7 +228,7 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   Cheksiz sikl va chuqur rekursiyadan himoya (qadamlar soni va stek o'lchovi).
 - **CSS (`css` moduli)** — `<style>`, `style=""` va tashqi `<link rel=stylesheet>`:
   teg/`.klass`/`#id`/avlod/`:hover` tanlagichlari, `@media`, `color`, `background`, `font-size` (px/em/rem/%/pt),
-  `font-weight`, `text-align`, `display:none`, `visibility`, `text-decoration`; meros
+  `font-weight`, `text-align` (start/end/justify), `direction`, `display:none`, `visibility`, `text-decoration`; meros
   (inheritance) va brauzerning o'z uslublari; `<body>`/`<html>` yashirin bo'lsa ham qo'llanadi.
 - **Rasmlar** — `<img>` HTTP yoki fayldan yuklanib, o'z dekoderlarimiz bilan ochiladi
   (PNG, JPEG, GIF, BMP, SVG…), aylantirishda to'g'ri qirqiladi; to'g'ridan-to'g'ri rasm manzili ham.

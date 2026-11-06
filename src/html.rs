@@ -49,7 +49,8 @@ pub struct Block {
     pub kind: Kind,
     pub spans: Vec<Span>,
     pub bg: Option<u32>,
-    pub align: u8,
+    pub align: u8, // yakuniy: 0 — çap, 1 — markaz, 2 — öng, 3 — justify
+    pub rtl: bool, // dir="rtl" / direction: rtl
     pub size: f32,
     pub color: Option<u32>,
     pub el: u16,
@@ -320,7 +321,13 @@ impl Doc {
                 match prop.as_str() {
                     "display" => b.hidden = low == "none",
                     "background" | "background-color" if owner => b.bg = css::parse_color(val),
-                    "text-align" if owner => b.align = if low == "center" { 1 } else if low == "right" { 2 } else { 0 },
+                    "text-align" if owner => {
+                        let mut st = Sty::root();
+                        st.rtl = b.rtl;
+                        css::apply(&mut st, "text-align", val, b.size);
+                        b.align = css::resolve_align(st.align, b.rtl);
+                    }
+                    "direction" if owner => b.rtl = low == "rtl",
                     "color" => b.color = css::parse_color(val),
                     "font-size" => {
                         let mut st = Sty::root();
@@ -1011,7 +1018,7 @@ impl P {
             }
         }
         Block {
-            kind: k, spans: Vec::new(), bg, align: st.align, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: st.hidden, bgk,
+            kind: k, spans: Vec::new(), bg, align: css::resolve_align(st.align, st.rtl), rtl: st.rtl, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: st.hidden, bgk,
             pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, maxw: cs.maxw, center: cs.center, mt: st.mt, mb: st.mb,
             bmt: cs.mt, bmb: cs.mb,
             flex: fl.0, fcol: fl.1, fmode: fl.2, fgap: fl.3, gcols: fl.4, fjust: fl.5, fw: fl.6, fgrow: fl.7,
@@ -1183,7 +1190,13 @@ impl P {
             id = attr(tag, "name").unwrap_or_default(); // <a name="…"> — yakor
         }
         let classes: Vec<String> = attr(tag, "class").map(|c| c.split_whitespace().map(String::from).collect()).unwrap_or_default();
-        let parent = self.top();
+        let mut parent = self.top();
+        // dir="rtl" / dir="ltr" — CSS `direction` dan oldin (CSS ustun turadi)
+        match attr(tag, "dir").map(|d| d.to_ascii_lowercase()).as_deref() {
+            Some("rtl") => parent.rtl = true,
+            Some("ltr") => parent.rtl = false,
+            _ => {}
+        }
         let mut st = {
             let anc: Vec<ElRef> = self.stack.iter().map(|o| ElRef { tag: &o.tag, id: &o.id, classes: &o.classes, hover: false }).collect();
             let me = ElRef { tag: name, id: &id, classes: &classes, hover: false };
@@ -1236,6 +1249,8 @@ impl P {
             st.align = match a.to_ascii_lowercase().as_str() {
                 "center" => 1,
                 "right" => 2,
+                "left" => 3,
+                "justify" => 5,
                 _ => st.align,
             };
         }
@@ -1967,6 +1982,7 @@ pub fn plain(text: &str) -> Doc {
         spans: alloc::vec![Span { text: String::from(text), link: None, bold: false, code: true, br: false, color: None, size: 14.0, el: NO_EL, button: false, underline: false, input: NO_EL, fx: 0 }],
         bg: None,
         align: 0,
+        rtl: false,
         size: 14.0,
         color: None,
         el: NO_EL,
@@ -2053,6 +2069,35 @@ pub fn self_test_position() -> Result<usize, &'static str> {
         return Err("float: rasm (right) notöğri");
     }
     Ok(5)
+}
+
+/// dir="rtl" / direction va text-align (start/end/left/justify) tekşiruvi.
+pub fn self_test_dir() -> Result<usize, &'static str> {
+    let d = parse("<style>.e{text-align:end}.j{text-align:justify}.l{direction:ltr}</style>\
+        <div dir=rtl><p>A</p><p class=e>B</p><p style=\"text-align:left\">C</p><p class=l>D</p><p class=j>E</p></div>\
+        <p>F</p><p class=e>G</p><p align=center>H</p><p style=\"direction:rtl;text-align:start\">I</p>\
+        <div style=\"text-align:right\"><p dir=ltr>J</p></div><ul dir=rtl><li>K</li></ul>");
+    let find = |t: &str| d.blocks.iter().find(|b| b.spans.iter().any(|s| s.text.trim() == t)).map(|b| (b.align, b.rtl));
+    let want: [(&str, u8, bool); 11] = [
+        ("A", 2, true), ("B", 0, true), ("C", 0, true), ("D", 0, false), ("E", 3, true),
+        ("F", 0, false), ("G", 2, false), ("H", 1, false), ("I", 2, true), ("J", 2, false), ("K", 2, true),
+    ];
+    for (t, a, r) in want {
+        if find(t) != Some((a, r)) {
+            return Err("dir/text-align: blok tekislaşi notöğri");
+        }
+    }
+    let mut d = d;
+    let el = d.blocks.iter().find(|b| b.spans.iter().any(|s| s.text.trim() == "F")).map(|b| b.el).ok_or("dir: F yöq")?;
+    d.set_style(el as usize, "textAlign", "end");
+    if find_in(&d, "F") != Some(2) {
+        return Err("dir: JS style.textAlign qöllanmadi");
+    }
+    Ok(want.len() + 1)
+}
+
+fn find_in(d: &Doc, t: &str) -> Option<u8> {
+    d.blocks.iter().find(|b| b.spans.iter().any(|s| s.text.trim() == t)).map(|b| b.align)
 }
 
 /// CSS @media va :hover tekşiruvi: kö'riş maydoni eniga qarab qoidalar, siçqonça ostidagi element uslubi.

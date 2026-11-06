@@ -15,7 +15,8 @@ pub struct Sty {
     pub size: f32, // CSS piksel (16 — oddiy)
     pub bold: bool,
     pub italic: bool,
-    pub align: u8, // 0 — çap, 1 — markaz, 2 — öng
+    pub align: u8, // 0 — start (yönalişga qarab), 1 — markaz, 2 — öng, 3 — çap, 4 — end, 5 — justify
+    pub rtl: bool, // direction: rtl (meros bölib ötadi)
     pub hidden: bool,
     pub underline: Option<bool>,
     pub strike: bool, // text-decoration: line-through
@@ -45,7 +46,7 @@ pub struct Sty {
 impl Sty {
     pub const fn root() -> Sty {
         Sty {
-            color: None, bg: None, size: 16.0, bold: false, italic: false, align: 0, hidden: false, underline: None, strike: false, block: None,
+            color: None, bg: None, size: 16.0, bold: false, italic: false, align: 0, rtl: false, hidden: false, underline: None, strike: false, block: None,
             mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
             pos: 0, ins: [None; 4], float: 0, clear: 0,
@@ -686,9 +687,20 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
         }
         "text-align" => {
             s.align = match low.as_str() {
-                "center" => 1,
-                "right" | "end" => 2,
-                _ => 0,
+                "center" | "-webkit-center" | "-moz-center" => 1,
+                "right" | "-webkit-right" => 2,
+                "left" | "-webkit-left" => 3,
+                "end" => 4,
+                "justify" => 5,
+                "start" => 0,
+                _ => s.align, // inherit / match-parent va h.k. — meros qiymati qoladi
+            }
+        }
+        "direction" => {
+            match low.as_str() {
+                "rtl" => s.rtl = true,
+                "ltr" => s.rtl = false,
+                _ => {}
             }
         }
         "display" => {
@@ -826,6 +838,19 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
             s.strike = low.contains("line-through");
         }
         _ => {}
+    }
+}
+
+/// Blok uçun yakuniy tekislaş: 0 — çap, 1 — markaz, 2 — öng, 3 — justify
+/// (start/end yönalişga — `direction` / `dir` ga qarab aniqlanadi).
+pub fn resolve_align(align: u8, rtl: bool) -> u8 {
+    match (align, rtl) {
+        (1, _) => 1,
+        (2, _) => 2,
+        (3, _) => 0,
+        (5, _) => 3,
+        (4, false) | (0, true) => 2,
+        _ => 0,
     }
 }
 

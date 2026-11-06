@@ -32,7 +32,9 @@
     {
       "id": "T5",
       "title": "dir=rtl va text-align: right/center ni bloklarda to'liq hisobga olish",
-      "detail": ""
+      "detail": "",
+      "status": "done",
+      "done_at": "2026-11-06 11:07:46"
     },
     {
       "id": "T6",
