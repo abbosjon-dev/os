@@ -196,6 +196,20 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   `zamin://bezak`, yuklanish self-testida `self_test_decor` (35 tekshiruv).
 
   ![Gradient va soya: zamin://bezak](docs/web-gradient.png)
+- **CSS `height` / `min-height`, `line-height` va `text-transform`** — `height` va `min-height`
+  (px, em, rem, pt; `%` va `vh` — ko'rish maydoni balandligidan) blok darajasidagi elementlarga
+  qo'llanadi va bolalarga meros bo'lib o'tmaydi: quti (fon, chegara) kamida shu balandlikda
+  chiziladi, kontentsiz `div` ham joy egallaydi (keyingi blok pastga suriladi). `height` kontentdan
+  kichik bo'lsa kontent tashib chiqadi, lekin keyingi blok belgilangan balandlikdan keyin
+  boshlanadi. `line-height` — raqam (ko'paytuvchi, bolalarga shunday o'tadi), `px`/`em`/`%`
+  (hisoblangan qiymat) yoki `normal`; matn qator ichida markazlanadi. `text-transform:
+  uppercase|lowercase|capitalize|none` — meros bo'lib o'tadi, Unicode bo'yicha: yangi lotin
+  alifbosi (ö/Ö, ğ/Ğ, ş/Ş, ç/Ç) va kirill (ш/Ш, ў/Ў, қ/Қ, ғ/Ғ, ҳ/Ҳ); `capitalize` so'z ichidagi
+  tutuq va apostrofni (oʻ, gʻ, ʼ, ') yangi so'z deb hisoblamaydi, teglar chegarasida ham to'g'ri
+  ishlaydi. Sinov: `zamin://matn` (yangi bo'lim), yuklanish self-testida `self_test_box_height`
+  (23 tekshiruv: tahlil, meros, harf o'zgarishi va haqiqiy joylashuv o'lchovlari).
+
+  ![height, line-height va text-transform: zamin://matn](docs/web-box-height.png)
 - **`<iframe>` — ichki hujjat haqiqiy chiziladi** — `srcdoc="…"` (belgilar bilan kodlangan yoki
   tirnoq ichida xom HTML) alohida hujjat sifatida **o'z CSS i bilan** tahlil qilinadi va ramka-quti
   ichida chiziladi: fon — ichki `body` foni (bo'lmasa oq), `width` (px yoki %) yoki CSS `width`,

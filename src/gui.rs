@@ -6970,6 +6970,18 @@ document.getElementById("qs").textContent = location.search;
 <blockquote>Iqtibos çizig'i öng tomonda.</blockquote>
 <div style="display:flex;gap:8px"><p class="q">1</p><p class="q">2</p><p class="q">3</p></div>
 </div>
+<h2>height, line-height va text-transform</h2>
+<style>.m{margin:6px 0}</style>
+<div style="min-height:90px;background:#dfe9fb;color:#1a2233;padding:6px;border-radius:6px">min-height: 90px — qisqa kontent, quti kamida 90px.</div>
+<div style="min-height:60px"></div>
+<p class="q">Yuqorida — böş div (min-height: 60px): bu paragraf pastga surildi.</p>
+<div style="height:30px;background:#fde7c8;color:#1a2233">height: 30px — keyingi blok 30px dan keyin boşlanadi,<br>uzun kontent esa taşib çiqadi (bu qator qutidan taşqarida).</div>
+<div style="height:24px"></div>
+<p class="q m" style="line-height:1">line-height: 1 — zich qatorlar. Zamin Brauzer qator balandligini noldan hisoblaydi, şuning uçun bu paragraf ikki-uç qatorga bölinadi va qatorlar bir-biriga yaqin turadi.</p>
+<p class="q m" style="line-height:2">line-height: 2 — keng qatorlar. Zamin Brauzer qator balandligini noldan hisoblaydi, şuning uçun bu paragraf ikki-uç qatorga bölinadi va qatorlar orasi ikki baravar.</p>
+<p class="q m" style="text-transform:uppercase">uppercase: şahar öy, ğalla, çiroq, oʻzbek — шаҳар ўзбек</p>
+<p class="q m" style="text-transform:lowercase">LOWERCASE: ŞAHAR ÖY, ĞALLA, ÇIROQ — ШАҲАР ЎЗБЕК</p>
+<p class="q m" style="text-transform:capitalize">capitalize: oʻzbek tili, gʻaroyib çiroq, maʼno</p>
 "##,
         "zamin://bezak" => r##"<title>CSS bezak: gradient va soya</title>
 <style>
@@ -7018,7 +7030,7 @@ body{background:#f3f5f9;color:#1a2233}
 <li><a href="zamin://html">Barça HTML elementlari sinovi</a></li>
 <li><a href="zamin://joylasuv">CSS position va float sinovi</a></li>
 <li><a href="zamin://ramka">iframe: ichki hujjatlar sinovi</a></li>
-<li><a href="zamin://matn">text-align va dir=rtl sinovi</a></li>
+<li><a href="zamin://matn">text-align, dir=rtl, height, line-height va text-transform sinovi</a></li>
 <li><a href="zamin://bezak">CSS gradient va box-shadow sinovi</a></li>
 <li><a href="zamin://tarix">Tarix</a> — körilgan sahifalar</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
@@ -7843,6 +7855,16 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
     (items, deco, y + u)
 }
 
+/// Sinov uçun: hujjatni `width` kenglikda joylaştiradi — (element, y, h) ro'yxati va umumiy balandlik.
+/// Üçinçi qiymat — CSS piksel → ekran piksel kö'paytuvçisi.
+pub fn layout_probe(doc: Doc, width: usize) -> (Vec<(u16, usize, usize, String)>, usize, f32) {
+    let mut w = web_new();
+    w.doc = doc;
+    let (items, _, total) = web_layout(&w, width);
+    let k = (small() * 11 / 10) as f32 / 16.0;
+    (items.into_iter().map(|i| (i.el, i.y, i.h, i.text)).collect(), total, k)
+}
+
 /// position / float: oqimdan taşqari blokning (nusxa) quti maydonlarini tozalaydi — kenglikni lay() beradi.
 fn out_of_flow(run: &[&crate::html::Block]) -> Vec<crate::html::Block> {
     run.iter()
@@ -7893,6 +7915,8 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
     let mut shifts: Vec<(usize, usize, usize, usize, isize, isize)> = Vec::new();
     let mut box_shifts: Vec<(usize, isize, isize)> = Vec::new();
     let mut pend: Option<(usize, usize, isize, isize)> = None;
+    // height / min-height: joriy guruh (element seriyasi, kontent boşi y)
+    let mut hgrp: Option<(u32, usize)> = None;
     let mut bi = 0;
     while bi < vis.len() {
         if let Some((i0, d0, dx, dy)) = pend.take() {
@@ -8139,7 +8163,17 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
         y += if first_in_box { 0 } else { gap_top } + if b.bgk == 0 { lpx(b.mt) } else { 0 };
         let y_block = y;
         let last_in_box = b.bgk != 0 && vis.get(bi + 1).is_none_or(|n| n.bgk != b.bgk);
+        if b.hser != 0 && hgrp.map(|g| g.0) != Some(b.hser) {
+            hgrp = Some((b.hser, y_block));
+        }
+        let last_in_h = b.hser != 0 && vis.get(bi + 1).is_none_or(|n| n.hser != b.hser);
         let close_box = |y: &mut usize, deco: &mut Vec<Deco>, open_box: &mut Option<(u32, usize, usize)>| {
+            // height: keyingi blok belgilangan balandlikdan keyin (kontent taşib çiqişi mumkin);
+            // min-height: kamida şunça
+            if let Some((_, y0)) = hgrp.filter(|_| last_in_h) {
+                let t = y0 + lpx(b.hmin);
+                *y = if b.hfix { t } else { (*y).max(t) };
+            }
             if let Some((_, di, ins)) = *open_box {
                 if last_in_box {
                     *y += ins;
@@ -8248,7 +8282,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
         }
         if b.kind == HK::Pre {
             let all: String = b.spans.iter().map(|s| s.text.as_str()).collect();
-            let lhm = gfx::line_height(base_px, Font::Mono).max(base_px + 3);
+            let lhm = if b.lh > 0.0 { ((base_px as f32 * b.lh) as usize).max(1) } else { gfx::line_height(base_px, Font::Mono).max(base_px + 3) };
             let lines: Vec<&str> = all.lines().collect();
             let h = lines.len() * lhm + u;
             deco.push(dfill(pad, y, maxw, h, if b.bgk != 0 && b.bg.is_some() { mix(b.bg.unwrap(), 0x000000, 20) } else if dark { 0x10151f } else { 0xeef0f3 }));
@@ -8270,7 +8304,11 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
         // Qatorlarga bölib joylaş (tekislaş bilan)
         let mut x = x0;
         let mut line_start = items.len();
-        let mut line_h = base_px * 14 / 10;
+        // line-height: kö'paytuvçi (0 — normal = 1.4); matn qator içida markazlanadi (yarim oraliq)
+        let lhf = b.lh;
+        let norm = |px: usize| if lhf > 0.0 { ((px as f32 * lhf) as usize).max(1) } else { px * 14 / 10 };
+        let lead = if lhf > 0.0 { norm(base_px).saturating_sub(base_px) / 2 } else { 0 };
+        let mut line_h = norm(base_px);
         let line_w = xr - x0;
         // Qatorni tekislaş: 1 — markaz, 2 — öng, 3 — justify (oxirgi qatordan taşqari).
         // Qator oxiridagi böşliq hisobga olinmaydi (öngga tekislangan matn çetga taqaladi).
@@ -8323,7 +8361,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 x = x0;
                 y += line_h;
                 line_start = items.len();
-                line_h = base_px * 14 / 10;
+                line_h = norm(base_px);
                 continue;
             }
             // Forma maydoni (matn, parol, belgilaş, yuboriş)
@@ -8362,15 +8400,15 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                     x = x0;
                     y += line_h;
                     line_start = items.len();
-                    line_h = base_px * 14 / 10;
+                    line_h = norm(base_px);
                     if word == " " {
                         continue;
                     }
                 }
-                line_h = line_h.max(spx * 14 / 10);
+                line_h = line_h.max(norm(spx));
                 // Tayanç çiziq (baseline) böyiça tekislaş: kiçik matn pastga suriladi
                 let off = base_px.saturating_sub(spx) * 4 / 5;
-                let yo = if s.fx & crate::html::FX_SUP != 0 { y.saturating_sub(spx / 6) } else if s.fx & crate::html::FX_SUB != 0 { y + base_px * 2 / 5 } else { y + off };
+                let yo = lead + if s.fx & crate::html::FX_SUP != 0 { y.saturating_sub(spx / 6) } else if s.fx & crate::html::FX_SUB != 0 { y + base_px * 2 / 5 } else { y + off };
                 items.push(WItem { x, y: yo, w: ww, h: spx, text: String::from(word), col: c, px: spx, mono: s.code, link: s.link.clone(), el: s.el, button: s.button, underline: s.link.is_some() && s.underline, img: None, input: s.input, fx: s.fx, bold: s.bold, det: if b.summary { b.det } else { NO_EL } });
                 x += ww;
             }

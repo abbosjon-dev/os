@@ -538,6 +538,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] CSS linear-gradient (töxtaşlar, burçak) va box-shadow ({} sinov)", n),
         Err(e) => panic!("CSS gradient/soya tekşiruvi yiqildi: {}", e),
     }
+    match html::self_test_box_height() {
+        Ok(n) => println!("  [ok] CSS height/min-height, line-height va text-transform ({} sinov)", n),
+        Err(e) => panic!("CSS height/line-height/text-transform tekşiruvi yiqildi: {}", e),
+    }
     match html::self_test_av() {
         Ok(n) => println!("  [ok] <audio>/<video>: WAV ijro havolasi (virtio-sound) va video poster ({} sinov)", n),
         Err(e) => panic!("audio/video tekşiruvi yiqildi: {}", e),

@@ -97,6 +97,12 @@ pub struct Block {
     pub bdx: f32,                // ... va quti foni uçun
     pub bdy: f32,
     pub clear: u8,
+    // Balandlik: eng yaqin height / min-height li blok elementi (seriya; 0 — yöq),
+    // uning eng kiçik balandligi (CSS px) va height qat'iymi (kontent taşib çiqadi, keyingi blok çegaradan)
+    pub hser: u32,
+    pub hmin: f32,
+    pub hfix: bool,
+    pub lh: f32, // line-height kö'paytuvçisi (0 — normal)
 }
 
 impl Block {
@@ -910,6 +916,50 @@ struct Open {
     serial: u32,
     input: u16,
     rspan: u8,
+    nb: usize, // ochilganda doc.blocks soni (böş height li element uçun)
+}
+
+/// Blok darajasidagi element (height / min-height faqat şularga qöllanadi).
+fn blockish(o: &Open) -> bool {
+    o.sty.block == Some(true)
+        || (o.sty.block.is_none()
+            && matches!(o.tag.as_str(), "p" | "div" | "section" | "article" | "header" | "footer" | "nav" | "main" | "aside" | "figure" | "center" | "blockquote" | "pre" | "ul" | "ol" | "li" | "dl" | "dd" | "dt" | "form" | "fieldset" | "address" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "td" | "th" | "details"))
+}
+
+/// line-height → blok shrift ölçamiga nisbatan kö'paytuvçi (0 — normal).
+fn line_factor(st: &Sty) -> f32 {
+    if st.lh > 0.0 {
+        st.lh
+    } else if st.lh < 0.0 {
+        (-st.lh / st.size.max(1.0)).clamp(0.3, 10.0)
+    } else {
+        0.0
+    }
+}
+
+/// text-transform: katta / kiçik harf (Unicode: ö/Ö, ğ/Ğ, ş/Ş, ç/Ç, kirill), capitalize — söz boşi.
+/// `prev` — oldingi belgi (bölaklar çegarasidagi söz davomi uçun).
+pub fn text_transform(s: &str, tt: u8, prev: char) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev = prev;
+    for c in s.chars() {
+        match tt {
+            1 => out.extend(c.to_uppercase()),
+            2 => out.extend(c.to_lowercase()),
+            3 => {
+                // söz içidagi tutuq / apostrof (oʻ, gʻ, ʼ, ') yangi söz boşlamaydi
+                let in_word = prev.is_alphanumeric() || matches!(prev, '\u{2bc}' | '\u{2bb}' | '\'' | '\u{2019}' | '`');
+                if in_word {
+                    out.push(c);
+                } else {
+                    out.extend(c.to_uppercase());
+                }
+            }
+            _ => out.push(c),
+        }
+        prev = c;
+    }
+    out
 }
 
 /// rowspan bilan pastki qatorlarga çozilgan katak.
@@ -1035,6 +1085,14 @@ impl P {
                 bdy += dy;
             }
         }
+        // height / min-height: eng yaqin blok darajasidagi ajdod (qator elementlari uçun e'tiborsiz)
+        let (hser, hmin, hfix) = match self.stack.iter().rev().take_while(|o| o.tag != "body" && o.tag != "html").find(|o| (o.sty.h.is_some() || o.sty.minh.is_some()) && blockish(o)) {
+            Some(o) => {
+                let res = |v: Option<(f32, bool)>| v.map(|(x, pc)| if pc { css::viewport().1 * x / 100.0 } else { x }).unwrap_or(0.0);
+                (o.serial, res(o.sty.h).max(res(o.sty.minh)), o.sty.h.is_some())
+            }
+            None => (0, 0.0, false),
+        };
         Block {
             kind: k, spans: Vec::new(), bg, align: css::resolve_align(st.align, st.rtl), rtl: st.rtl, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: st.hidden, bgk,
             pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, grad: cs.grad, shadow: cs.shadow, maxw: cs.maxw, center: cs.center, mt: st.mt, mb: st.mb,
@@ -1042,6 +1100,7 @@ impl P {
             flex: fl.0, fcol: fl.1, fmode: fl.2, fgap: fl.3, gcols: fl.4, fjust: fl.5, fw: fl.6, fgrow: fl.7,
             mark: String::new(), det, summary, iw: 0, ih: 0, rspan: fl.8,
             oser, okind, ow, oins, pk, aser, rdx, rdy, bdx, bdy, clear: st.clear,
+            hser, hmin, hfix, lh: line_factor(&st),
         }
     }
     /// Böş (void) element (img) uçun float / position: uslubi hisoblanib, blok oqimdan çiqariladi.
@@ -1235,6 +1294,10 @@ impl P {
         if b.spans.is_empty() && self.pre == 0 {
             s = String::from(s.trim_start());
         }
+        if st.tt != 0 {
+            let prev = b.spans.last().and_then(|sp| sp.text.chars().last()).unwrap_or(' ');
+            s = text_transform(&s, st.tt, prev);
+        }
         let underline = st.underline.unwrap_or(false) && link.is_some();
         b.spans.push(Span { text: s, link, bold: st.bold, code, br: false, color: st.color, size: st.size, el, button, underline, input, fx });
     }
@@ -1416,7 +1479,8 @@ impl P {
         self.serial += 1;
         let serial = self.serial;
         let rspan = if name == "td" || name == "th" { attr(tag, "rowspan").and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(1).clamp(1, 64) } else { 1 };
-        self.stack.push(Open { tag: String::from(name), id, classes, sty: st, el, link, serial, input: NO_EL, rspan });
+        let nb = self.doc.blocks.len();
+        self.stack.push(Open { tag: String::from(name), id, classes, sty: st, el, link, serial, input: NO_EL, rspan, nb });
     }
     /// rowspan: joriy qatorda yuqoridan çozilgan kataklar uçun bo'ş joy egallovçi kataklar.
     /// `all` — qator oxiri (qolgan hamma ustunlar), aks holda faqat joriy ustundagilar.
@@ -1481,6 +1545,19 @@ impl P {
         }
     }
     fn close(&mut self, name: &str) {
+        // Böş, lekin height / min-height li blok: joy egallovçi blok (keyingi blok pastga suriladi)
+        if let Some(o) = self.stack.iter().rev().find(|o| o.tag == name) {
+            if (o.sty.h.is_some() || o.sty.minh.is_some()) && blockish(o) && o.tag != "body" && o.tag != "html" {
+                let (nb, el) = (o.nb, o.el);
+                self.flush();
+                let empty = !self.doc.blocks[nb.min(self.doc.blocks.len())..].iter().any(|b| b.el == el || self.doc.within(b.el, el));
+                if empty {
+                    let mut b = self.new_block(Kind::P);
+                    b.spans.push(Span { text: String::from("\u{2007}"), link: None, bold: false, code: false, br: false, color: None, size: b.size, el, button: false, underline: false, input: NO_EL, fx: 0 });
+                    self.doc.blocks.push(b);
+                }
+            }
+        }
         if let Some(k) = self.stack.iter().rposition(|o| o.tag == name) {
             self.stack.truncate(k);
         }
@@ -2262,6 +2339,7 @@ pub fn plain(text: &str) -> Doc {
         flex: 0, fcol: 0, fmode: 0, fgap: 0.0, gcols: 0, fjust: 0, fw: None, fgrow: 0.0,
         mark: String::new(), det: NO_EL, summary: false, iw: 0, ih: 0, rspan: 1,
         oser: 0, okind: 0, ow: None, oins: [None; 4], pk: 0, aser: 0, rdx: 0.0, rdy: 0.0, bdx: 0.0, bdy: 0.0, clear: 0,
+        hser: 0, hmin: 0.0, hfix: false, lh: 0.0,
     });
     d
 }
@@ -2574,6 +2652,99 @@ pub fn self_test_decor() -> Result<usize, &'static str> {
     let c = blk("C").ok_or("bezak: C bloki yöq")?;
     if c.grad.map(|g| g.angle) != Some(0) {
         return Err("bezak: inline background-image öqilmadi");
+    }
+    Ok(n + 3)
+}
+
+/// T14: height / min-height, line-height va text-transform (tahlil + joylaşuv).
+pub fn self_test_box_height() -> Result<usize, &'static str> {
+    let mut n = 0;
+    // CSS tahlili
+    let lhs = |decl: &str| {
+        let mut st = Sty::root();
+        for (k, v) in css::parse_decls(decl) {
+            css::apply(&mut st, &k, &v, 16.0);
+        }
+        st
+    };
+    for (decl, f) in [("line-height:2", 2.0f32), ("line-height:24px", 1.5), ("line-height:150%", 1.5), ("line-height:1.5em", 1.5), ("line-height:normal", 0.0), ("font-size:20px;line-height:30px", 1.5)] {
+        if (line_factor(&lhs(decl)) - f).abs() > 0.01 {
+            return Err("line-height: qiymat notöğri öqildi");
+        }
+        n += 1;
+    }
+    if lhs("height:50px").h != Some((50.0, false)) || lhs("min-height:2em").minh != Some((32.0, false)) || lhs("height:100%").h != Some((100.0, true)) || lhs("height:auto").h.is_some() {
+        return Err("height/min-height: qiymat notöğri öqildi");
+    }
+    if lhs("height:50px").inherit().h.is_some() || lhs("min-height:9px").inherit().minh.is_some() || lhs("line-height:2").inherit().lh != 2.0 || lhs("text-transform:uppercase").inherit().tt != 1 {
+        return Err("meros: height ötmasligi, line-height/text-transform ötişi kerak");
+    }
+    n += 2;
+    // text-transform
+    for (src, tt, want) in [
+        ("şahar öy", 1u8, "ŞAHAR ÖY"),
+        ("ŞAHAR ÖY ĞALLA ÇOY", 2, "şahar öy ğalla çoy"),
+        ("oʻzbek tili, gʻaroyib çiroq", 3, "Oʻzbek Tili, Gʻaroyib Çiroq"),
+        ("maʼno va o'zbek", 3, "Maʼno Va O'zbek"),
+        ("шаҳар ўзбек ғишт қўл", 1, "ШАҲАР ЎЗБЕК ҒИШТ ҚЎЛ"),
+        ("ШАҲАР ЎЗБЕК", 2, "шаҳар ўзбек"),
+        ("Aralaş Matn", 0, "Aralaş Matn"),
+    ] {
+        if text_transform(src, tt, ' ') != want {
+            return Err("text-transform: harf özgarişi notöğri");
+        }
+        n += 1;
+    }
+    let d = parse("<div style=\"text-transform:uppercase;line-height:2\"><p id=t>şahar öy</p></div><p style=\"text-transform:capitalize\">bir <b>ikki</b>uç</p>");
+    let t = d.blocks.iter().find(|b| b.spans.iter().any(|s| s.text.contains("ŞAHAR ÖY"))).ok_or("text-transform: uppercase bolaga ötmadi")?;
+    if (t.lh - 2.0).abs() > 0.01 {
+        return Err("line-height: bolaga ötmadi");
+    }
+    let c: String = d.blocks.iter().flat_map(|b| b.spans.iter()).map(|s| s.text.as_str()).collect::<Vec<_>>().concat();
+    if !c.contains("Bir Ikkiuç") {
+        return Err("text-transform: capitalize bölaklar çegarasida notöğri");
+    }
+    n += 2;
+    // Joylaşuv: keyingi blokning y si
+    let y_of = |src: &str, id: &str| -> Result<(usize, usize, f32), &'static str> {
+        let d = parse(src);
+        let a = d.find_id("a").ok_or("probe: a yöq")? as u16;
+        let b = d.find_id(id).ok_or("probe: id yöq")? as u16;
+        let (items, _, k) = crate::gui::layout_probe(d, 640);
+        let ya = items.iter().filter(|i| i.0 == a).map(|i| i.1).min().ok_or("probe: a çizilmadi")?;
+        let yb = items.iter().filter(|i| i.0 == b).map(|i| i.1).min().ok_or("probe: b çizilmadi")?;
+        Ok((ya, yb, k))
+    };
+    let (a0, b0, k) = y_of("<p id=a>A</p><p id=b>B</p>", "b")?;
+    let (a1, b1, _) = y_of("<p id=a>A</p><div style=\"min-height:120px\"></div><p id=b>B</p>", "b")?;
+    if b1 < a1 + (120.0 * k) as usize || b1 < b0 + (100.0 * k) as usize {
+        return Err("min-height: böş div keyingi blokni ≥120px pastga surmadi");
+    }
+    let _ = a0;
+    // min-height kontentdan katta / height kontentdan kiçik (taşib çiqadi, keyingi blok çegaradan)
+    let long = "<p>1</p><p>2</p><p>3</p><p>4</p><p>5</p><p>6</p>";
+    let (a2, b2, _) = y_of(&alloc::format!("<p id=a>A</p><div style=\"min-height:300px;background:#eee\"><p>x</p></div><p id=b>B</p>"), "b")?;
+    if b2 < a2 + (300.0 * k) as usize {
+        return Err("min-height: fonli quti kiçik qoldi");
+    }
+    let (a3, b3, _) = y_of(&alloc::format!("<p id=a>A</p><div style=\"height:20px\">{}</div><p id=b>B</p>", long), "b")?;
+    let (a4, b4, _) = y_of(&alloc::format!("<p id=a>A</p><div>{}</div><p id=b>B</p>", long), "b")?;
+    if b3 - a3 >= b4 - a4 || b3 > a3 + (80.0 * k) as usize {
+        return Err("height: keyingi blok belgilangan balandlikdan keyin boşlanmadi");
+    }
+    n += 3;
+    // line-height: 2 — 1 ga nisbatan ~2 baravar
+    let txt = "Zamin OS brauzeri matnni qatorlarga böladi va har bir qator balandligini line-height xossasiga qarab hisoblaydi. ";
+    let body = alloc::format!("{}{}{}{}", txt, txt, txt, txt);
+    let (p1, n1, _) = y_of(&alloc::format!("<p id=a style=\"line-height:1\">{}</p><p id=b>N</p>", body), "b")?;
+    let (p2, n2, _) = y_of(&alloc::format!("<p id=a style=\"line-height:2\">{}</p><p id=b>N</p>", body), "b")?;
+    let (h1, h2) = ((n1 - p1) as f32, (n2 - p2) as f32);
+    if !(h2 > h1 * 1.7 && h2 < h1 * 2.3) {
+        return Err("line-height: 2 paragraf balandligi ~2 baravar emas");
+    }
+    let (p3, n3, _) = y_of(&alloc::format!("<p id=a style=\"line-height:32px\">{}</p><p id=b>N</p>", body), "b")?;
+    if ((n3 - p3) as f32 - h2).abs() > h2 * 0.1 {
+        return Err("line-height: 32px (16px shriftda) 2 ga teng emas");
     }
     Ok(n + 3)
 }

@@ -44,6 +44,12 @@ pub struct Sty {
     // Bezak (meros bölib ötmaydi)
     pub grad: Option<Grad>,      // background(-image): linear-gradient(...)
     pub shadow: Option<Shadow>,  // box-shadow
+    // Balandlik (meros bölib ötmaydi): (qiymat, foizmi) — foiz kö'riş maydoni balandligidan
+    pub h: Option<(f32, bool)>,     // height
+    pub minh: Option<(f32, bool)>,  // min-height
+    // Matn (meros bölib ötadi)
+    pub lh: f32, // line-height: 0 — normal, > 0 — kö'paytuvçi (raqam), < 0 — -px (px/em/% hisoblangan)
+    pub tt: u8,  // text-transform: 0 — none, 1 — uppercase, 2 — lowercase, 3 — capitalize
 }
 
 /// Gradient rang töxtaşlari soni çegarasi.
@@ -76,6 +82,7 @@ impl Sty {
             mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
             pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None,
+            h: None, minh: None, lh: 0.0, tt: 0,
         }
     }
     /// Meros: rang, ölçam, qalinlik, tekislaş, yaşiriş — bolaga ötadi; fon — ötmaydi.
@@ -83,7 +90,7 @@ impl Sty {
         Sty {
             bg: None, block: None, mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
-            pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None,
+            pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None, h: None, minh: None,
             ..*self
         }
     }
@@ -1010,6 +1017,42 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
                 }
             } else if let Some(px) = length(&low, s.size).filter(|v| *v > 0.0) {
                 s.maxw = Some((px, false));
+            }
+        }
+        "height" | "min-height" => {
+            let v = if let Some(p) = low.strip_suffix('%') {
+                parse_f(p).map(|f| (f.clamp(0.0, 1000.0), true))
+            } else if let Some(p) = low.strip_suffix("vh") {
+                parse_f(p).map(|f| (f.clamp(0.0, 1000.0), true))
+            } else {
+                length(&low, s.size).map(|px| (px.clamp(0.0, 20000.0), false))
+            };
+            // auto / none / yaroqsiz — belgilanmagan
+            let v = v.filter(|x| x.0 > 0.0);
+            if prop == "height" {
+                s.h = v;
+            } else {
+                s.minh = v;
+            }
+        }
+        "line-height" => {
+            if low == "normal" || low == "initial" {
+                s.lh = 0.0;
+            } else if let Some(f) = Some(low.as_str()).filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit() || c == '.')).and_then(parse_f).filter(|f| *f > 0.0) {
+                s.lh = f.clamp(0.3, 10.0); // raqam — bolalar ham kö'paytuvçini oladi
+            } else if let Some(f) = low.strip_suffix('%').and_then(parse_f).filter(|f| *f > 0.0) {
+                s.lh = -(s.size * f / 100.0).clamp(1.0, 1000.0);
+            } else if let Some(px) = length(&low, s.size).filter(|v| *v > 0.0) {
+                s.lh = -px.clamp(1.0, 1000.0);
+            }
+        }
+        "text-transform" => {
+            s.tt = match low.as_str() {
+                "uppercase" => 1,
+                "lowercase" => 2,
+                "capitalize" => 3,
+                "none" => 0,
+                _ => s.tt,
             }
         }
         "position" => {

@@ -109,7 +109,9 @@
       "id": "T14",
       "title": "CSS: height/min-height, line-height va text-transform",
       "detail": "Fayllar: src/css.rs (hozir faqat @media da min-height/height bor, xossa sifatida yo'q; qo'shiladi: height, min-height (px/em/%), line-height (raqam, px, em, %, 'normal'), text-transform (uppercase/lowercase/capitalize/none) — o'zbek lotin va kirill harflari uchun to'g'ri katta/kichik harf, masalan ö/Ö, ğ/Ğ, ş/Ş, ç/Ç va kirill), src/html.rs (Block maydonlari, meros: line-height va text-transform bolalarga o'tadi, height o'tmaydi), src/gui.rs web_layout (quti balandligi kamida min-height/height; height kontentdan kichik bo'lsa kontent toshib chiqadi, lekin keyingi blok belgilangan balandlikdan keyin boshlanadi; qator oralig'i line-height asosida). zamin://matn sahifasiga misollar qo'sh (bu xossalar uchun alohida bo'lim). Qabul mezoni: html::self_test_box_height() — 'min-height:120px' li bo'sh div keyingi blokni ≥120px pastga suradi, 'line-height:2' paragraf balandligi line-height:1 ga nisbatan ~2 baravar, 'text-transform:uppercase' 'şahar öy' -> 'ŞAHAR ÖY'; skrinshot; verify.sh full o'tadi.",
-      "batch": 2
+      "batch": 2,
+      "status": "done",
+      "done_at": "2026-11-06 15:59:31"
     },
     {
       "id": "T15",
