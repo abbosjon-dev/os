@@ -148,6 +148,14 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   (sahifaga nisbatan), `float: left/right` (bloklar va `<img>`: chetga suriladi, keyingi matn
   yonidan toraygan sohada oqadi; ketma-ket floatlar yonma-yon) va `clear: left/right/both`.
   Sinov sahifasi: `zamin://joylasuv`.
+- **@media va :hover** — `@media` bloklari endi tashlanmaydi: `min-width`/`max-width`,
+  `min-height`/`max-height`, `width`/`height`, diapazon sintaksisi (`(400px <= width < 700px)`),
+  `screen`/`all`/`print`, `not`/`only`, `orientation`, `prefers-color-scheme` (yorug'),
+  vergul (YOKI) va ichma-ich `@media` (VA); birliklar px/em/rem. So'rovlar brauzer oynasining
+  sahifa eniga (CSS pikselda) qarab baholanadi — oyna o'lchami o'zgarib biror qoidaning holati
+  almashsa, sahifa qayta tahlil qilinadi (skriptlar qayta bajariladi, aylantirish saqlanadi).
+  `:hover` — sichqoncha ostidagi element va uning ajdodlari uchun (`a:hover`,
+  `.karta:hover p`): rang, fon, qalinlik, o'lcham, `text-decoration` darhol qayta qo'llanadi.
 - **JS** — `async function`, `async () =>`, `await` (fetch va taymerlarni kutadi),
   `localStorage`/`sessionStorage`, `document.cookie`.
 - **DOM** — har bir element ro'yxatda (ota-bolasi bilan): `innerHTML = "<b>…</b>"` (HTML
@@ -202,7 +210,7 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   `setTimeout/setInterval`, `console.log` (F12 — konsol), `alert` — bildirishnoma.
   Cheksiz sikl va chuqur rekursiyadan himoya (qadamlar soni va stek o'lchovi).
 - **CSS (`css` moduli)** — `<style>`, `style=""` va tashqi `<link rel=stylesheet>`:
-  teg/`.klass`/`#id`/avlod tanlagichlari, `color`, `background`, `font-size` (px/em/rem/%/pt),
+  teg/`.klass`/`#id`/avlod/`:hover` tanlagichlari, `@media`, `color`, `background`, `font-size` (px/em/rem/%/pt),
   `font-weight`, `text-align`, `display:none`, `visibility`, `text-decoration`; meros
   (inheritance) va brauzerning o'z uslublari; `<body>`/`<html>` yashirin bo'lsa ham qo'llanadi.
 - **Rasmlar** — `<img>` HTTP yoki fayldan yuklanib, o'z dekoderlarimiz bilan ochiladi

@@ -510,6 +510,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] CSS joylaşuv: position (relative/absolute) va float/clear ({} sinov)", n),
         Err(e) => panic!("CSS position/float tekşiruvi yiqildi: {}", e),
     }
+    match html::self_test_media() {
+        Ok(n) => println!("  [ok] CSS @media (min/max-width) va :hover ({} sinov)", n),
+        Err(e) => panic!("CSS @media/:hover tekşiruvi yiqildi: {}", e),
+    }
     // Audio dekoderi: WAV
     audio::self_test().expect("audio (WAV) dekoderi yiqildi");
     tprintln!(msg::TEST_AUDIO);

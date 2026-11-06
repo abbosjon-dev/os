@@ -1119,6 +1119,7 @@ fn desktop() {
     let mut windows: Vec<Window> = Vec::new();
     let mut cx = sw / 2;
     let mut cy = sh / 2;
+    let mut hover_at = (usize::MAX, usize::MAX); // :hover oxirgi tekşirilgan kursor joyi
     let mut pressed = false;
     let mut drag: Option<(usize, usize)> = None; // (oyna indeksi, offset)
     let mut shift = false;
@@ -1566,6 +1567,20 @@ fn desktop() {
         // Brauzer: fonda yuklangan sahifalar va JS taymerlari
         if web_poll(&mut windows) {
             changed = true;
+        }
+        // Brauzer: @media (oyna eni) va :hover (siçqonça ostidagi element)
+        for w in windows.iter_mut().filter(|w| w.kind == Kind::Browser && !w.hidden) {
+            if web_media(w) {
+                changed = true;
+            }
+        }
+        if (cx, cy) != hover_at {
+            hover_at = (cx, cy);
+            if let Some(t) = windows.iter().rposition(|w| !w.hidden).filter(|&t| windows[t].kind == Kind::Browser) {
+                if web_hover(&mut windows[t], cx, cy) {
+                    changed = true;
+                }
+            }
         }
         // Soat: sekundomer / taymer
         {
@@ -6399,6 +6414,9 @@ struct Web {
     select_open: Option<usize>,   // oçiq <select> ro'yxati
     refresh: Option<(u64, String)>, // <meta refresh>: (vaqt, manzil)
     anchor: Option<String>,       // yuklanganda aylantiriladigan #yakor
+    scripts: Vec<String>,         // sahifa skriptlari (@media qayta tahlilida qayta bajariladi)
+    media_key: (usize, usize),    // @media oxirgi baholangan sahifa ölçami (ekran px)
+    hover_rules: bool,            // sahifada :hover qoidalari bormi
 }
 
 struct WItem {
@@ -7030,6 +7048,9 @@ fn web_new() -> Box<Web> {
         select_open: None,
         refresh: None,
         anchor: None,
+        scripts: Vec::new(),
+        media_key: (0, 0),
+        hover_rules: false,
     })
 }
 
@@ -7041,7 +7062,15 @@ fn web_apply(win: &mut Window, res: WebRes) {
 }
 
 fn apply_web(w: &mut Web, res: WebRes) {
+    apply_web_ex(w, res, false);
+}
+
+/// `quiet` — @media qayta tahlili: tarix va ogohlantiriş (alert) xabarlari takrorlanmaydi.
+fn apply_web_ex(w: &mut Web, res: WebRes, quiet: bool) {
     w.doc = res.doc;
+    w.media_key = (0, 0);
+    w.hover_rules = w.doc.rules.iter().any(|r| crate::css::hover_kind(r) != (false, false));
+    w.scripts = res.scripts.clone();
     w.url = res.url;
     w.images = res.images;
     w.scroll = 0;
@@ -7058,7 +7087,7 @@ fn apply_web(w: &mut Web, res: WebRes) {
     eng.url = w.url.clone();
     eng.fetch_hook = Some(web_raw); // await fetch(...) — joyida
     let now = crate::timer::uptime_ms();
-    if !w.url.starts_with("zamin://tarix") {
+    if !quiet && !w.url.starts_with("zamin://tarix") {
         let t = time::now();
         let title = if w.doc.title.is_empty() { w.url.clone() } else { w.doc.title.clone() };
         let mut h = WEB_HIST.lock();
@@ -7072,7 +7101,9 @@ fn apply_web(w: &mut Web, res: WebRes) {
         let _ = eng.run(s, &mut w.doc, now);
     }
     for a in eng.alerts.drain(..) {
-        notify("Sahifa xabari", &a, 0x2f88ff);
+        if !quiet {
+            notify("Sahifa xabari", &a, 0x2f88ff);
+        }
     }
     let js_info = if res.scripts.is_empty() {
         String::new()
@@ -7083,6 +7114,53 @@ fn apply_web(w: &mut Web, res: WebRes) {
     };
     w.status = alloc::format!("{}{}", res.status, js_info);
     w.js = Some(eng);
+}
+
+/// Sahifa ölçami özgargan bölsa: kö'riş maydoni (CSS px) yangilanadi, @media qoidalari holati
+/// özgarsa — hujjat qayta tahlil qilinadi (skriptlar qayta bajariladi, aylantiriş saqlanadi).
+fn web_media(win: &mut Window) -> bool {
+    let (_, _, _, _, (_, _, pw, ph)) = web_geo(win);
+    let Some(web) = win.web.as_mut() else { return false };
+    let key = (pw, ph);
+    if web.media_key == key {
+        return false;
+    }
+    web.media_key = key;
+    let k = (small() * 11 / 10) as f32 / 16.0;
+    crate::css::set_viewport(pw.saturating_sub(body()) as f32 / k, ph as f32 / k);
+    if web.doc.media_on.is_empty() || crate::css::media_state(&web.doc.rules) == web.doc.media_on {
+        return false;
+    }
+    let doc = crate::html::parse_with(&web.doc.src, &web.doc.extra_css);
+    let (scroll, status, refresh, focus) = (web.scroll, web.status.clone(), web.refresh.clone(), web.focus);
+    let res = WebRes { doc, url: web.url.clone(), status: String::new(), images: core::mem::take(&mut web.images), scripts: core::mem::take(&mut web.scripts), raw: None };
+    apply_web_ex(web, res, true);
+    web.scroll = scroll;
+    web.status = status;
+    web.refresh = refresh;
+    web.anchor = None;
+    web.focus = focus.filter(|&f| f < web.doc.inputs.len());
+    web.media_key = key;
+    true
+}
+
+/// :hover — siçqonça ostidagi sahifa elementi (va ajdodlari) uçun uslub qayta qöllanadi.
+fn web_hover(win: &mut Window, cx: usize, cy: usize) -> bool {
+    let (_, _, _, _, (px0, py0, pw, ph)) = web_geo(win);
+    let Some(web) = win.web.as_mut() else { return false };
+    if !web.hover_rules {
+        return false;
+    }
+    let inside = cx >= px0 && cx < px0 + pw && cy >= py0 && cy < py0 + ph && web.select_open.is_none();
+    let el = if inside {
+        let (items, _, total) = web_layout(web, pw.saturating_sub(body()));
+        let sc = web.scroll.min(total.saturating_sub(ph));
+        let (x, y) = (cx - px0, cy - py0 + sc);
+        items.iter().rev().find(|i| i.el != NO_EL && x >= i.x && x < i.x + i.w && y >= i.y && y < i.y + i.h).map(|i| i.el).unwrap_or(NO_EL)
+    } else {
+        NO_EL
+    };
+    web.doc.set_hover(el)
 }
 
 fn web_title(win: &mut Window) {

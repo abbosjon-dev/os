@@ -18,7 +18,9 @@
     {
       "id": "T3",
       "title": "CSS @media (max-width/min-width) va :hover",
-      "detail": "Media so'rovlarini oyna eniga qarab baholash; :hover uchun sichqoncha ostidagi element."
+      "detail": "Media so'rovlarini oyna eniga qarab baholash; :hover uchun sichqoncha ostidagi element.",
+      "status": "done",
+      "done_at": "2026-11-06 10:39:23"
     },
     {
       "id": "T4",

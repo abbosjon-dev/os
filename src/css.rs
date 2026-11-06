@@ -1,9 +1,11 @@
 //! CSS — noldan: uslublar jadvali tahlili (qoidalar, tanlagiçlar, e'lonlar),
 //! ranglar, shrift ölçamlari va hisoblangan uslub (meros bilan).
-//! Tanlagiçlar: teg, .klass, #id, * va avlod (bo'şliq) birikmasi; @-qoidalar taşlanadi.
+//! Tanlagiçlar: teg, .klass, #id, *, :hover va avlod (bo'şliq) birikmasi;
+//! @media (min/max-width, height, orientation) — kö'riş maydoniga qarab; boşqa @-qoidalar taşlanadi.
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Hisoblangan uslub (element uçun).
 #[derive(Clone, Copy, PartialEq)]
@@ -70,12 +72,240 @@ pub struct Compound {
     pub id: Option<String>,
     pub classes: Vec<String>,
     pub direct: bool, // keyingi (öngdagi) bilan ">" — bevosita ota
+    pub hover: bool,  // :hover — siçqonça ostidagi element (yoki uning ajdodi)
 }
 
 #[derive(Clone)]
 pub struct Rule {
     pub sel: Vec<Vec<Compound>>, // vergul bilan ajratilgan tanlagiçlar; har biri — avlod zanjiri
     pub decls: Vec<(String, String)>,
+    pub media: Vec<Vec<Mq>>,     // @media şartlari: tașqi Vec — VA (ichma-ich), içki — YOKI (vergul)
+}
+
+/// Bitta media so'rovi: "screen and (max-width: 600px)".
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Mq {
+    pub never: bool, // print, nomaʼlum xususiyat va h.k.
+    pub neg: bool,   // not …
+    pub min_w: f32,
+    pub max_w: f32,
+    pub min_h: f32,
+    pub max_h: f32,
+}
+
+// Kö'riş maydoni (viewport) ölçami, CSS pikselda (f32 bitlari) — GUI oyna eniga qarab yangilaydi.
+static VIEW_W: AtomicU32 = AtomicU32::new(0x4480_0000); // 1024.0
+static VIEW_H: AtomicU32 = AtomicU32::new(0x4440_0000); // 768.0
+
+/// Media so'rovlari baholanadigan kö'riş maydoni (CSS px).
+pub fn set_viewport(w: f32, h: f32) {
+    VIEW_W.store(w.max(1.0).to_bits(), Ordering::Relaxed);
+    VIEW_H.store(h.max(1.0).to_bits(), Ordering::Relaxed);
+}
+
+pub fn viewport() -> (f32, f32) {
+    (f32::from_bits(VIEW_W.load(Ordering::Relaxed)), f32::from_bits(VIEW_H.load(Ordering::Relaxed)))
+}
+
+/// Media uzunligi: px, em/rem (16 px).
+fn mq_len(v: &str) -> Option<f32> {
+    let v = v.trim();
+    if let Some(n) = v.strip_suffix("rem").or_else(|| v.strip_suffix("em")) {
+        return parse_f(n.trim()).map(|x| x * 16.0);
+    }
+    parse_f(v.trim_end_matches("px").trim())
+}
+
+/// "(max-width: 600px)", "(width >= 40em)", "(600px < width)" — bitta xususiyat.
+fn mq_feature(q: &mut Mq, f: &str) {
+    let f = f.trim();
+    if let Some((k, v)) = f.split_once(':') {
+        let k = k.trim();
+        let v = v.trim();
+        match k {
+            "min-width" | "max-width" | "min-height" | "max-height" | "width" | "height" => {
+                let Some(x) = mq_len(v) else {
+                    q.never = true;
+                    return;
+                };
+                match k {
+                    "min-width" => q.min_w = q.min_w.max(x),
+                    "max-width" => q.max_w = q.max_w.min(x),
+                    "min-height" => q.min_h = q.min_h.max(x),
+                    "max-height" => q.max_h = q.max_h.min(x),
+                    "width" => {
+                        q.min_w = q.min_w.max(x);
+                        q.max_w = q.max_w.min(x);
+                    }
+                    _ => {
+                        q.min_h = q.min_h.max(x);
+                        q.max_h = q.max_h.min(x);
+                    }
+                }
+            }
+            "orientation" => {
+                let (w, h) = viewport();
+                if (v == "portrait") != (h >= w) {
+                    q.never = true;
+                }
+            }
+            "prefers-color-scheme" => q.never |= v != "light",
+            "prefers-reduced-motion" => q.never |= v != "no-preference",
+            "hover" | "any-hover" => q.never |= v != "hover",
+            "pointer" | "any-pointer" => q.never |= v != "fine",
+            "color" | "min-color" => {}
+            "min-resolution" | "max-resolution" | "-webkit-min-device-pixel-ratio" | "min-device-pixel-ratio" => {
+                let r = v.trim_end_matches("dppx").trim_end_matches('x');
+                let lim = if v.ends_with("dpi") { parse_f(v.trim_end_matches("dpi")).map(|d| d / 96.0) } else { parse_f(r) };
+                match lim {
+                    Some(l) if k.starts_with("max") => q.never |= l < 1.0,
+                    Some(l) => q.never |= l > 1.0,
+                    None => q.never = true,
+                }
+            }
+            _ => q.never = true,
+        }
+        return;
+    }
+    // Diapazon sintaksisi: "width <= 600px", "400px < width < 800px"
+    let mut toks: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for c in f.chars() {
+        if c == '<' || c == '>' || c == '=' {
+            if !cur.trim().is_empty() {
+                toks.push(String::from(cur.trim()));
+            }
+            cur.clear();
+            if let Some(l) = toks.last_mut().filter(|t| t.chars().all(|x| x == '<' || x == '>' || x == '=')) {
+                l.push(c);
+            } else {
+                toks.push(String::from(c));
+            }
+        } else {
+            cur.push(c);
+        }
+    }
+    if !cur.trim().is_empty() {
+        toks.push(String::from(cur.trim()));
+    }
+    if toks.len() < 3 || toks.len() % 2 == 0 {
+        // Yalang'oç xususiyat: "(color)", "(hover)" — bor; boşqasi nomaʼlum
+        q.never |= !matches!(f, "color" | "hover" | "pointer" | "any-hover" | "any-pointer");
+        return;
+    }
+    let mut i = 0;
+    while i + 2 < toks.len() {
+        let (a, op, b) = (toks[i].as_str(), toks[i + 1].as_str(), toks[i + 2].as_str());
+        // feature op value  yoki  value op feature
+        let (feat, val, op) = if a == "width" || a == "height" {
+            (a, b, String::from(op))
+        } else {
+            let flip: String = op.chars().map(|c| if c == '<' { '>' } else if c == '>' { '<' } else { c }).collect();
+            (b, a, flip)
+        };
+        let Some(x) = mq_len(val) else {
+            q.never = true;
+            return;
+        };
+        let eps = if op.contains('=') { 0.0 } else { 0.01 };
+        let (mn, mx) = if feat == "width" { (&mut q.min_w, &mut q.max_w) } else if feat == "height" { (&mut q.min_h, &mut q.max_h) } else {
+            q.never = true;
+            return;
+        };
+        match op.as_str() {
+            "<" | "<=" => *mx = mx.min(x - eps),
+            ">" | ">=" => *mn = mn.max(x + eps),
+            "=" => {
+                *mn = mn.max(x);
+                *mx = mx.min(x);
+            }
+            _ => q.never = true,
+        }
+        i += 2;
+    }
+}
+
+/// "screen and (max-width: 600px), print" — media so'rovlari ro'yxati (YOKI).
+pub fn parse_media(s: &str) -> Vec<Mq> {
+    let low = s.to_ascii_lowercase();
+    let mut out = Vec::new();
+    for part in low.split(',') {
+        let mut q = Mq { never: false, neg: false, min_w: 0.0, max_w: f32::INFINITY, min_h: 0.0, max_h: f32::INFINITY };
+        let mut rest = part.trim();
+        if rest.is_empty() {
+            continue;
+        }
+        if let Some(r) = rest.strip_prefix("not ") {
+            q.neg = true;
+            rest = r.trim_start();
+        } else if let Some(r) = rest.strip_prefix("only ") {
+            rest = r.trim_start();
+        }
+        // Media turi (qavsdan oldingi söz)
+        if !rest.starts_with('(') {
+            let ty: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+            rest = rest[ty.len()..].trim_start();
+            if !matches!(ty.as_str(), "screen" | "all") {
+                q.never = true;
+            }
+        }
+        // Xususiyatlar: (…) and (…)
+        while let Some(o) = rest.find('(') {
+            let Some(c) = rest[o..].find(')').map(|j| o + j) else { break };
+            mq_feature(&mut q, &rest[o + 1..c]);
+            rest = &rest[c + 1..];
+        }
+        if rest.contains(" or ") {
+            q.never = true; // murakkab mantiq — qöllanmaydi
+        }
+        out.push(q);
+    }
+    out
+}
+
+fn mq_ok(q: &Mq, w: f32, h: f32) -> bool {
+    let hit = !q.never && w >= q.min_w && w <= q.max_w && h >= q.min_h && h <= q.max_h;
+    hit != q.neg
+}
+
+/// Qoidaning @media şartlari joriy kö'riş maydonida bajariladimi?
+pub fn media_ok(media: &[Vec<Mq>]) -> bool {
+    if media.is_empty() {
+        return true;
+    }
+    let (w, h) = viewport();
+    media.iter().all(|alt| alt.iter().any(|q| mq_ok(q, w, h)))
+}
+
+/// Har bir şartli (@media) qoidaning joriy holati — ölçam özgarganda qayta tahlil kerakligini aniqlaş uçun.
+pub fn media_state(rules: &[Rule]) -> Vec<bool> {
+    rules.iter().filter(|r| !r.media.is_empty()).map(|r| media_ok(&r.media)).collect()
+}
+
+/// Elementga :hover li qoida tegişli bölişi mumkinmi (oxirgi bölagi mos keladi)?
+pub fn hover_hits(rules: &[Rule], tag: &str, id: &str, classes: &[String]) -> bool {
+    let me = ElRef { tag, id, classes, hover: true };
+    rules.iter().any(|r| {
+        r.sel.iter().any(|ch| ch.iter().any(|c| c.hover) && ch.last().is_some_and(|l| compound_match(l, &me)))
+    })
+}
+
+/// Qoidada :hover bormi (va u oxirgi bölakdami)?
+pub fn hover_kind(r: &Rule) -> (bool, bool) {
+    let mut last = false;
+    let mut inner = false;
+    for ch in &r.sel {
+        for (k, c) in ch.iter().enumerate() {
+            if c.hover {
+                if k + 1 == ch.len() {
+                    last = true;
+                } else {
+                    inner = true;
+                }
+            }
+        }
+    }
+    (last, inner)
 }
 
 fn strip_comments(s: &str) -> String {
@@ -118,7 +348,10 @@ fn parse_compound(s: &str) -> Option<Compound> {
                 // Zararsiz psevdo-klasslar e'tiborsiz; holatga bogʻliqlari (:hover…) — qoida taşlanadi
                 let rest = &s[i + 1..];
                 let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
-                if matches!(name.as_str(), "link" | "visited" | "root") {
+                if matches!(name.as_str(), "link" | "visited" | "root" | "any-link") {
+                    i += 1 + name.len();
+                } else if name == "hover" {
+                    c.hover = true;
                     i += 1 + name.len();
                 } else {
                     return None;
@@ -178,18 +411,28 @@ pub fn parse_decls(s: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Uslublar jadvali (@-qoidalar va ularning bloklari taşlanadi).
+/// Uslublar jadvali. @media bloklari ichidagi qoidalar şart bilan saqlanadi
+/// (kö'riş maydoni eniga qarab `compute` da baholanadi); boşqa @-qoidalar taşlanadi.
 pub fn parse_sheet(src: &str) -> Vec<Rule> {
     let src = strip_comments(src);
     let mut rules = Vec::new();
-    let mut rest = src.as_str();
+    parse_block(&src, &mut rules, 0);
+    rules
+}
+
+fn parse_block(src: &str, rules: &mut Vec<Rule>, depth: u8) {
+    let mut rest = src;
     loop {
         let rest_t = rest.trim_start();
         if rest_t.is_empty() {
             break;
         }
+        if rest_t.starts_with('}') {
+            rest = &rest_t[1..];
+            continue;
+        }
         if rest_t.starts_with('@') {
-            // @import ...; yoki @media {...} — taşlaymiz (ichma-ich qavslar bilan)
+            // @import ...; yoki @media {...} (ichma-ich qavslar bilan)
             let semi = rest_t.find(';');
             let brace = rest_t.find('{');
             match (semi, brace) {
@@ -198,17 +441,28 @@ pub fn parse_sheet(src: &str) -> Vec<Rule> {
                     continue;
                 }
                 (_, Some(b)) => {
-                    let mut depth = 0;
+                    let mut depth_b = 0;
                     let mut end = rest_t.len();
                     for (k, ch) in rest_t[b..].char_indices() {
                         if ch == '{' {
-                            depth += 1;
+                            depth_b += 1;
                         } else if ch == '}' {
-                            depth -= 1;
-                            if depth == 0 {
+                            depth_b -= 1;
+                            if depth_b == 0 {
                                 end = b + k + 1;
                                 break;
                             }
+                        }
+                    }
+                    let head = &rest_t[1..b];
+                    let name: String = head.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>().to_ascii_lowercase();
+                    if name == "media" && depth < 4 {
+                        let cond = parse_media(&head[name.len()..]);
+                        let inner_end = if end > b + 1 && rest_t.as_bytes()[end - 1] == b'}' { end - 1 } else { end };
+                        let first = rules.len();
+                        parse_block(&rest_t[b + 1..inner_end], rules, depth + 1);
+                        for r in &mut rules[first..] {
+                            r.media.insert(0, cond.clone());
                         }
                     }
                     rest = &rest_t[end..];
@@ -226,11 +480,10 @@ pub fn parse_sheet(src: &str) -> Vec<Rule> {
         let sel = parse_selectors(&rest_t[..ob]);
         let decls = parse_decls(&rest_t[ob + 1..cb]);
         if !sel.is_empty() && !decls.is_empty() {
-            rules.push(Rule { sel, decls });
+            rules.push(Rule { sel, decls, media: Vec::new() });
         }
         rest = &rest_t[cb + 1..];
     }
-    rules
 }
 
 /// Element: (teg, id, klasslar) — tanlagiçga moslaş uçun.
@@ -238,10 +491,12 @@ pub struct ElRef<'a> {
     pub tag: &'a str,
     pub id: &'a str,
     pub classes: &'a [String],
+    pub hover: bool, // siçqonça şu element (yoki uning avlodi) ustidami
 }
 
 fn compound_match(c: &Compound, e: &ElRef) -> bool {
-    c.tag.as_ref().is_none_or(|t| t == e.tag)
+    (!c.hover || e.hover)
+        && c.tag.as_ref().is_none_or(|t| t == e.tag)
         && c.id.as_ref().is_none_or(|i| i == e.id)
         && c.classes.iter().all(|k| e.classes.iter().any(|x| x == k))
 }
@@ -578,6 +833,9 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
 pub fn compute(parent: &Sty, rules: &[Rule], el: &ElRef, ancestors: &[ElRef], inline: Option<&str>) -> Sty {
     let mut s = parent.inherit();
     for r in rules {
+        if !media_ok(&r.media) {
+            continue;
+        }
         if r.sel.iter().any(|ch| matches(ch, el, ancestors)) {
             for (k, v) in &r.decls {
                 apply(&mut s, k, v, parent.size);

@@ -142,6 +142,7 @@ pub struct ElInfo {
     pub classes: Vec<String>,
     pub parent: u16,
     pub label_for: String, // <label for="…">
+    pub style: String,     // inline style="…" (qayta uslublaşda saqlanadi)
 }
 
 #[derive(Clone)]
@@ -164,13 +165,17 @@ pub struct Doc {
     pub details: Vec<bool>,        // <details> oçiqmi
     pub base: Option<String>,      // <base href>
     pub refresh: Option<(u32, String)>, // <meta http-equiv=refresh>
+    pub hovered: Vec<u16>,         // siçqonça ostidagi element va uning ajdodlari (:hover)
+    pub media_on: Vec<bool>,       // @media qoidalarining tahlil paytidagi holati
+    pub src: String,               // @media bölsa: qayta tahlil uçun HTML manba
+    pub extra_css: String,         // … va tashqi CSS
 }
 
 pub const NO_EL: u16 = u16::MAX;
 
 impl Doc {
     pub fn empty() -> Doc {
-        Doc { title: String::new(), blocks: Vec::new(), elems: Vec::new(), scripts: Vec::new(), bg: None, color: None, inputs: Vec::new(), forms: Vec::new(), rules: Vec::new(), svgs: Vec::new(), details: Vec::new(), base: None, refresh: None }
+        Doc { title: String::new(), blocks: Vec::new(), elems: Vec::new(), scripts: Vec::new(), bg: None, color: None, inputs: Vec::new(), forms: Vec::new(), rules: Vec::new(), svgs: Vec::new(), details: Vec::new(), base: None, refresh: None, hovered: Vec::new(), media_on: Vec::new(), src: String::new(), extra_css: String::new() }
     }
     /// <details> ni oçadi / yopadi.
     pub fn toggle_details(&mut self, d: u16) {
@@ -379,11 +384,85 @@ impl Doc {
         let at = last.map(|k| k + 1).unwrap_or(self.blocks.len());
         self.blocks.splice(at..at, d.blocks);
     }
-    /// classList özgardi: elementning öz qoidalari (rang, fon, ko'rinişi) qayta qöllanadi.
+    /// Element zanjiri: ildizdan elementning özigaça (elems indekslari).
+    fn chain(&self, el: usize) -> Vec<usize> {
+        let mut ch = Vec::new();
+        let mut k = el;
+        while k < self.elems.len() && ch.len() < 512 {
+            ch.push(k);
+            let p = self.elems[k].parent as usize;
+            if p == NO_EL as usize || p >= k {
+                break;
+            }
+            k = p;
+        }
+        ch.reverse();
+        ch
+    }
+    /// Elementning hisoblangan uslubi: ajdodlar zanjiri böyiça (meros, avlod tanlagiçlari, :hover bilan).
+    fn style_of(&self, el: usize) -> Sty {
+        let ch = self.chain(el);
+        let mut parent = Sty::root();
+        let mut anc: Vec<ElRef> = Vec::new();
+        for &k in &ch {
+            let info = &self.elems[k];
+            let me = ElRef { tag: &info.tag, id: &info.id, classes: &info.classes, hover: self.hovered.contains(&(k as u16)) };
+            let inline = if info.style.is_empty() { None } else { Some(info.style.as_str()) };
+            let st = css::compute(&parent, &self.rules, &me, &anc, inline);
+            if k == el {
+                return st;
+            }
+            parent = st;
+            anc.push(me);
+        }
+        parent
+    }
+    /// Siçqonça `el` ustida (NO_EL — hech narsa): :hover qoidalari tegişli elementlarga qayta qöllanadi.
+    /// Qaytaradi: nimadir özgardimi.
+    pub fn set_hover(&mut self, el: u16) -> bool {
+        let new: Vec<u16> = if el == NO_EL { Vec::new() } else { self.chain(el as usize).into_iter().map(|k| k as u16).collect() };
+        if new == self.hovered {
+            return false;
+        }
+        let (mut last, mut inner) = (false, false);
+        for r in &self.rules {
+            let (l, i) = css::hover_kind(r);
+            last |= l;
+            inner |= i;
+        }
+        let diff: Vec<u16> = self.hovered.iter().filter(|k| !new.contains(k)).chain(new.iter().filter(|k| !self.hovered.contains(k))).copied().collect();
+        self.hovered = new;
+        if !last && !inner {
+            return false;
+        }
+        let mut todo: Vec<usize> = Vec::new();
+        if last {
+            todo.extend(diff.iter().map(|&k| k as usize));
+        }
+        if inner {
+            // ".karta:hover p" — özgargan elementlarning avlodlari ham
+            for k in 0..self.elems.len().min(20_000) {
+                if diff.iter().any(|&d| d as usize != k && self.within(k as u16, d)) && !todo.contains(&k) {
+                    todo.push(k);
+                }
+            }
+        }
+        let mut any = false;
+        for k in todo {
+            let hit = self.elems.get(k).is_some_and(|e| css::hover_hits(&self.rules, &e.tag, &e.id, &e.classes));
+            if hit {
+                self.restyle(k);
+                any = true;
+            }
+        }
+        any
+    }
+    /// classList / :hover özgardi: elementning qoidalari (rang, fon, ko'rinişi) qayta qöllanadi.
     pub fn restyle(&mut self, el: usize) {
-        let Some(info) = self.elems.get(el).cloned() else { return };
-        let me = ElRef { tag: &info.tag, id: &info.id, classes: &info.classes };
-        let st = css::compute(&Sty::root(), &self.rules, &me, &[], None);
+        if el >= self.elems.len() {
+            return;
+        }
+        let st = self.style_of(el);
         let e = el as u16;
         let base = Sty::root();
         for bi in 0..self.blocks.len() {
@@ -399,6 +478,9 @@ impl Doc {
                     let sp = &mut self.blocks[bi].spans[k];
                     sp.color = st.color;
                     sp.bold = st.bold;
+                    if let Some(u) = st.underline {
+                        sp.underline = u;
+                    }
                     if st.size != base.size {
                         sp.size = st.size;
                     }
@@ -923,8 +1005,8 @@ impl P {
         let id = attr(tag, "id").unwrap_or_default();
         let classes: Vec<String> = attr(tag, "class").map(|c| c.split_whitespace().map(String::from).collect()).unwrap_or_default();
         let st = {
-            let anc: Vec<ElRef> = self.stack.iter().map(|o| ElRef { tag: &o.tag, id: &o.id, classes: &o.classes }).collect();
-            let me = ElRef { tag: name, id: &id, classes: &classes };
+            let anc: Vec<ElRef> = self.stack.iter().map(|o| ElRef { tag: &o.tag, id: &o.id, classes: &o.classes, hover: false }).collect();
+            let me = ElRef { tag: name, id: &id, classes: &classes, hover: false };
             css::compute(&self.top(), &self.rules, &me, &anc, attr(tag, "style").as_deref())
         };
         let kind = match st.pos {
@@ -1026,7 +1108,7 @@ impl P {
             let onclick = attr(tag, "onclick");
             let classes: Vec<String> = attr(tag, "class").map(|c| c.split_whitespace().map(String::from).collect()).unwrap_or_default();
             let parent = self.el();
-            self.doc.elems.push(ElInfo { id, tag: String::from("input"), onclick, classes, parent, label_for: String::new() });
+            self.doc.elems.push(ElInfo { id, tag: String::from("input"), onclick, classes, parent, label_for: String::new(), style: attr(tag, "style").unwrap_or_default() });
             (self.doc.elems.len() - 1) as u16
         });
         let size = attr(tag, "size").and_then(|v| v.parse().ok()).unwrap_or(if kind == 0 || kind == 3 { 20 } else { 0 });
@@ -1084,8 +1166,8 @@ impl P {
         let classes: Vec<String> = attr(tag, "class").map(|c| c.split_whitespace().map(String::from).collect()).unwrap_or_default();
         let parent = self.top();
         let mut st = {
-            let anc: Vec<ElRef> = self.stack.iter().map(|o| ElRef { tag: &o.tag, id: &o.id, classes: &o.classes }).collect();
-            let me = ElRef { tag: name, id: &id, classes: &classes };
+            let anc: Vec<ElRef> = self.stack.iter().map(|o| ElRef { tag: &o.tag, id: &o.id, classes: &o.classes, hover: false }).collect();
+            let me = ElRef { tag: name, id: &id, classes: &classes, hover: false };
             let style = attr(tag, "style");
             css::compute(&parent, &self.rules, &me, &anc, style.as_deref())
         };
@@ -1145,7 +1227,7 @@ impl P {
         // Har bir element ro'yxatga olinadi (JS: querySelectorAll, classList, hodisalar qalqişi)
         let el = if self.doc.elems.len() < 60_000 {
             let label_for = if name == "label" { attr(tag, "for").unwrap_or_default() } else { String::new() };
-            self.doc.elems.push(ElInfo { id: id.clone(), tag: String::from(name), onclick, classes: classes.clone(), parent: self.el(), label_for });
+            self.doc.elems.push(ElInfo { id: id.clone(), tag: String::from(name), onclick, classes: classes.clone(), parent: self.el(), label_for, style: attr(tag, "style").unwrap_or_default() });
             (self.doc.elems.len() - 1) as u16
         } else {
             self.el()
@@ -1373,6 +1455,11 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
     sheet.push_str(&inline_css(src));
     let rules = css::parse_sheet(&sheet);
     let mut d = parse_inner(src, &rules, true);
+    d.media_on = css::media_state(&rules);
+    if !d.media_on.is_empty() {
+        d.src = String::from(src);
+        d.extra_css = String::from(extra_css);
+    }
     d.rules = rules;
     d
 }
@@ -1942,4 +2029,57 @@ pub fn self_test_position() -> Result<usize, &'static str> {
         return Err("float: rasm (right) notöğri");
     }
     Ok(5)
+}
+
+/// CSS @media va :hover tekşiruvi: kö'riş maydoni eniga qarab qoidalar, siçqonça ostidagi element uslubi.
+pub fn self_test_media() -> Result<usize, &'static str> {
+    let saved = css::viewport();
+    let r = media_checks();
+    css::set_viewport(saved.0, saved.1);
+    r
+}
+
+fn media_checks() -> Result<usize, &'static str> {
+    let src = "<style>.a{color:#000000}@media (max-width:600px){.a{color:#ff0000}}\
+        @media screen and (min-width: 800px){.a{color:#00ff00}}@media print{.a{display:none}}\
+        a{text-decoration:none}a:hover{color:#0000ff;text-decoration:underline}.k:hover .c{color:#123456}</style>\
+        <p class=a>A</p><p><a href=x>L</a></p><div class=k><p class=c>C</p></div>";
+    let col = |d: &Doc, t: &str| d.blocks.iter().flat_map(|b| b.spans.iter()).find(|s| s.text.trim() == t).map(|s| s.color);
+    css::set_viewport(500.0, 700.0);
+    let d = parse(src);
+    if d.media_on.len() != 3 || col(&d, "A") != Some(Some(0xff0000)) {
+        return Err("@media: max-width qoidasi qöllanmadi");
+    }
+    css::set_viewport(1000.0, 700.0);
+    if css::media_state(&d.rules) == d.media_on {
+        return Err("@media: en özgarişi sezilmadi");
+    }
+    let mut d = parse_with(&d.src, &d.extra_css);
+    if col(&d, "A") != Some(Some(0x00ff00)) || d.blocks.iter().any(|b| b.hidden) {
+        return Err("@media: min-width / print notöğri");
+    }
+    let q = |s: &str| css::parse_media(s).iter().map(|m| (m.min_w, m.max_w, m.never, m.neg)).collect::<Vec<_>>();
+    if q("(400px <= width < 700px)") != [(400.0, 699.99, false, false)] || q("not print") != [(0.0, f32::INFINITY, true, true)] || q("(min-width: 40em)")[0].0 != 640.0 {
+        return Err("@media: so'rov tahlili notöğri");
+    }
+    // :hover
+    let a = d.elems.iter().position(|e| e.tag == "a").ok_or(":hover: <a> yöq")? as u16;
+    let base = col(&d, "L");
+    if !d.set_hover(a) || col(&d, "L") != Some(Some(0x0000ff)) {
+        return Err(":hover: havola rangi özgarmadi");
+    }
+    let und = d.blocks.iter().flat_map(|b| b.spans.iter()).find(|s| s.text.trim() == "L").map(|s| s.underline);
+    if und != Some(true) {
+        return Err(":hover: text-decoration qöllanmadi");
+    }
+    d.set_hover(NO_EL);
+    if col(&d, "L") != base {
+        return Err(":hover: siçqonça ketganda uslub tiklanmadi");
+    }
+    let c = d.elems.iter().position(|e| e.classes.iter().any(|k| k == "c")).ok_or(":hover: .c yöq")? as u16;
+    d.set_hover(c);
+    if col(&d, "C") != Some(Some(0x123456)) {
+        return Err(":hover: ajdod (.k:hover .c) qöllanmadi");
+    }
+    Ok(8)
 }
