@@ -258,6 +258,19 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   (23 tekshiruv: tahlil, meros, harf o'zgarishi va haqiqiy joylashuv o'lchovlari).
 
   ![height, line-height va text-transform: zamin://matn](docs/web-box-height.png)
+- **CSS `overflow`, `white-space`, `text-overflow: ellipsis` va `opacity`** — `overflow: hidden`
+  (`auto` / `scroll` / `clip` hozircha shunday ishlaydi, `overflow-x/-y` ham) blok bolalarini
+  konteyner to'rtburchagi bilan kesadi: fon/chegarasi bo'lsa — chegara ichidagi soha, aks holda
+  `height` bilan cheklangan soha; butunlay tashqaridagi elementlar tashlanadi, qisman
+  ko'rinadiganlari chizishda `set_clip` bilan qirqiladi. `white-space: nowrap` — qator o'ralmaydi;
+  `pre` / `pre-wrap` — bo'shliqlar va `\n` saqlanadi (`pre-wrap` o'raladi); `pre-line` — bo'shliqlar
+  yig'iladi, `\n` saqlanadi (meros bo'lib o'tadi). `text-overflow: ellipsis` sig'magan qatorni `…`
+  bilan tugatadi, qator eni konteynerdan oshmaydi. `opacity` (0..1 yoki %) — ajdodlar bo'yicha
+  ko'paytiriladi: quti foni yarim shaffof (`fill_round_rect_a`), gradient/chegara va matn ranglari
+  orqa fon bilan aralashtiriladi. Sinov: `zamin://overflow`, yuklanish self-testida
+  `self_test_overflow` (25 tekshiruv: tahlil, meros, qirqish, nowrap, ellipsis, pre va opacity).
+
+  ![overflow, ellipsis, pre va opacity: zamin://overflow](docs/web-overflow.png)
 - **`<iframe>` — ichki hujjat haqiqiy chiziladi** — `srcdoc="…"` (belgilar bilan kodlangan yoki
   tirnoq ichida xom HTML) alohida hujjat sifatida **o'z CSS i bilan** tahlil qilinadi va ramka-quti
   ichida chiziladi: fon — ichki `body` foni (bo'lmasa oq), `width` (px yoki %) yoki CSS `width`,

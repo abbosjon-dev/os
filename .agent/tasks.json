@@ -165,7 +165,9 @@
       "id": "T21",
       "title": "CSS: overflow: hidden/auto, white-space: nowrap/pre, text-overflow: ellipsis va opacity",
       "detail": "Bu xossalar hozir css.rs da umuman yo'q. Fayllar: src/css.rs (xossalarni o'qish; uslub strukturasiga overflow, white_space, ellipsis, opacity maydonlari qo'shiladi), src/gui.rs lay() (~7898) va web chizish sikli. overflow: hidden — balandligi/eni berilgan bloklarda bolalar items/deco blok to'rtburchagi bilan kesiladi; chizishda set_clip ishlatiladi, yumaloq burchakli bo'lsa ham to'rtburchak bilan kesish yetarli. overflow: auto/scroll hozircha hidden kabi ishlaydi. white-space: nowrap — qator o'ralmaydi. white-space: pre / pre-wrap — bo'shliqlar va \\n saqlanadi. text-overflow: ellipsis (nowrap + hidden bilan) — sig'magan matn '…' bilan tugaydi. opacity: 0..1 — blok va uning matni/foni alfa bilan aralashtiriladi (fill_round_rect_a va matn rangini fon bilan aralashtirish orqali). zamin://matn yoki yangi zamin://overflow sinov sahifasi qo'shiladi. Qabul mezoni: html::self_test_overflow() ([ok]): hidden blokdan tashqariga chiqadigan item qolmaydi; nowrap matn bitta qator bo'ladi; ellipsis bilan kesilgan qator '…' bilan tugaydi va eni konteynerdan oshmaydi; pre da ikki bo'shliq va \\n saqlanadi; opacity 0.5 css dan to'g'ri o'qiladi. Skrinshot docs/web-overflow.png olinadi; README brauzer bo'limiga qisqa band qo'shiladi; verify.sh full o'tadi.",
-      "batch": 3
+      "batch": 3,
+      "status": "done",
+      "done_at": "2026-11-06 18:03:04"
     },
     {
       "id": "T22",

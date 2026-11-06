@@ -50,6 +50,11 @@ pub struct Sty {
     // Matn (meros bölib ötadi)
     pub lh: f32, // line-height: 0 — normal, > 0 — kö'paytuvçi (raqam), < 0 — -px (px/em/% hisoblangan)
     pub tt: u8,  // text-transform: 0 — none, 1 — uppercase, 2 — lowercase, 3 — capitalize
+    pub ws: u8,  // white-space (meros): 0 — normal, 1 — nowrap, 2 — pre, 3 — pre-wrap, 4 — pre-line
+    // Taşib çiqiş va şaffoflik (meros bölib ötmaydi)
+    pub ovf: u8,       // overflow: 0 — visible, 1 — hidden (auto / scroll / clip ham şunday)
+    pub ellip: bool,   // text-overflow: ellipsis
+    pub opacity: f32,  // opacity: 0..=1
 }
 
 /// Gradient rang töxtaşlari soni çegarasi.
@@ -82,7 +87,7 @@ impl Sty {
             mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
             pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None,
-            h: None, minh: None, lh: 0.0, tt: 0,
+            h: None, minh: None, lh: 0.0, tt: 0, ws: 0, ovf: 0, ellip: false, opacity: 1.0,
         }
     }
     /// Meros: rang, ölçam, qalinlik, tekislaş, yaşiriş — bolaga ötadi; fon — ötmaydi.
@@ -91,6 +96,7 @@ impl Sty {
             bg: None, block: None, mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
             pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None, h: None, minh: None,
+            ovf: 0, ellip: false, opacity: 1.0,
             ..*self
         }
     }
@@ -1086,6 +1092,35 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
                 "right" | "inline-end" => 2,
                 "both" => 3,
                 _ => 0,
+            }
+        }
+        "overflow" | "overflow-x" | "overflow-y" => {
+            // overflow: hidden auto — ikki qiymatdan birortasi visible emas bölsa qirqiladi
+            s.ovf = if low.split_whitespace().any(|t| matches!(t, "hidden" | "auto" | "scroll" | "clip" | "overlay")) {
+                1
+            } else if low.split_whitespace().all(|t| t == "visible") && !low.is_empty() {
+                0
+            } else {
+                s.ovf
+            };
+        }
+        "white-space" | "white-space-collapse" | "text-wrap" | "text-wrap-mode" => {
+            s.ws = match (prop, low.trim()) {
+                ("text-wrap" | "text-wrap-mode", "nowrap") => 1,
+                ("text-wrap" | "text-wrap-mode", "wrap") => if s.ws == 1 { 0 } else { s.ws },
+                (_, "normal") => 0,
+                (_, "nowrap") => 1,
+                (_, "pre") => 2,
+                (_, "pre-wrap" | "break-spaces" | "preserve") => 3,
+                (_, "pre-line" | "preserve-breaks") => 4,
+                _ => s.ws,
+            }
+        }
+        "text-overflow" => s.ellip = low.contains("ellipsis") || low.contains('…'),
+        "opacity" => {
+            let v = if let Some(p) = low.trim().strip_suffix('%') { parse_f(p).map(|f| f / 100.0) } else { parse_f(low.trim()) };
+            if let Some(v) = v {
+                s.opacity = v.clamp(0.0, 1.0);
             }
         }
         "text-decoration" | "text-decoration-line" => {

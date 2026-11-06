@@ -543,6 +543,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] CSS height/min-height, line-height va text-transform ({} sinov)", n),
         Err(e) => panic!("CSS height/line-height/text-transform tekşiruvi yiqildi: {}", e),
     }
+    match html::self_test_overflow() {
+        Ok(n) => println!("  [ok] CSS overflow, white-space, text-overflow: ellipsis va opacity ({} sinov)", n),
+        Err(e) => panic!("CSS overflow/white-space/opacity tekşiruvi yiqildi: {}", e),
+    }
     match html::self_test_av() {
         Ok(n) => println!("  [ok] <audio>/<video>: WAV ijro havolasi (virtio-sound) va video poster ({} sinov)", n),
         Err(e) => panic!("audio/video tekşiruvi yiqildi: {}", e),

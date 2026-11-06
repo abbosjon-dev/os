@@ -7537,6 +7537,7 @@ struct WItem {
     fx: u16,   // html::FX_* effektlari
     bold: bool,
     det: u16,  // <summary> belgisi: bosilsa — <details> oçiladi/yopiladi
+    clip: Option<(usize, usize, usize, usize)>, // overflow: hidden — qirqiş sohasi (sahifa px)
 }
 
 /// Fonda yuklaş navbati: (raqam, manzil, olindimi, natija).
@@ -7884,6 +7885,37 @@ body{background:#f3f5f9;color:#1a2233}
 <div class="x"><b>Yaroqsiz CSS</b><p>e'tiborsiz qoldirildi</p></div>
 </div>
 "##,
+        "zamin://overflow" => r##"<title>CSS overflow, white-space va opacity</title>
+<style>
+body{background:#f3f5f9;color:#1a2233}
+.q{background:#ffffff;border:1px solid #c7ccd6;border-radius:10px;padding:10px}
+.cut{height:70px;overflow:hidden}
+.nw{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:320px}
+.pre{white-space:pre;background:#e8eefc;padding:8px;border-radius:6px}
+.o{background:#1e3a8a;color:#ffffff;padding:10px;border-radius:8px}
+</style>
+<h2>overflow: hidden (height: 70px)</h2>
+<div class="q cut"><p>Birinçi qator — körinadi.</p><p>Ikkinçi qator — körinadi.</p><p>Üçinçi qator — qisman.</p><p>Törtinçi qator — qirqildi.</p><p>Beşinçi qator — qirqildi.</p></div>
+<h2>white-space: nowrap + text-overflow: ellipsis</h2>
+<div style="display:flex;gap:12px">
+<div class="q nw">Zamin OS brauzeri bu uzun qatorni o'ramaydi va oxirini uç nuqta bilan qisqartiradi</div>
+<div class="q" style="white-space:nowrap;overflow:hidden;width:320px">Ellipsis yöq: matn şunçaki quti çetida qirqiladi, davomi körinmaydi</div>
+</div>
+<h2>white-space: pre / pre-line</h2>
+<div style="display:flex;gap:12px">
+<div class="pre">funksiya  salom() {
+    qayt  "Zamin";
+}</div>
+<div style="white-space:pre-line">pre-line:   bo'şliqlar    yig'iladi,
+lekin yangi qatorlar saqlanadi.</div>
+</div>
+<h2>opacity</h2>
+<div style="display:flex;gap:12px">
+<div class="o">opacity: 1</div>
+<div class="o" style="opacity:0.6">opacity: 0.6</div>
+<div class="o" style="opacity:0.3">opacity: 0.3</div>
+</div>
+"##,
         "zamin://bosh" => r##"<title>Bosh sahifa</title>
 <style>
 .hero{background:#1e3a8a;color:#ffffff;text-align:center}
@@ -7906,6 +7938,7 @@ body{background:#f3f5f9;color:#1a2233}
 <li><a href="zamin://ramka">iframe: ichki hujjatlar sinovi</a></li>
 <li><a href="zamin://matn">text-align, dir=rtl, height, line-height va text-transform sinovi</a></li>
 <li><a href="zamin://bezak">CSS gradient va box-shadow sinovi</a></li>
+<li><a href="zamin://overflow">CSS overflow, white-space, ellipsis va opacity sinovi</a></li>
 <li><a href="zamin://tarix">Tarix</a> — körilgan sahifalar</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
 <li><a href="https://example.com/">example.com</a> (HTTPS, haqiqiy internet)</li>
@@ -8703,10 +8736,12 @@ struct Deco {
     grad: Option<crate::css::Grad>,
     // box-shadow (ekran px): dx, dy, blur, spread, rang, alfa
     shadow: Option<(i32, i32, usize, i32, Color, u8)>,
+    clip: Option<(usize, usize, usize, usize)>, // overflow: hidden — qirqiş sohasi
+    alpha: u8,                                  // opacity (255 — şaffof emas)
 }
 
 fn dfill(x: usize, y: usize, w: usize, h: usize, c: Color) -> Deco {
-    Deco { x, y, w, h, fill: Some(c), radius: 0, bw: 0, bc: 0, grad: None, shadow: None }
+    Deco { x, y, w, h, fill: Some(c), radius: 0, bw: 0, bc: 0, grad: None, shadow: None, clip: None, alpha: 255 }
 }
 
 /// Sahifa joylaşuvi: elementlar, bezaklar va toʻliq balandlik.
@@ -8724,8 +8759,32 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
         .collect();
     let mut anc = alloc::vec![(0u32, u, u / 2, width.saturating_sub(u * 2))];
     let y = lay(web, &vis, u, width.saturating_sub(u * 2), u / 2, 0, &mut items, &mut deco, &mut anc);
-    // absolute elementlar ham sahifa balandligiga kiradi
-    let y = items.iter().map(|i| i.y + i.h).fold(y, usize::max);
+    // overflow: hidden — qirqiş sohasidan butunlay taşqaridagilar taşlanadi, içidagilar qirqişsiz
+    let inside = |r: (usize, usize, usize, usize), c: (usize, usize, usize, usize)| rect_isect(r, c) == r;
+    items.retain_mut(|i| match i.clip {
+        Some(c) => {
+            let r = (i.x, i.y, i.w.max(1), i.h.max(1));
+            let k = rect_isect(r, c);
+            if inside(r, c) {
+                i.clip = None;
+            }
+            k.2 > 0 && k.3 > 0
+        }
+        None => true,
+    });
+    deco.retain_mut(|d| match d.clip {
+        Some(c) => {
+            let r = (d.x, d.y, d.w.max(1), d.h.max(1));
+            let k = rect_isect(r, c);
+            if inside(r, c) {
+                d.clip = None;
+            }
+            k.2 > 0 && k.3 > 0
+        }
+        None => true,
+    });
+    // absolute elementlar ham sahifa balandligiga kiradi (qirqilganlari — qirqiş sohasi böyiça)
+    let y = items.iter().map(|i| i.y + i.clip.map_or(i.h, |c| (c.1 + c.3).saturating_sub(i.y).min(i.h))).fold(y, usize::max);
     (items, deco, y + u)
 }
 
@@ -8737,6 +8796,24 @@ pub fn layout_probe(doc: Doc, width: usize) -> (Vec<(u16, usize, usize, String)>
     let (items, _, total) = web_layout(&w, width);
     let k = (small() * 11 / 10) as f32 / 16.0;
     (items.into_iter().map(|i| (i.el, i.y, i.h, i.text)).collect(), total, k)
+}
+
+/// Sinov uçun (overflow): elementlar (element, x, y, eni, balandligi, matn) — qirqiş sohasi bilan kesişgan
+/// körinadigan to'rtburçak — va bezaklar (x, y, eni, balandligi, fon rangi, alfa).
+#[allow(clippy::type_complexity)]
+pub fn layout_probe_rects(doc: Doc, width: usize) -> (Vec<(u16, usize, usize, usize, usize, String)>, Vec<(usize, usize, usize, usize, Option<u32>, u8)>) {
+    let mut w = web_new();
+    w.doc = doc;
+    let (items, deco, _) = web_layout(&w, width);
+    let its = items
+        .into_iter()
+        .map(|i| {
+            let r = (i.x, i.y, i.w, i.h);
+            let r = i.clip.map_or(r, |c| rect_isect(r, c));
+            (i.el, r.0, r.1, r.2, r.3, i.text)
+        })
+        .collect();
+    (its, deco.into_iter().map(|d| (d.x, d.y, d.w, d.h, d.fill, d.alpha)).collect())
 }
 
 /// position / float: oqimdan taşqari blokning (nusxa) quti maydonlarini tozalaydi — kenglikni lay() beradi.
@@ -8766,6 +8843,74 @@ fn items_right(items: &[WItem]) -> usize {
     r + l
 }
 
+/// overflow: hidden guruhi: (seriya, items boşi, deco boşi, x, y, kenglik, birinçi deco — konteynerning öz qutisimi).
+type ClipGrp = (u32, usize, usize, usize, usize, usize, bool);
+
+/// Ikki töğri to'rtburçak kesişmasi (böş bölsa — eni/balandligi 0).
+fn rect_isect(a: (usize, usize, usize, usize), b: (usize, usize, usize, usize)) -> (usize, usize, usize, usize) {
+    let (x0, y0) = (a.0.max(b.0), a.1.max(b.1));
+    let (x1, y1) = ((a.0 + a.2).min(b.0 + b.2), (a.1 + a.3).min(b.1 + b.3));
+    (x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0))
+}
+
+/// overflow: hidden — guruh elementlari konteyner to'rtburçagi bilan qirqiladi (çizişda set_clip).
+/// Konteyner qutisi (fon / çegara) bölsa — uning to'rtburçagi, aks holda guruh egallagan soha.
+fn clip_group(g: ClipGrp, y: usize, items: &mut [WItem], deco: &mut [Deco]) {
+    let (_, i0, d0, x, y0, w, own) = g;
+    let (r, ds) = match deco.get(d0).filter(|_| own) {
+        // padding qutisi böyiça (çegara içidan)
+        Some(d) => ((d.x + d.bw, d.y + d.bw, d.w.saturating_sub(d.bw * 2), d.h.saturating_sub(d.bw * 2)), d0 + 1),
+        None => ((x, y0, w, y.saturating_sub(y0)), d0),
+    };
+    for it in items.iter_mut().skip(i0) {
+        it.clip = Some(it.clip.map_or(r, |c| rect_isect(c, r)));
+    }
+    for d in deco.iter_mut().skip(ds) {
+        d.clip = Some(d.clip.map_or(r, |c| rect_isect(c, r)));
+    }
+}
+
+/// opacity: blok matni fon bilan aralaşadi, bezaklari alfa oladi.
+fn apply_fade(f: (usize, usize, u8, Color), items: &mut [WItem], deco: &mut [Deco]) {
+    let (i0, d0, op, back) = f;
+    for it in items.iter_mut().skip(i0) {
+        it.col = mix(back, it.col, op as u32 + 1);
+    }
+    for d in deco.iter_mut().skip(d0) {
+        d.alpha = (d.alpha as u32 * op as u32 / 255) as u8;
+    }
+}
+
+/// text-overflow: ellipsis — [a, e) qatori `xr` dan oşsa, sig'magan qismi '…' bilan almaşadi.
+fn ellipsize(items: &mut Vec<WItem>, a: usize, e: usize, xr: usize) {
+    let e = e.min(items.len());
+    if a >= e || items[a..e].iter().all(|i| i.x + i.w <= xr) {
+        return;
+    }
+    let tw = |t: &str, it: &WItem| (if it.mono { gfx::text_width_mono(t, it.px) } else { gfx::text_width(t, it.px) }) + it.bold as usize;
+    let mut j = a;
+    while j + 1 < e && items[j].x + items[j].w + tw("…", &items[j]) <= xr {
+        j += 1;
+    }
+    let it = &mut items[j];
+    if it.img.is_some() || it.input != NO_EL {
+        (it.img, it.input, it.text) = (None, NO_EL, String::new());
+    }
+    let chars: Vec<char> = it.text.chars().collect();
+    let mut n = chars.len();
+    loop {
+        let mut t: String = chars[..n].iter().collect::<String>().trim_end().into();
+        t.push('…');
+        let w = tw(&t, it);
+        if it.x + w <= xr || n == 0 {
+            (it.text, it.w, it.button) = (t, w, false);
+            break;
+        }
+        n -= 1;
+    }
+    items.drain(j + 1..e);
+}
+
 /// Bloklar ro'yxatini (x, kenglik) sohaga joylaydi; `skip` — joriy ustun içidagi flex (qayta guruhlamaslik uçun).
 /// `anc` — joylaşgan (position) elementlar langarlari: (raqam, x, y, kenglik); [0] — sahifa.
 #[allow(clippy::too_many_arguments)]
@@ -8791,10 +8936,17 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
     let mut pend: Option<(usize, usize, isize, isize)> = None;
     // height / min-height: joriy guruh (element seriyasi, kontent boşi y)
     let mut hgrp: Option<(u32, usize)> = None;
+    // overflow: hidden — joriy qirquvçi guruh (seriya, items boşi, deco boşi, x, y, kenglik, quti özinikimi)
+    let mut cgrp: Option<ClipGrp> = None;
+    // opacity: oldingi blok elementlari (items boşi, deco boşi, alfa, fon)
+    let mut fade: Option<(usize, usize, u8, Color)> = None;
     let mut bi = 0;
     while bi < vis.len() {
         if let Some((i0, d0, dx, dy)) = pend.take() {
             shifts.push((i0, items.len(), d0, deco.len(), dx, dy));
+        }
+        if let Some(f) = fade.take() {
+            apply_fade(f, items, deco);
         }
         let b = vis[bi];
         // clear: float lardan pastga
@@ -8812,6 +8964,16 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
         }
         // float bilan torayişgan soha
         let (page_pad, full) = if lf.0 + rf.0 + u * 4 < full0 { (page_pad0 + lf.0, full0 - lf.0 - rf.0) } else { (page_pad0, full0) };
+        // overflow: hidden — guruh almaşdi: oldingisini qirqamiz, yangisini boşlaymiz
+        if cgrp.map(|g| g.0) != Some(b.clip) {
+            if let Some(g) = cgrp.take() {
+                clip_group(g, y, items, deco);
+            }
+            if b.clip != 0 {
+                let own = b.bgk == b.clip && b.okind == 0 && !(b.flex != 0 && b.flex != skip && (b.fmode == 1 || b.fmode == 3));
+                cgrp = Some((b.clip, items.len(), deco.len(), page_pad, y, full, own));
+            }
+        }
         // --- position: absolute / fixed va float: oqimdan taşqari ---
         if b.oser != 0 && b.okind != 0 {
             let mut j = bi;
@@ -8998,7 +9160,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
             if open_box.map(|o| o.0) != Some(b.bgk) {
                 y += lpx(b.bmt);
                 let shadow = b.shadow.map(|s| (spx(s.dx) as i32, spx(s.dy) as i32, lpx(s.blur), spx(s.spread) as i32, s.color, s.alpha));
-                deco.push(Deco { x: cx, y, w: cw, h: 0, fill: b.bg, radius: lpx(b.radius), bw: bwp, bc: b.bc.unwrap_or(0x808080), grad: b.grad, shadow });
+                deco.push(Deco { x: cx, y, w: cw, h: 0, fill: b.bg, radius: lpx(b.radius), bw: bwp, bc: b.bc.unwrap_or(0x808080), grad: b.grad, shadow, clip: None, alpha: b.bop });
                 open_box = Some((b.bgk, deco.len() - 1, inset));
                 if b.bdx != 0.0 || b.bdy != 0.0 {
                     box_shifts.push((deco.len() - 1, spx(b.bdx), spx(b.bdy)));
@@ -9011,6 +9173,11 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
             (page_pad, full, 0)
         };
         let _ = inset;
+        if b.op < 255 {
+            // quti özi ham şaffof bölsa — matn uning ortidagi (sahifa) fon bilan aralaşadi
+            let back = if b.bop < 255 { page_bg } else { b.bg.unwrap_or(page_bg) };
+            fade = Some((items.len(), deco.len(), b.op, back));
+        }
         if b.rdx != 0.0 || b.rdy != 0.0 {
             pend = Some((items.len(), deco.len(), spx(b.rdx), spx(b.rdy)));
         }
@@ -9080,8 +9247,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 };
                 items.push(WItem {
                     x, y, w, h, text: String::new(), col: text_col, px: small(), mono: false, link: b.spans.first().and_then(|s| s.link.clone()),
-                    el: b.el, button: false, underline: false, img: Some(CANVAS_IMG + n), input: NO_EL, fx: 0, bold: false, det: NO_EL,
-                });
+                    el: b.el, button: false, underline: false, img: Some(CANVAS_IMG + n), input: NO_EL, fx: 0, bold: false, det: NO_EL, clip: None });
                 y += h + if last_in_box { 0 } else { gap_bot };
                 close_box(&mut y, deco, &mut open_box);
                 continue;
@@ -9117,8 +9283,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 x, y, w, h,
                 text: if found.is_some() { String::new() } else { alloc::format!("[rasm] {}", alt) },
                 col: mix(text_col, page_bg, 110),
-                px: small(), mono: false, link, el: b.el, button: false, underline: false, img: found, input: NO_EL, fx: 0, bold: false, det: NO_EL,
-            });
+                px: small(), mono: false, link, el: b.el, button: false, underline: false, img: found, input: NO_EL, fx: 0, bold: false, det: NO_EL, clip: None });
             y += h + if last_in_box { 0 } else { gap_bot };
             close_box(&mut y, deco, &mut open_box);
             continue;
@@ -9132,7 +9297,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
             let open = doc.details.get(b.det as usize).copied().unwrap_or(false);
             let t = String::from(if open { "▼" } else { "▶" });
             let tw = gfx::text_width(&t, base_px);
-            items.push(WItem { x: if rtl { xr.saturating_sub(tw) } else { x0 }, y, w: tw + u / 2, h: base_px, text: t, col: mix(bcol, page_bg, 60), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: b.det });
+            items.push(WItem { x: if rtl { xr.saturating_sub(tw) } else { x0 }, y, w: tw + u / 2, h: base_px, text: t, col: mix(bcol, page_bg, 60), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: b.det, clip: None });
         }
         let x0 = if b.summary && !rtl { x0 + base_px + u / 3 } else { x0 };
         let xr = if b.summary && rtl { xr.saturating_sub(base_px + u / 3) } else { xr };
@@ -9147,11 +9312,11 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                     _ => "▪",
                 });
                 let tw = gfx::text_width(&t, base_px);
-                items.push(WItem { x: mark_x(tw), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 60), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
+                items.push(WItem { x: mark_x(tw), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 60), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL, clip: None });
             } else {
                 let t = if b.mark.is_empty() { alloc::format!("{}.", n) } else { b.mark.clone() };
                 let tw = gfx::text_width(&t, base_px);
-                items.push(WItem { x: mark_x(tw), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 70), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
+                items.push(WItem { x: mark_x(tw), y, w: tw, h: base_px, text: t, col: mix(bcol, page_bg, 70), px: base_px, mono: false, link: None, el: NO_EL, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL, clip: None });
             }
         }
         if b.kind == HK::Pre {
@@ -9168,16 +9333,20 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                     2 => (xr - x0).saturating_sub(w),
                     _ => 0,
                 };
-                items.push(WItem { x: x0 + off, y: yy, w, h: base_px, text: String::from(l), col: b.color.unwrap_or(if dark { 0xd7e3c8 } else { 0x24292f }), px: base_px, mono: true, link: None, el: b.el, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL });
+                items.push(WItem { x: x0 + off, y: yy, w, h: base_px, text: String::from(l), col: b.color.unwrap_or(if dark { 0xd7e3c8 } else { 0x24292f }), px: base_px, mono: true, link: None, el: b.el, button: false, underline: false, img: None, input: NO_EL, fx: 0, bold: false, det: NO_EL, clip: None });
                 yy += lhm;
             }
             y += h + if last_in_box { 0 } else { gap_bot };
             close_box(&mut y, deco, &mut open_box);
             continue;
         }
-        // Qatorlarga bölib joylaş (tekislaş bilan)
+        // Qatorlarga bölib joylaş (tekislaş bilan); white-space: nowrap / pre — o'ralmaydi,
+        // pre / pre-wrap / pre-line — \n yangi qator
+        let nowrap = b.ws == 1 || b.ws == 2;
+        let keepnl = b.ws >= 2;
         let mut x = x0;
         let mut line_start = items.len();
+        let mut starts = alloc::vec![line_start];
         // line-height: kö'paytuvçi (0 — normal = 1.4); matn qator içida markazlanadi (yarim oraliq)
         let lhf = b.lh;
         let norm = |px: usize| if lhf > 0.0 { ((px as f32 * lhf) as usize).max(1) } else { px * 14 / 10 };
@@ -9235,6 +9404,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 x = x0;
                 y += line_h;
                 line_start = items.len();
+                starts.push(line_start);
                 line_h = norm(base_px);
                 continue;
             }
@@ -9249,31 +9419,54 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                     1 => (gfx::text_width(&inp.value, spx) + u * 3 / 2, spx * 7 / 5),
                     _ => ((inp.size.clamp(4, 60) as usize * spx * 11 / 20).min(maxw), spx * 8 / 5),
                 };
-                if x + ww > xr && x > x0 {
+                if x + ww > xr && x > x0 && !nowrap {
                     finish(items, line_start, x, false);
                     x = x0;
                     y += line_h;
                     line_start = items.len();
+                    starts.push(line_start);
                 }
                 line_h = line_h.max(hh + u / 2);
-                items.push(WItem { x, y, w: ww, h: hh, text: String::new(), col: bcol, px: spx, mono: false, link: None, el: s.el, button: false, underline: false, img: None, input: s.input, fx: 0, bold: false, det: NO_EL });
+                items.push(WItem { x, y, w: ww, h: hh, text: String::new(), col: bcol, px: spx, mono: false, link: None, el: s.el, button: false, underline: false, img: None, input: s.input, fx: 0, bold: false, det: NO_EL, clip: None });
                 x += ww + u / 3;
                 continue;
             }
             let c = s.color.unwrap_or(if s.link.is_some() { link_col } else if s.code { code_col } else { bcol });
             let mut rest = s.text.as_str();
             while !rest.is_empty() {
-                let cut = if s.button { rest.len() } else { rest.find(' ').map(|i| i + 1).unwrap_or(rest.len()) };
+                let cut = if s.button {
+                    rest.len()
+                } else if keepnl && rest.starts_with('\n') {
+                    1
+                } else if keepnl {
+                    match rest.find([' ', '\n']) {
+                        Some(i) if rest.as_bytes()[i] == b'\n' => i,
+                        Some(i) => i + 1,
+                        None => rest.len(),
+                    }
+                } else {
+                    rest.find(' ').map(|i| i + 1).unwrap_or(rest.len())
+                };
                 let word = &rest[..cut];
                 rest = &rest[cut..];
+                if word == "\n" {
+                    finish(items, line_start, x, true);
+                    x = x0;
+                    y += line_h;
+                    line_start = items.len();
+                    starts.push(line_start);
+                    line_h = norm(base_px);
+                    continue;
+                }
                 let ww = if s.code { gfx::text_width_mono(word, spx) } else { gfx::text_width(word, spx) }
                     + if s.button || s.fx & crate::html::FX_KBD != 0 { u / 2 } else { 0 }
                     + if s.bold { 1 } else { 0 };
-                if x + ww > xr && x > x0 {
+                if x + ww > xr && x > x0 && !nowrap {
                     finish(items, line_start, x, false);
                     x = x0;
                     y += line_h;
                     line_start = items.len();
+                    starts.push(line_start);
                     line_h = norm(base_px);
                     if word == " " {
                         continue;
@@ -9283,11 +9476,18 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 // Tayanç çiziq (baseline) böyiça tekislaş: kiçik matn pastga suriladi
                 let off = base_px.saturating_sub(spx) * 4 / 5;
                 let yo = lead + if s.fx & crate::html::FX_SUP != 0 { y.saturating_sub(spx / 6) } else if s.fx & crate::html::FX_SUB != 0 { y + base_px * 2 / 5 } else { y + off };
-                items.push(WItem { x, y: yo, w: ww, h: spx, text: String::from(word), col: c, px: spx, mono: s.code, link: s.link.clone(), el: s.el, button: s.button, underline: s.link.is_some() && s.underline, img: None, input: s.input, fx: s.fx, bold: s.bold, det: if b.summary { b.det } else { NO_EL } });
+                items.push(WItem { x, y: yo, w: ww, h: spx, text: String::from(word), col: c, px: spx, mono: s.code, link: s.link.clone(), el: s.el, button: s.button, underline: s.link.is_some() && s.underline, img: None, input: s.input, fx: s.fx, bold: s.bold, det: if b.summary { b.det } else { NO_EL }, clip: None });
                 x += ww;
             }
         }
         finish(items, line_start, x, true);
+        // text-overflow: ellipsis — sig'magan qator '…' bilan tugaydi (oxiridan boşlab, indekslar siljimasin)
+        if b.ellip {
+            for k in (0..starts.len()).rev() {
+                let e = starts.get(k + 1).copied().unwrap_or(items.len());
+                ellipsize(items, starts[k], e, xr);
+            }
+        }
         y += line_h;
         if b.kind == HK::Quote {
             deco.push(dfill(if rtl { (pad + maxw).saturating_sub(u / 2 + 3) } else { pad + u / 2 }, y_block, 3, y - y_block, accent()));
@@ -9306,6 +9506,12 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
     }
     if let Some((i0, d0, dx, dy)) = pend.take() {
         shifts.push((i0, items.len(), d0, deco.len(), dx, dy));
+    }
+    if let Some(f) = fade.take() {
+        apply_fade(f, items, deco);
+    }
+    if let Some(g) = cgrp.take() {
+        clip_group(g, y, items, deco);
     }
     // position: relative — joylaşuvdan keyin siljitamiz (oqimdagi joyi saqlanadi)
     let mv = |v: usize, d: isize| (v as isize + d).max(0) as usize;
@@ -9402,8 +9608,20 @@ fn draw_browser(win: &Window) {
     gfx::set_clip(px0, py0, pw, ph);
     let (items, deco, total) = web_layout(web, pw.saturating_sub(u));
     let sc = web.scroll.min(total.saturating_sub(ph));
+    // overflow: hidden — element qirqiş sohasi (sahifa px) → ekran, sahifa sohasi bilan kesişma
+    let clip_on = |c: Option<(usize, usize, usize, usize)>| match c {
+        Some((cx, cy, cw, ch)) => {
+            let top = cy.max(sc);
+            let r = rect_isect((px0 + cx, py0 + top - sc, cw, (cy + ch).saturating_sub(top)), (px0, py0, pw, ph));
+            gfx::set_clip(r.0, r.1, r.2, r.3);
+        }
+        None => gfx::set_clip(px0, py0, pw, ph),
+    };
     for d in deco {
         if d.h > 0 && d.y + d.h >= sc && d.y < sc + ph {
+            if d.clip.is_some() {
+                clip_on(d.clip);
+            }
             let top = d.y.max(sc);
             let (dx, dy, dh) = (px0 + d.x, py0 + top - sc, d.y + d.h - top);
             // Burçak radiusi — TÖLIQ quti böyiça (aylantirilganda ham özgarmaydi); yuqoridan
@@ -9411,20 +9629,35 @@ fn draw_browser(win: &Window) {
             // qisman körinadigan yoy va çegara ham haqiqiy geometriya böyiça çiqadi.
             let r = d.radius.min(d.w / 2).min(d.h / 2);
             let skip = top - d.y;
+            // opacity: alfa < 255 — fon yarim şaffof (fill_round_rect_a), gradient/çegara sahifa foni bilan aralaşadi
+            let al = d.alpha as u32;
+            let fade = |c: Color| if al >= 255 { c } else { mix(page_bg, c, al + 1) };
             if let Some((sx, sy, blur, spread, c, a)) = d.shadow {
                 // soya — butun quti böyiça (yuqorisi aylantirilgan bölsa ham), qirqiş sohasi çeklaydi
                 let ey = py0 as i32 + d.y as i32 - sc as i32;
-                gfx::box_shadow(dx as i32, ey, d.w, d.h, r, sx, sy, blur, spread, c, a as u32);
+                gfx::box_shadow(dx as i32, ey, d.w, d.h, r, sx, sy, blur, spread, c, a as u32 * al / 255);
             }
+            let mut stops = [(0u32, 0u16); crate::css::GRAD_MAX];
             let fill = match (d.grad.as_ref().filter(|g| g.n >= 2), d.fill) {
-                (Some(g), _) => gfx::BoxFill::Grad(g.angle, &g.stops[..g.n as usize]),
+                (Some(g), _) => {
+                    let n = g.n as usize;
+                    for (o, st) in stops.iter_mut().zip(g.stops[..n].iter()) {
+                        *o = (fade(st.0), st.1);
+                    }
+                    gfx::BoxFill::Grad(g.angle, &stops[..n])
+                }
                 (None, Some(c)) => gfx::BoxFill::Solid(c),
                 (None, None) => gfx::BoxFill::None,
             };
             match fill {
+                gfx::BoxFill::Solid(c) if al < 255 && d.bw == 0 => fill_round_rect_a(dx, dy, d.w, dh, if skip == 0 { r } else { 0 }, c, al),
+                gfx::BoxFill::Solid(c) if al < 255 => gfx::round_box(dx, dy, d.w, d.h, skip, r, gfx::BoxFill::Solid(fade(c)), d.bw, fade(d.bc)),
                 // oddiy töğri burçakli quti — tez yöl
                 gfx::BoxFill::Solid(c) if r == 0 && d.bw == 0 => fill_rect(dx, dy, d.w, dh, c),
-                _ => gfx::round_box(dx, dy, d.w, d.h, skip, r, fill, d.bw, d.bc),
+                _ => gfx::round_box(dx, dy, d.w, d.h, skip, r, fill, d.bw, fade(d.bc)),
+            }
+            if d.clip.is_some() {
+                clip_on(None);
             }
         }
     }
@@ -9433,6 +9666,8 @@ fn draw_browser(win: &Window) {
             continue;
         }
         let (x, y) = (px0 + it.x, (py0 + it.y).saturating_sub(sc));
+        // overflow: hidden — qirqilgan element (keyingi elementdan oldin sahifa sohasi tiklanadi)
+        clip_on(it.clip);
         if let Some(i) = it.img.filter(|&i| i >= CANVAS_IMG) {
             if let Some(cv) = web.doc.canvases.get(i - CANVAS_IMG) {
                 if it.y >= sc {
@@ -9587,13 +9822,21 @@ fn draw_browser(win: &Window) {
             for k in 0..bands {
                 let by = y + k * bh;
                 let shift = (bands - 1 - k) * (px / 10).max(1) / 2;
-                gfx::set_clip(px0, by.max(py0), pw, bh);
+                let band = (px0, by.max(py0), pw, bh);
+                let r = match it.clip {
+                    Some((cx, cy, cw, ch)) => {
+                        let top = cy.max(sc);
+                        rect_isect(band, (px0 + cx, py0 + top - sc, cw, (cy + ch).saturating_sub(top)))
+                    }
+                    None => band,
+                };
+                gfx::set_clip(r.0, r.1, r.2, r.3);
                 draw_one(shift);
                 if it.bold {
                     draw_one(shift + 1);
                 }
             }
-            gfx::set_clip(px0, py0, pw, ph);
+            clip_on(it.clip);
         } else {
             draw_one(0);
             if it.bold {
@@ -9615,6 +9858,7 @@ fn draw_browser(win: &Window) {
             fill_rect(x, y + px * 11 / 20, tw, 1, col);
         }
     }
+    clip_on(None);
     // Oçiq <select> ro'yxati
     if let Some((x, y, w, rh, opts, cur)) = select_popup(web, &items, sc, px0, py0) {
         let h = rh * opts.len();

@@ -103,6 +103,14 @@ pub struct Block {
     pub hmin: f32,
     pub hfix: bool,
     pub lh: f32, // line-height kö'paytuvçisi (0 — normal)
+    // white-space (0 — normal, 1 — nowrap, 2 — pre, 3 — pre-wrap, 4 — pre-line)
+    pub ws: u8,
+    // overflow: hidden/auto — eng yaqin qirquvçi blok ajdod (seriya; 0 — yöq) va text-overflow: ellipsis
+    pub clip: u32,
+    pub ellip: bool,
+    // opacity (0..=255): blok matni uçun (barça ajdodlar kö'paytmasi) va konteyner (quti) foni uçun
+    pub op: u8,
+    pub bop: u8,
 }
 
 impl Block {
@@ -1093,6 +1101,14 @@ impl P {
             }
             None => (0, 0.0, false),
         };
+        // overflow: hidden — eng yaqin blok darajasidagi ajdod; text-overflow — uning yoki blokning özi
+        let (clip, ellip) = match self.stack.iter().rev().take_while(|o| o.tag != "body" && o.tag != "html").find(|o| o.sty.ovf != 0 && blockish(o)) {
+            Some(o) => (o.serial, o.sty.ellip || st.ellip),
+            None => (0, false),
+        };
+        let opq = |f: f32| (f.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+        let op = opq(self.stack.iter().map(|o| o.sty.opacity).product());
+        let bop = opq(self.stack.iter().filter(|o| o.serial <= bgk).map(|o| o.sty.opacity).product());
         Block {
             kind: k, spans: Vec::new(), bg, align: css::resolve_align(st.align, st.rtl), rtl: st.rtl, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: st.hidden, bgk,
             pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, grad: cs.grad, shadow: cs.shadow, maxw: cs.maxw, center: cs.center, mt: st.mt, mb: st.mb,
@@ -1101,6 +1117,7 @@ impl P {
             mark: String::new(), det, summary, iw: 0, ih: 0, rspan: fl.8,
             oser, okind, ow, oins, pk, aser, rdx, rdy, bdx, bdy, clear: st.clear,
             hser, hmin, hfix, lh: line_factor(&st),
+            ws: st.ws, clip, ellip, op, bop,
         }
     }
     /// Böş (void) element (img) uçun float / position: uslubi hisoblanib, blok oqimdan çiqariladi.
@@ -1187,7 +1204,8 @@ impl P {
             blocks.push(Block { kind: Kind::P, spans: Vec::new(), ..tmpl.clone() });
         }
         for b in blocks.iter_mut() {
-            top = top.max(b.flex).max(b.fcol).max(b.oser).max(b.pk).max(b.aser).max(b.bgk);
+            top = top.max(b.flex).max(b.fcol).max(b.oser).max(b.pk).max(b.aser).max(b.bgk).max(b.clip);
+            b.clip = if b.clip == 0 { tmpl.clip } else { sh(b.clip) };
             b.el = remap(b.el);
             for sp in b.spans.iter_mut() {
                 sp.el = remap(sp.el);
@@ -1238,11 +1256,27 @@ impl P {
             return;
         }
         let mut s = decode_entities(t);
-        if self.pre == 0 {
+        // white-space: pre / pre-wrap — bo'şliqlar va \n saqlanadi; pre-line — faqat \n
+        let ws = self.top().ws;
+        let keep = self.pre > 0 || ws == 2 || ws == 3;
+        if self.pre == 0 && keep {
+            s = s.replace("\r\n", "\n").replace('\t', "    ");
+            // bloklar orasidagi böş (faqat bo'şliq) matn — yangi qator yaratmaydi
+            if s.trim().is_empty() && self.cur.as_ref().is_none_or(|b| b.spans.is_empty()) {
+                return;
+            }
+        }
+        if !keep {
             let mut c = String::new();
             let mut sp = false;
             for ch in s.chars() {
-                if ch.is_whitespace() {
+                if ch == '\n' && ws == 4 {
+                    while c.ends_with(' ') {
+                        c.pop();
+                    }
+                    c.push('\n');
+                    sp = true;
+                } else if ch.is_whitespace() {
                     if !sp {
                         c.push(' ');
                     }
@@ -1291,7 +1325,7 @@ impl P {
         }
         let el = self.el();
         let b = self.cur.as_mut().unwrap();
-        if b.spans.is_empty() && self.pre == 0 {
+        if b.spans.is_empty() && !keep {
             s = String::from(s.trim_start());
         }
         if st.tt != 0 {
@@ -2340,6 +2374,7 @@ pub fn plain(text: &str) -> Doc {
         mark: String::new(), det: NO_EL, summary: false, iw: 0, ih: 0, rspan: 1,
         oser: 0, okind: 0, ow: None, oins: [None; 4], pk: 0, aser: 0, rdx: 0.0, rdy: 0.0, bdx: 0.0, bdy: 0.0, clear: 0,
         hser: 0, hmin: 0.0, hfix: false, lh: 0.0,
+        ws: 0, clip: 0, ellip: false, op: 255, bop: 255,
     });
     d
 }
@@ -2747,4 +2782,99 @@ pub fn self_test_box_height() -> Result<usize, &'static str> {
         return Err("line-height: 32px (16px shriftda) 2 ga teng emas");
     }
     Ok(n + 3)
+}
+
+/// T21: overflow: hidden, white-space: nowrap / pre, text-overflow: ellipsis va opacity.
+pub fn self_test_overflow() -> Result<usize, &'static str> {
+    let mut n = 0;
+    let sty = |decl: &str| {
+        let mut st = Sty::root();
+        for (k, v) in css::parse_decls(decl) {
+            css::apply(&mut st, &k, &v, 16.0);
+        }
+        st
+    };
+    // CSS tahlili
+    if (sty("opacity:0.5").opacity - 0.5).abs() > 0.001 || (sty("opacity:.5").opacity - 0.5).abs() > 0.001 || (sty("opacity:50%").opacity - 0.5).abs() > 0.001 {
+        return Err("opacity: 0.5 notöğri öqildi");
+    }
+    if sty("opacity:7").opacity != 1.0 || sty("opacity:-1").opacity != 0.0 || sty("opacity:abc").opacity != 1.0 || sty("opacity:0.3").inherit().opacity != 1.0 {
+        return Err("opacity: çegaralar / meros notöğri");
+    }
+    for (decl, o) in [("overflow:hidden", 1u8), ("overflow:auto", 1), ("overflow:scroll", 1), ("overflow-x:hidden", 1), ("overflow:visible", 0), ("overflow:visible hidden", 1), ("overflow:hidden;overflow:visible", 0)] {
+        if sty(decl).ovf != o {
+            return Err("overflow: qiymat notöğri öqildi");
+        }
+        n += 1;
+    }
+    for (decl, w) in [("white-space:nowrap", 1u8), ("white-space:pre", 2), ("white-space:pre-wrap", 3), ("white-space:pre-line", 4), ("white-space:nowrap;white-space:normal", 0), ("text-wrap:nowrap", 1)] {
+        if sty(decl).ws != w {
+            return Err("white-space: qiymat notöğri öqildi");
+        }
+        n += 1;
+    }
+    if !sty("text-overflow:ellipsis").ellip || sty("text-overflow:clip").ellip || sty("overflow:hidden").inherit().ovf != 0 || sty("white-space:pre").inherit().ws != 2 {
+        return Err("text-overflow / meros notöğri");
+    }
+    n += 3;
+    // Hujjat: opacity blokka (ajdodlar kö'paytmasi), pre bo'şliqlari va \n
+    let d = parse("<div style=\"opacity:.5\"><p>Y</p><p style=\"opacity:0.5\">Z</p></div><p>T</p>\
+        <div style=\"white-space:pre\">a  b\nc</div><div style=\"white-space:pre-line\">d   e\n  f</div>");
+    let blk = |t: &str| d.blocks.iter().find(|b| b.spans.iter().any(|s| s.text.contains(t)));
+    let (y, z, t) = (blk("Y").ok_or("opacity: Y yöq")?, blk("Z").ok_or("opacity: Z yöq")?, blk("T").ok_or("opacity: T yöq")?);
+    if !(126..=129).contains(&y.op) || !(62..=66).contains(&z.op) || t.op != 255 {
+        return Err("opacity: blok alfasi notöğri");
+    }
+    let pre: String = blk("a  b").ok_or("pre: ikki bo'şliq saqlanmadi")?.spans.iter().map(|s| s.text.as_str()).collect();
+    if !pre.contains("a  b\nc") {
+        return Err("pre: \\n saqlanmadi");
+    }
+    let pl: String = blk("d e").ok_or("pre-line: bo'şliqlar yig'ilmadi")?.spans.iter().map(|s| s.text.as_str()).collect();
+    if !pl.contains("d e\nf") && !pl.contains("d e\n f") {
+        return Err("pre-line: \\n saqlanmadi");
+    }
+    n += 3;
+    let (its, _) = crate::gui::layout_probe_rects(parse("<div style=\"white-space:pre\">a  b\nc</div>"), 640);
+    let ya = its.iter().find(|i| i.5.starts_with('a')).map(|i| i.2).ok_or("pre: a çizilmadi")?;
+    let yc = its.iter().find(|i| i.5.starts_with('c')).map(|i| i.2).ok_or("pre: c çizilmadi")?;
+    if yc <= ya || !its.iter().any(|i| i.5 == " ") {
+        return Err("pre: \\n yangi qator bermadi yoki bo'şliq yöqoldi");
+    }
+    n += 1;
+    // overflow: hidden — balandligi berilgan qutidan taşqariga çiqadigan element qolmaydi
+    let long = "<p>bir ikki uç</p><p>tört beş olti</p><p>yetti sakkiz</p><p>töqqiz ön</p><p>ön bir</p><p>ön ikki</p>";
+    let box_of = |deco: &[(usize, usize, usize, usize, Option<u32>, u8)], c: u32| deco.iter().find(|d| d.4 == Some(c)).map(|d| (d.0, d.1, d.2, d.3));
+    let (its, deco) = crate::gui::layout_probe_rects(parse(&alloc::format!("<p>A</p><div style=\"height:40px;overflow:hidden;background:#eeeeee\">{}</div><p>B</p>", long)), 640);
+    let bx = box_of(&deco, 0xeeeeee).ok_or("overflow: quti çizilmadi")?;
+    let inner: Vec<_> = its.iter().filter(|i| i.5.trim() != "A" && i.5.trim() != "B").collect();
+    if inner.is_empty() || inner.iter().any(|i| i.1 < bx.0 || i.2 < bx.1 || i.1 + i.3 > bx.0 + bx.2 || i.2 + i.4 > bx.1 + bx.3) {
+        return Err("overflow: hidden qutidan taşqarida element qoldi");
+    }
+    let (its2, deco2) = crate::gui::layout_probe_rects(parse(&alloc::format!("<p>A</p><div style=\"height:40px;background:#eeeeee\">{}</div><p>B</p>", long)), 640);
+    let bx2 = box_of(&deco2, 0xeeeeee).ok_or("overflow: visible quti yöq")?;
+    if !its2.iter().any(|i| i.2 + i.4 > bx2.1 + bx2.3) || inner.len() >= its2.len() - 2 {
+        return Err("overflow: visible sinovi — kontent taşmadi (sinov ma'nosiz)");
+    }
+    n += 2;
+    // nowrap — bitta qator; normal — bir neçta
+    let txt = "Zamin OS brauzeri endi white-space xossasini tushunadi va matnni bitta qatorda saqlaydi";
+    let rows = |st: &str| {
+        let (its, _) = crate::gui::layout_probe_rects(parse(&alloc::format!("<div style=\"width:180px;{}\">{}</div>", st, txt)), 640);
+        let mut ys: Vec<usize> = its.iter().map(|i| i.2).collect();
+        ys.sort_unstable();
+        ys.dedup();
+        ys.len()
+    };
+    if rows("white-space:nowrap") != 1 || rows("") < 2 {
+        return Err("nowrap: matn bitta qatorda emas");
+    }
+    n += 1;
+    // ellipsis — qator '…' bilan tugaydi va eni konteynerdan oşmaydi
+    let (its, deco) = crate::gui::layout_probe_rects(parse(&alloc::format!("<div style=\"width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#dddddd\">{}</div>", txt)), 640);
+    let bx = box_of(&deco, 0xdddddd).ok_or("ellipsis: quti yöq")?;
+    let last = its.iter().max_by_key(|i| i.1).ok_or("ellipsis: matn yöq")?;
+    if !last.5.ends_with('…') || its.iter().any(|i| i.1 + i.3 > bx.0 + bx.2) || its.iter().map(|i| i.2).max() != its.iter().map(|i| i.2).min() {
+        return Err("ellipsis: qator '…' bilan tugamadi yoki konteynerdan oşdi");
+    }
+    Ok(n + 2)
 }
