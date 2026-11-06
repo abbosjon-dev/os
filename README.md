@@ -932,7 +932,7 @@ API kalit / apiKeyHelper / boşqa BASE_URL → rad etiladi, 3 ketma-ket tekşiru
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.26**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.27**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -999,5 +999,9 @@ bosqiç (etap) yakunlanganda kötariladi.
   ro'yxat turlari, dl, details/summary, jadval atributlari, ichki SVG va data: URI, media/iframe
   kartochkalari, radio/label/range/color/progress/meter, #yakorlar, base/meta refresh,
   windows-1251/latin-1, ~250 nomli belgi; shrift 686 belgigacha kengaytirildi.
+- 0.0.27 — **Avtonom agent + veb maket**: obuna-only supervisor (fail-closed billing himoyasi);
+  agent 8 siklda bajardi — jadval rowspan, CSS position/float, @media va :hover, canvas 2D,
+  dir=rtl va text-align (justify), localStorage/cookie diskda (~/.zamin/), haqiqiy iframe
+  (srcdoc va bir xil manba), audio ijro (virtio-sound) va video poster; self-testlar 27 ta.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
