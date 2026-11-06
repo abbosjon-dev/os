@@ -1036,6 +1036,8 @@ pub struct Engine {
     pub url: String,
     /// await uçun: fetch ni joyida (sinxron) bajariş — GUI beradi
     pub fetch_hook: Option<fn(&str, &str, Option<&str>) -> Result<(u16, String, String), String>>,
+    /// <canvas> 2D kontekstlari: (canvas raqami, kontekst obyekti)
+    ctxs: Vec<(usize, Value)>,
 }
 
 const MAX_STEPS: u32 = 3_000_000;
@@ -1068,6 +1070,7 @@ impl Engine {
             prevented: false,
             url: String::new(),
             fetch_hook: None,
+            ctxs: Vec::new(),
         }
     }
 
@@ -1536,6 +1539,12 @@ impl Engine {
                 if let Some(v) = o.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()) {
                     return Ok(v);
                 }
+                if o.borrow().iter().any(|(k, _)| k == "__cv") {
+                    let m = cv_method(key);
+                    if m != "noop" || key == "save" || key == "restore" {
+                        return Ok(nat(m, obj));
+                    }
+                }
                 match key {
                     "hasOwnProperty" => nat("obj.has", obj),
                     _ => Value::Undef,
@@ -1690,6 +1699,11 @@ impl Engine {
                 "tagName" => Value::str(&doc.elems.get(*i).map(|e| e.tag.to_ascii_uppercase()).unwrap_or_default()),
                 "style" => Value::Style(*i),
                 "addEventListener" => nat("el.listen", obj),
+                "getContext" => nat("el.getContext", obj),
+                "width" | "height" if doc.canvases.iter().any(|c| c.el as usize == *i) => {
+                    let c = doc.canvases.iter().find(|c| c.el as usize == *i).unwrap();
+                    Value::Num(if key == "width" { c.w } else { c.h } as f64)
+                }
                 "value" => Value::str(&doc.input_of(*i).map(|k| doc.inputs[k].value.clone()).unwrap_or_default()),
                 "checked" => Value::Bool(doc.input_of(*i).is_some_and(|k| doc.inputs[k].checked)),
                 _ => Value::Undef,
@@ -1732,6 +1746,20 @@ impl Engine {
                     doc.restyle(*i);
                 }
                 "hidden" => doc.set_style(*i, "display", if v.truthy() { "none" } else { "block" }),
+                "width" | "height" => {
+                    let n = v.num();
+                    let n = if n.is_finite() && n >= 0.0 { n as usize } else { 0 };
+                    if let Some(k) = doc.canvases.iter().position(|c| c.el as usize == *i) {
+                        let (w, h) = if key == "width" { (n, doc.canvases[k].h) } else { (doc.canvases[k].w, n) };
+                        doc.canvases[k].resize(w, h);
+                        let (w, h) = (doc.canvases[k].w as u16, doc.canvases[k].h as u16);
+                        let src = format!("canvas:{}", k);
+                        for b in doc.blocks.iter_mut().filter(|b| b.src == src) {
+                            b.iw = w;
+                            b.ih = h;
+                        }
+                    }
+                }
                 "value" => {
                     if let Some(k) = doc.input_of(*i) {
                         doc.inputs[k].value = v.to_string();
@@ -2287,6 +2315,32 @@ impl Engine {
                 }
                 Value::Undef
             }
+            "el.getContext" => {
+                let Value::Elem(i) = this else { return Ok(Value::Null) };
+                let kind = arg(0).to_string();
+                if kind != "2d" {
+                    return Ok(Value::Null);
+                }
+                let Some(n) = doc.canvases.iter().position(|c| c.el as usize == i) else { return Ok(Value::Null) };
+                if let Some((_, v)) = self.ctxs.iter().find(|(k, _)| *k == n) {
+                    return Ok(v.clone());
+                }
+                let st = |v: &str| Value::str(v);
+                let ctx = Value::Obj(Rc::new(RefCell::new(alloc::vec![
+                    (String::from("__cv"), Value::Num(n as f64)),
+                    (String::from("canvas"), Value::Elem(i)),
+                    (String::from("fillStyle"), st("#000000")),
+                    (String::from("strokeStyle"), st("#000000")),
+                    (String::from("lineWidth"), Value::Num(1.0)),
+                    (String::from("font"), st("10px sans-serif")),
+                    (String::from("textAlign"), st("start")),
+                    (String::from("textBaseline"), st("alphabetic")),
+                    (String::from("globalAlpha"), Value::Num(1.0)),
+                ])));
+                self.ctxs.push((n, ctx.clone()));
+                ctx
+            }
+            n if n.starts_with("cv.") => return Ok(canvas_call(n, &this, &a, doc)),
             "el.setAttr" => {
                 if let Value::Elem(i) = this {
                     match arg(0).to_string().as_str() {
@@ -3043,6 +3097,136 @@ fn date_call(n: &str, this: &Value) -> Value {
 }
 
 /// O'z-o'zini sinaş (yuklanişda): asosiy til imkoniyatlari.
+fn cv_method(k: &str) -> &'static str {
+    match k {
+        "fillRect" => "cv.fillRect",
+        "strokeRect" => "cv.strokeRect",
+        "clearRect" => "cv.clearRect",
+        "fillText" => "cv.fillText",
+        "strokeText" => "cv.strokeText",
+        "measureText" => "cv.measureText",
+        "beginPath" => "cv.beginPath",
+        "moveTo" => "cv.moveTo",
+        "lineTo" => "cv.lineTo",
+        "closePath" => "cv.closePath",
+        "rect" => "cv.rect",
+        "arc" => "cv.arc",
+        "fill" => "cv.fill",
+        "stroke" => "cv.stroke",
+        _ => "noop", // save/restore/setTransform … — hozirça e'tiborsiz
+    }
+}
+
+/// CanvasRenderingContext2D usullari. `this` — kontekst obyekti (holat: fillStyle, …).
+fn canvas_call(name: &str, this: &Value, a: &[Value], doc: &mut Doc) -> Value {
+    let Value::Obj(o) = this else { return Value::Undef };
+    let prop = |k: &str| o.borrow().iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone()).unwrap_or(Value::Undef);
+    let n = prop("__cv").num();
+    let Some(cv) = (n >= 0.0).then(|| n as usize).and_then(|n| doc.canvases.get_mut(n)) else { return Value::Undef };
+    let f = |k: usize| a.get(k).map(|v| v.num() as f32).unwrap_or(f32::NAN);
+    let ga = {
+        let g = prop("globalAlpha").num();
+        if g.is_finite() { g.clamp(0.0, 1.0) as f32 } else { 1.0 }
+    };
+    let style = |k: &str| -> Option<(u32, u32)> {
+        crate::canvas::parse_style(&prop(k).to_string()).map(|(c, al)| (c, (al as f32 * ga + 0.5) as u32))
+    };
+    let lw = {
+        let w = prop("lineWidth").num() as f32;
+        if w > 0.0 && w.is_finite() { w.min(500.0) } else { 1.0 }
+    };
+    match name {
+        "cv.fillRect" => {
+            if let Some((c, al)) = style("fillStyle") {
+                cv.fill_rect(f(0), f(1), f(2), f(3), c, al);
+            }
+        }
+        "cv.strokeRect" => {
+            if let Some((c, al)) = style("strokeStyle") {
+                cv.stroke_rect(f(0), f(1), f(2), f(3), lw, c, al);
+            }
+        }
+        "cv.clearRect" => cv.clear_rect(f(0), f(1), f(2), f(3)),
+        "cv.fillText" | "cv.strokeText" => {
+            let k = if name == "cv.fillText" { "fillStyle" } else { "strokeStyle" };
+            if let Some((c, al)) = style(k) {
+                let txt = a.first().map(|v| v.to_string()).unwrap_or_default();
+                let align = match prop("textAlign").to_string().as_str() {
+                    "center" => 1,
+                    "right" | "end" => 2,
+                    _ => 0,
+                };
+                let base = match prop("textBaseline").to_string().as_str() {
+                    "top" | "hanging" => 1,
+                    "middle" => 2,
+                    "bottom" | "ideographic" => 3,
+                    _ => 0,
+                };
+                cv.fill_text(&txt, f(1), f(2), crate::canvas::font_px(&prop("font").to_string()), align, base, c, al);
+            }
+        }
+        "cv.measureText" => {
+            let txt = a.first().map(|v| v.to_string()).unwrap_or_default();
+            let px = crate::canvas::font_px(&prop("font").to_string()).clamp(4, 200);
+            return Value::Obj(Rc::new(RefCell::new(alloc::vec![(String::from("width"), Value::Num(crate::gfx::text_width(&txt, px) as f64))])));
+        }
+        "cv.beginPath" => cv.begin_path(),
+        "cv.moveTo" => cv.move_to(f(0), f(1)),
+        "cv.lineTo" => cv.line_to(f(0), f(1)),
+        "cv.closePath" => cv.close_path(),
+        "cv.rect" => cv.rect(f(0), f(1), f(2), f(3)),
+        "cv.arc" => cv.arc(f(0), f(1), f(2), f(3), f(4), a.get(5).is_some_and(|v| v.truthy())),
+        "cv.fill" => {
+            if let Some((c, al)) = style("fillStyle") {
+                cv.fill_path(c, al);
+            }
+        }
+        "cv.stroke" => {
+            if let Some((c, al)) = style("strokeStyle") {
+                cv.stroke_path(lw, c, al);
+            }
+        }
+        _ => {}
+    }
+    Value::Undef
+}
+
+/// <canvas> 2D: JS dan çizib, buferdagi piksellarni tekşiradi.
+pub fn self_test_canvas() -> Result<usize, String> {
+    let mut doc = crate::html::parse("<canvas id=c width=40 height=30></canvas>");
+    let mut e = Engine::new();
+    e.run(
+        "const c = document.getElementById('c'); const x = c.getContext('2d');\
+         x.fillStyle = '#ff0000'; x.fillRect(0, 0, 10, 10);\
+         x.strokeStyle = 'rgb(0, 0, 255)'; x.lineWidth = 2; x.strokeRect(20, 2, 10, 10);\
+         x.beginPath(); x.moveTo(0, 20); x.lineTo(39, 20); x.strokeStyle = '#00ff00'; x.stroke();\
+         x.fillStyle = 'rgba(0,0,0,0.5)'; x.beginPath(); x.arc(30, 25, 4, 0, Math.PI * 2); x.fill();\
+         x.fillStyle = '#000'; x.font = '12px sans-serif'; x.fillText('Hi', 2, 28);\
+         window.__w = c.width + x.measureText('Hi').width;",
+        &mut doc,
+        0,
+    )?;
+    let cv = doc.canvases.first().ok_or("canvas buferi yaratilmadi")?;
+    let at = |x: usize, y: usize| cv.px[y * cv.w + x];
+    let mut n = 0;
+    let mut chk = |ok: bool, what: &str| -> Result<(), String> {
+        if !ok {
+            return Err(format!("canvas: {}", what));
+        }
+        n += 1;
+        Ok(())
+    };
+    chk(cv.w == 40 && cv.h == 30, "ölçam")?;
+    chk(at(5, 5) == 0xffff0000, "fillRect")?;
+    chk(at(15, 5) == 0, "şaffof fon")?;
+    chk(at(20, 7) & 0xffffff == 0x0000ff && at(25, 7) == 0, "strokeRect")?;
+    chk(at(10, 20) & 0x00ff00 == 0x00ff00 && at(10, 20) >> 24 > 100, "lineTo/stroke")?;
+    let m = at(30, 25) >> 24;
+    chk((110..=145).contains(&m), "arc/fill (rgba alfa)")?;
+    chk((0..cv.w * cv.h).any(|k| k / cv.w >= 18 && k % cv.w < 16 && cv.px[k] >> 24 > 200 && cv.px[k] & 0xffffff == 0), "fillText")?;
+    Ok(n)
+}
+
 pub fn self_test() -> Result<usize, String> {
     let cases: [(&str, &str); 19] = [
         ("async function f(x) { return x * 2; } let r = 0; f(21).then(v => { r = v; }); r", "0"),

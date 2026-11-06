@@ -43,6 +43,7 @@ struct Fb {
     ptr: usize,
     w: usize,
     h: usize,
+    noclip: bool, // xotiradagi bufer (canvas matni): ekran qirqişi qöllanmaydi
 }
 
 static FB: SpinLock<Option<Fb>> = SpinLock::new(None);
@@ -82,7 +83,7 @@ fn in_clip(x: usize, y: usize) -> bool {
 pub fn init(width: u32, height: u32) -> bool {
     match gpu::init(width, height) {
         Some((w, h, fb)) => {
-            *FB.lock() = Some(Fb { ptr: fb, w: w as usize, h: h as usize });
+            *FB.lock() = Some(Fb { ptr: fb, w: w as usize, h: h as usize, noclip: false });
             reset_clip();
             true
         }
@@ -100,7 +101,7 @@ pub fn size() -> (usize, usize) {
 
 #[inline]
 fn put(f: &Fb, x: usize, y: usize, c: Color) {
-    if x < f.w && y < f.h && in_clip(x, y) {
+    if x < f.w && y < f.h && (f.noclip || in_clip(x, y)) {
         unsafe { core::ptr::write_volatile((f.ptr + (y * f.w + x) * 4) as *mut u32, c) };
     }
 }
@@ -117,7 +118,7 @@ fn get(f: &Fb, x: usize, y: usize) -> Color {
 /// Alfa (0..255) bilan aralaştirib qöyadi.
 #[inline]
 fn blend(f: &Fb, x: usize, y: usize, c: Color, a: u32) {
-    if a == 0 || x >= f.w || y >= f.h || !in_clip(x, y) {
+    if a == 0 || x >= f.w || y >= f.h || !(f.noclip || in_clip(x, y)) {
         return;
     }
     if a >= 255 {
@@ -514,6 +515,46 @@ pub fn blit_scaled(bx: usize, by: usize, bw: usize, bh: usize, iw: usize, ih: us
             }
         }
     }
+}
+
+/// Canvas buferini (0xAARRGGBB, alfa bilan) qutiga masshtablab çizadi.
+/// `skip` — yuqoridan yaşiringan manba qatorlari (qisman körinişda).
+pub fn blit_alpha(bx: usize, by: usize, bw: usize, bh: usize, iw: usize, ih: usize, px: &[u32]) {
+    if iw == 0 || ih == 0 || bw == 0 || bh == 0 {
+        return;
+    }
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return };
+    for ty in 0..bh {
+        let row = (ty * ih / bh) * iw;
+        for tx in 0..bw {
+            if let Some(&c) = px.get(row + tx * iw / bw) {
+                blend(f, bx + tx, by + ty, c & 0xffffff, c >> 24);
+            }
+        }
+    }
+}
+
+/// Matnning qoplama niqobi: (kenglik, balandlik, ascent, 0..255 qiymatlar).
+pub fn text_mask(s: &str, px: usize) -> (usize, usize, usize, alloc::vec::Vec<u8>) {
+    let fc = face(Font::Ui);
+    let w = text_width(s, px) + px / 2 + 2;
+    let h = line_height(px, Font::Ui).max(px) + px / 4 + 2;
+    if w * h > 4 << 20 {
+        return (0, 0, 0, alloc::vec::Vec::new());
+    }
+    let mut buf = alloc::vec![0u32; w * h];
+    let f = Fb { ptr: buf.as_mut_ptr() as usize, w, h, noclip: true };
+    let mut cx = 0;
+    for ch in s.chars() {
+        if ch == '\n' {
+            continue;
+        }
+        let gl = &fc.glyphs[glyph_index(ch)];
+        cx += draw_glyph(&f, cx, 0, gl, fc, px, OQ);
+    }
+    let asc = fc.ascent as usize * px / fc.base as usize;
+    (w, h, asc, buf.iter().map(|&c| (c >> 8 & 0xff) as u8).collect())
 }
 
 // --- Matn (silliq, masshtablanadigan) ---

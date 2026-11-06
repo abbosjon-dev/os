@@ -20,6 +20,7 @@ mod gfx;
 mod gfx_font;
 mod gic;
 mod gui;
+mod canvas;
 mod css;
 mod html;
 mod i18n;
@@ -501,6 +502,10 @@ fn self_tests() {
     match js::self_test() {
         Ok(n) => println!("  [ok] JavaScript: {} ta sinov (funksiyalar, yopilmalar, massivlar, shablonlar); çaqiruv ~{} bayt stek", n, js::stack_per_call()),
         Err(e) => panic!("JavaScript interpretatori yiqildi: {}", e),
+    }
+    match js::self_test_canvas() {
+        Ok(n) => println!("  [ok] <canvas> 2D: fillRect, strokeRect, yöl (lineTo/arc), fillText ({} sinov)", n),
+        Err(e) => panic!("<canvas> 2D tekşiruvi yiqildi: {}", e),
     }
     match html::self_test_rowspan() {
         Ok(n) => println!("  [ok] HTML jadval: rowspan ({} katak, joy egallovçilar bilan)", n),

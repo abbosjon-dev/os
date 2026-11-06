@@ -121,7 +121,7 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   böş joy egallovçi bilan saqlanadi; yuklaniş self-testida tekşiriladi.
 - **Media**: `img width/height`, `srcset`, `picture/source`, lazy `data-src`, **`data:` URI**
   (base64 va URL-kodlangan), **ichki `<svg>`** (SVG dekoderimiz bilan), `video/audio/iframe/embed/object`
-  kartochkalari (havola orqali yuklab olinadi), `canvas` joyi.
+  kartochkalari (havola orqali yuklab olinadi), **`<canvas>` 2D** (pastda).
 - **Formalar**: `radio` guruhlari, `label for` va o'rab turgan `label`, `email/number/date/url/tel/search`,
   `color`, `range`, `file`, `progress`, `meter`, `optgroup`.
 - **Hujjat**: `<base href>`, `<meta http-equiv=refresh>`, kodlashlar: UTF-8, **windows-1251**,
@@ -156,6 +156,14 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   almashsa, sahifa qayta tahlil qilinadi (skriptlar qayta bajariladi, aylantirish saqlanadi).
   `:hover` — sichqoncha ostidagi element va uning ajdodlari uchun (`a:hover`,
   `.karta:hover p`): rang, fon, qalinlik, o'lcham, `text-decoration` darhol qayta qo'llanadi.
+- **`<canvas>` 2D** — `getContext('2d')` har canvas uchun o'z piksel buferini (ARGB, shaffof fon)
+  beradi: `fillRect`, `strokeRect`, `clearRect`, yo'l — `beginPath`/`moveTo`/`lineTo`/`closePath`/
+  `rect`/`arc` + `fill` (nonzero, silliqlangan) va `stroke` (`lineWidth`), `fillText`/`strokeText`
+  (`font` px, `textAlign`, `textBaseline`), `measureText`; `fillStyle`/`strokeStyle` (nomli, `#hex`,
+  `rgb/rgba` alfa bilan), `globalAlpha`; `canvas.width/height` o'zgarsa bufer qayta yaratiladi.
+  Sinov: `zamin://html` (Canvas 2D bo'limi), yuklanish self-testida piksellar tekshiriladi.
+
+  ![Canvas 2D](docs/web-canvas.png)
 - **JS** — `async function`, `async () =>`, `await` (fetch va taymerlarni kutadi),
   `localStorage`/`sessionStorage`, `document.cookie`.
 - **DOM** — har bir element ro'yxatda (ota-bolasi bilan): `innerHTML = "<b>…</b>"` (HTML

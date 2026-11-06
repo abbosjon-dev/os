@@ -25,7 +25,9 @@
     {
       "id": "T4",
       "title": "<canvas> 2D: fillRect, strokeRect, fillText, beginPath/lineTo/stroke",
-      "detail": "js.rs da getContext('2d') obyekti; gui.rs da canvas bufferini chizish."
+      "detail": "js.rs da getContext('2d') obyekti; gui.rs da canvas bufferini chizish.",
+      "status": "done",
+      "done_at": "2026-11-06 10:54:56"
     },
     {
       "id": "T5",

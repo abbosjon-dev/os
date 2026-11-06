@@ -6419,6 +6419,9 @@ struct Web {
     hover_rules: bool,            // sahifada :hover qoidalari bormi
 }
 
+/// WItem.img: shu qiymatdan boşlab — <canvas> buferi (doc.canvases[i - CANVAS_IMG]).
+const CANVAS_IMG: usize = 1 << 30;
+
 struct WItem {
     x: usize,
     y: usize,
@@ -6534,7 +6537,18 @@ fn builtin_page(url: &str) -> Option<&'static str> {
 <video src="/videolar/zamin.avi" controls>Brauzer videoni qöllamaydi</video>
 <audio controls><source src="/musiqa/kuy.mp3" type="audio/mpeg">audio yöq</audio>
 <iframe src="https://example.com/"></iframe>
-<canvas width="200" height="60"></canvas>
+<h2 id="canvas">Canvas 2D</h2>
+<canvas id="kanvas" width="320" height="120">canvas yöq</canvas>
+<script>
+const kv = document.getElementById('kanvas');
+const g = kv.getContext('2d');
+g.fillStyle = '#13213a'; g.fillRect(0, 0, 320, 120);
+g.strokeStyle = '#64d2ff'; g.lineWidth = 3; g.strokeRect(6, 6, 308, 108);
+g.fillStyle = '#ff9500'; g.fillRect(20, 60, 30, 40); g.fillRect(60, 40, 30, 60); g.fillRect(100, 25, 30, 75);
+g.beginPath(); g.moveTo(150, 95); g.lineTo(190, 50); g.lineTo(225, 70); g.lineTo(270, 25); g.strokeStyle = '#34c759'; g.lineWidth = 4; g.stroke();
+g.fillStyle = 'rgba(255, 214, 38, 0.8)'; g.beginPath(); g.arc(285, 85, 18, 0, Math.PI * 2); g.fill();
+g.fillStyle = '#ffffff'; g.font = '16px sans-serif'; g.fillText('Zamin canvas', 150, 112);
+</script>
 <hr><address>Muallif: Abbosjon Dev · zamin.app</address>
 <p><a href="#bosh">↑ Yuqoriga</a></p>
 </body></html>"##,
@@ -7794,8 +7808,27 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
             continue;
         }
         if b.kind == HK::Img {
-            let found = web.images.iter().position(|(s, _)| *s == b.src);
             let (aw, ah) = (b.iw as f32, b.ih as f32);
+            // <canvas>: öz piksel buferi (JS çizadi), şaffof joylarda sahifa foni
+            if let Some(n) = b.src.strip_prefix("canvas:").and_then(|n| n.parse::<usize>().ok()).filter(|&n| n < doc.canvases.len()) {
+                let cv = &doc.canvases[n];
+                let nw = lpx(cv.w as f32).max(1);
+                let w = nw.min(maxw).max(1);
+                let h = (lpx(cv.h as f32) * w / nw).max(1);
+                let x = pad + match b.align {
+                    1 => (maxw - w) / 2,
+                    2 => maxw - w,
+                    _ => 0,
+                };
+                items.push(WItem {
+                    x, y, w, h, text: String::new(), col: text_col, px: small(), mono: false, link: b.spans.first().and_then(|s| s.link.clone()),
+                    el: b.el, button: false, underline: false, img: Some(CANVAS_IMG + n), input: NO_EL, fx: 0, bold: false, det: NO_EL,
+                });
+                y += h + if last_in_box { 0 } else { gap_bot };
+                close_box(&mut y, deco, &mut open_box);
+                continue;
+            }
+            let found = web.images.iter().position(|(s, _)| *s == b.src);
             let (w, h) = match found {
                 Some(i) => {
                     let im = &web.images[i].1;
@@ -8083,6 +8116,21 @@ fn draw_browser(win: &Window) {
             continue;
         }
         let (x, y) = (px0 + it.x, (py0 + it.y).saturating_sub(sc));
+        if let Some(i) = it.img.filter(|&i| i >= CANVAS_IMG) {
+            if let Some(cv) = web.doc.canvases.get(i - CANVAS_IMG) {
+                if it.y >= sc {
+                    gfx::blit_alpha(x, y, it.w, it.h, cv.w, cv.h, &cv.px);
+                } else {
+                    let skip = sc - it.y;
+                    let sy = (skip * cv.h / it.h.max(1)).min(cv.h.saturating_sub(1));
+                    let dh = it.h.saturating_sub(skip);
+                    if dh > 0 {
+                        gfx::blit_alpha(x, py0, it.w, dh, cv.w, cv.h - sy, &cv.px[sy * cv.w..]);
+                    }
+                }
+            }
+            continue;
+        }
         if let Some(i) = it.img {
             let im = &web.images[i].1;
             if it.y >= sc {

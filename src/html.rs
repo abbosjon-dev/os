@@ -169,13 +169,14 @@ pub struct Doc {
     pub media_on: Vec<bool>,       // @media qoidalarining tahlil paytidagi holati
     pub src: String,               // @media bölsa: qayta tahlil uçun HTML manba
     pub extra_css: String,         // … va tashqi CSS
+    pub canvases: Vec<crate::canvas::Canvas>, // <canvas> buferlari (src = "canvas:N")
 }
 
 pub const NO_EL: u16 = u16::MAX;
 
 impl Doc {
     pub fn empty() -> Doc {
-        Doc { title: String::new(), blocks: Vec::new(), elems: Vec::new(), scripts: Vec::new(), bg: None, color: None, inputs: Vec::new(), forms: Vec::new(), rules: Vec::new(), svgs: Vec::new(), details: Vec::new(), base: None, refresh: None, hovered: Vec::new(), media_on: Vec::new(), src: String::new(), extra_css: String::new() }
+        Doc { title: String::new(), blocks: Vec::new(), elems: Vec::new(), scripts: Vec::new(), bg: None, color: None, inputs: Vec::new(), forms: Vec::new(), rules: Vec::new(), svgs: Vec::new(), details: Vec::new(), base: None, refresh: None, hovered: Vec::new(), media_on: Vec::new(), src: String::new(), extra_css: String::new(), canvases: Vec::new() }
     }
     /// <details> ni oçadi / yopadi.
     pub fn toggle_details(&mut self, d: u16) {
@@ -260,6 +261,7 @@ impl Doc {
                             b.color = tmpl.color;
                         }
                     }
+                    self.adopt_canvases(&mut d);
                     self.elems.extend(d.elems);
                     d.blocks
                 } else {
@@ -345,6 +347,22 @@ impl Doc {
             }
         }
     }
+    /// Fragment (innerHTML / append) dagi <canvas> buferlarini asosiy hujjatga
+    /// köçiradi va bloklardagi "canvas:N" raqamlarini yangilaydi.
+    fn adopt_canvases(&mut self, d: &mut Doc) {
+        for b in d.blocks.iter_mut() {
+            let Some(n) = b.src.strip_prefix("canvas:").and_then(|n| n.parse::<usize>().ok()) else { continue };
+            match d.canvases.get_mut(n) {
+                Some(cv) if self.canvases.len() < 16 => {
+                    let mut c = core::mem::replace(cv, crate::canvas::Canvas::new(NO_EL, 1, 1));
+                    c.el = b.el;
+                    b.src = alloc::format!("canvas:{}", self.canvases.len());
+                    self.canvases.push(c);
+                }
+                _ => b.src.clear(),
+            }
+        }
+    }
     /// JS: appendChild / insertAdjacentHTML — HTML ni element oxiriga qöşadi.
     pub fn append_into(&mut self, el: usize, src: &str) {
         let e = el as u16;
@@ -380,6 +398,7 @@ impl Doc {
                 b.copy_pos(t);
             }
         }
+        self.adopt_canvases(&mut d);
         self.elems.extend(d.elems);
         let at = last.map(|k| k + 1).unwrap_or(self.blocks.len());
         self.blocks.splice(at..at, d.blocks);
@@ -1785,6 +1804,11 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool) -> Doc {
                     blk.iw = attr(t, "width").and_then(|v| v.trim().parse().ok()).unwrap_or(300);
                     blk.ih = attr(t, "height").and_then(|v| v.trim().parse().ok()).unwrap_or(150);
                     blk.spans.push(Span { text: String::from("canvas"), link: None, bold: false, code: false, br: false, color: None, size: 14.0, el: p.el(), button: false, underline: false, input: NO_EL, fx: 0 });
+                    if p.doc.canvases.len() < 16 {
+                        blk.src = alloc::format!("canvas:{}", p.doc.canvases.len());
+                        let cv = crate::canvas::Canvas::new(p.el(), blk.iw as usize, blk.ih as usize);
+                        p.doc.canvases.push(cv);
+                    }
                     p.doc.blocks.push(blk);
                     if let Some(o) = p.stack.last_mut() {
                         o.sty.hidden = true;
