@@ -141,7 +141,9 @@
       "id": "T18",
       "title": "Terminal: sichqoncha bilan matn tanlash, nusxa olish va joylash",
       "detail": "Oldingi vazifadagi umumiy buferdan foydalanadi. Fayllar: src/gui.rs (grafik terminal oynasi: sichqoncha bosish/sudrash/qo'yib yuborish, chizish), src/termbuf.rs (vizual qator/ustun → manba qator va bayt ofseti xaritasi; wrap_lines ustiga quriladi). Tanlov qoidalari: sudrab tanlash scrollback ichida ham ishlaydi; o'ralgan qatorlar nusxada bitta qator bo'lib qoladi; ikki marta bosish so'zni tanlaydi. Alt+C (yoki o'ng tugma menyusi → Nusxa olish) tanlovni buferga oladi. Alt+V (yoki menyu → Joylash) bufer matnini quvurga xuddi terilgandek yuboradi, '\\n' esa '\\r' ga aylanadi. Yangi chiqish kelsa yoki tugma bosilsa, tanlov tozalanadi. Qabul mezoni: termbuf::self_test() kengaytiriladi: 80 ustunda o'ralgan 250 belgilik qatorda (vizual 1:10)–(3:5) tanlov to'g'ri manba matnini qaytaradi va UTF-8 belgi o'rtasidan kesilmaydi; so'z chegarasini aniqlash ham tekshiriladi. Skrinshot docs/apps/terminal-select.png olinadi; README dagi 'Zamin terminali' bo'limiga band qo'shiladi; verify.sh full o'tadi.",
-      "batch": 3
+      "batch": 3,
+      "status": "done",
+      "done_at": "2026-11-06 16:56:04"
     },
     {
       "id": "T19",

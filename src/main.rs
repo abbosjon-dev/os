@@ -552,7 +552,7 @@ fn self_tests() {
         Err(e) => panic!("iframe tekşiruvi yiqildi: {}", e),
     }
     match termbuf::self_test() {
-        Ok(n) => println!("  [ok] terminal scrollback: {} qator çegarasi, söz/belgi böyiça öraş, UTF-8 ({} sinov)", termbuf::MAX_LINES, n),
+        Ok(n) => println!("  [ok] terminal scrollback: {} qator çegarasi, söz/belgi böyiça öraş, UTF-8, tanlov va söz çegarasi ({} sinov)", termbuf::MAX_LINES, n),
         Err(e) => panic!("terminal scrollback tekşiruvi yiqildi: {}", e),
     }
     match edit::self_test() {

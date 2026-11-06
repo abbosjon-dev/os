@@ -776,6 +776,26 @@ abbosjon@zamin:~> çiqiş                                    # çiqiş (qayta ki
 
 ![Terminal: yuqoriga aylantirilgan tarix](docs/apps/terminal-scroll.png)
 
+### Siçqon bilan matn tanlaş, nusxa olish va joylaş
+
+- **Sudrab tanlaş** — terminal matni ustida siçqonni bosib sudrang; tanlov kök fon bilan
+  belgilanadi. Matn sohasining yuqori/pastki çetidan taşqariga sudralsa tarix aylanadi —
+  tanlov scrollback içida ham işlaydi.
+- **Ikki marta bosiş** — sözni tanlaydi (harf, raqam va `_ - . / ~ ʼ`: masalan, fayl yöli
+  bitta söz).
+- **Alt+C** (yoki öng tugma menyusi → *Nusxa olish*) tanlovni tizim almaşuv buferiga oladi.
+  Oyna eniga qarab öralgan qatorlar nusxada **bitta qator** bölib qoladi.
+- **Alt+V** (yoki menyu → *Joylaş*) bufer matnini xuddi terilgandek yuboradi:
+  `\n` (va `\r\n`) `\r` ga — yaʼni Enter ga aylanadi, köp qatorli matn buyruqlar ketma-ketligi
+  bölib bajariladi.
+- Yangi çiqiş kelsa yoki tugma bosilsa, tanlov tozalanadi.
+- Sof funksiyalar `termbuf::vis_to_src` (vizual qator/ustun → manba qator va bayt ofseti),
+  `range_text`, `row_span`, `word_at` — yuklanişda tekşiriladi: 80 ustunda öralgan
+  250 belgilik qatorda (vizual 1:10)–(3:5) tanlov aniq manba matnini qaytaradi va UTF-8
+  belgi örtasidan kesilmaydi; söz çegaralari ham sinaladi.
+
+![Terminal: öralgan qatorda tanlov va kontekst menyusi](docs/apps/terminal-select.png)
+
 ## Oqimlar
 
 Bitta jarayon içida bir neçta oqim parallel (turli yadrolarda) işlaydi. Ular jarayonning

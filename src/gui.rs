@@ -173,6 +173,7 @@ struct Window {
     ccol: usize,        // Muharrir: kursor ustuni (belgilarda)
     scroll: usize,      // Muharrir: birinçi körinadigan qator
     term_scroll: usize, // Terminal: pastdan necha vizual qator yuqoriga aylantirilgan (0 — eng past)
+    tsel: Option<(crate::termbuf::Pos, crate::termbuf::Pos)>, // Terminal: tanlov (langar, uç) — manba örinlarida
     dirty: bool,        // Muharrir: saqlanmagan özgarişlar
     tiles: Vec<u8>,     // Boşqotirma: 16 ta katak (0 — böş)
     web: Option<Box<Web>>, // Brauzer holati (faol tab)
@@ -353,6 +354,7 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         ccol: 0,
         scroll: 0,
         term_scroll: 0,
+        tsel: None,
         dirty: false,
         tiles: Vec::new(),
         web: None,
@@ -823,6 +825,7 @@ fn feed(win: &mut Window, bytes: &[u8]) {
     // yangi çiqiş — pastga qaytamiz; tarix çegarasi (eskilar bitta drain bilan kesiladi)
     if !bytes.is_empty() {
         win.term_scroll = 0;
+        win.tsel = None; // yangi çiqiş — tanlov tozalanadi
     }
     crate::termbuf::trim(&mut win.lines);
 }
@@ -862,6 +865,130 @@ fn term_scroll_by(win: &mut Window, d: isize) {
     let total = term_text(win).1.len();
     let max = total.saturating_sub(vis) as isize;
     win.term_scroll = (win.term_scroll.min(max as usize) as isize + d).clamp(0, max) as usize;
+}
+
+/// Terminal matnini (tarix + joriy qator) va vizual qatorlarni `f` ga beradi.
+fn term_with<R>(win: &Window, f: impl FnOnce(&[&str], &[(usize, usize, usize)]) -> R) -> R {
+    let (full, rows) = term_text(win);
+    let mut src: Vec<&str> = win.lines.iter().map(|l| l.as_str()).collect();
+    src.push(&full);
+    f(&src, &rows)
+}
+
+/// Terminal matn sohasining yuqori çetı va vizual qator balandligi.
+fn term_text_top(win: &Window) -> (usize, usize) {
+    let px = small();
+    (win.y + title_h() + body() * 3 / 4, gfx::line_height(px, Font::Mono).max(px + 3))
+}
+
+/// Ekran nuqtasi → manba örni (matn sohasidan taşqarisi çekka qatorga keltiriladi).
+fn term_pos_at(win: &Window, cx: usize, cy: usize) -> crate::termbuf::Pos {
+    let (_, vis) = term_geom(win);
+    let (ty0, lh) = term_text_top(win);
+    let adv = gfx::mono_advance(small()).max(1);
+    let tx = win.x + body() * 3 / 4;
+    term_with(win, |src, rows| {
+        let total = rows.len();
+        let sc = win.term_scroll.min(total.saturating_sub(vis));
+        let first = total - vis.min(total) - sc;
+        let k = if cy < ty0 { 0 } else { ((cy - ty0) / lh).min(vis.saturating_sub(1)) };
+        let col = (cx.saturating_sub(tx) + adv / 2) / adv;
+        crate::termbuf::vis_to_src(src, rows, first + k, col)
+    })
+}
+
+/// Terminalda siçqon sudralmoqda (matn tanlaş).
+static TERM_DRAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Terminal matn sohasini bosiş: tanlaş boşlanadi; ikki marta bosiş — sözni tanlaydi.
+fn term_click(w: &mut Window, cx: usize, cy: usize) -> bool {
+    let (ty0, _) = term_text_top(w);
+    if cy < ty0 || cy >= w.y + w.h || cx < w.x || cx >= w.x + w.w {
+        return false;
+    }
+    let p = term_pos_at(w, cx, cy);
+    let now = crate::timer::uptime_ms();
+    let key = p.0.wrapping_mul(1 << 20) ^ p.1;
+    let near = w.lclick.1 == key || w.tsel.is_some_and(|(a, b)| a.0 == p.0 && a.0 == b.0 && (a.1.min(b.1)..=a.1.max(b.1)).contains(&p.1));
+    if near && now.saturating_sub(w.lclick.0) < 500 {
+        // ikki marta bosiş — söz
+        let (x, y) = term_with(w, |src, _| crate::termbuf::word_at(src.get(p.0).copied().unwrap_or(""), p.1));
+        w.tsel = (x < y).then_some(((p.0, x), (p.0, y)));
+        w.lclick = (0, usize::MAX);
+        TERM_DRAG.store(false, Ordering::Relaxed);
+    } else {
+        w.tsel = Some((p, p));
+        w.lclick = (now, key);
+        TERM_DRAG.store(true, Ordering::Relaxed);
+    }
+    true
+}
+
+/// Sudraş: uç siljiydi, langar joyida qoladi; çekkadan taşqarida — tarix aylanadi.
+fn term_drag(w: &mut Window, cx: usize, cy: usize) {
+    let (ty0, lh) = term_text_top(w);
+    let (_, vis) = term_geom(w);
+    if cy < ty0 {
+        term_scroll_by(w, 1);
+    } else if cy >= ty0 + vis * lh {
+        term_scroll_by(w, -1);
+    }
+    let p = term_pos_at(w, cx, cy);
+    let a = w.tsel.map_or(p, |(a, _)| a);
+    w.tsel = Some((a, p));
+}
+
+/// Tanlangan matn (böş bölmasa).
+fn term_sel_text(w: &Window) -> Option<String> {
+    let (a, b) = w.tsel.filter(|&(a, b)| a != b)?;
+    Some(term_with(w, |src, _| crate::termbuf::range_text(src, a, b)))
+}
+
+/// Tanlovni almaşuv buferiga oladi.
+fn term_copy(w: &mut Window) {
+    match term_sel_text(w) {
+        Some(t) => {
+            crate::clip::set(&t);
+            notify("Nusxa olindi", &alloc::format!("{} belgi — terminaldan", t.chars().count()), 0x2f88ff);
+        }
+        None => notify("Terminal", "Avval matnni siçqon bilan tanlang", 0xff9f0a),
+    }
+}
+
+/// Enter: terilgan qatorni bola stdin iga yuboradi; ekranda özimiz aks ettiramiz.
+fn term_enter(w: &mut Window) {
+    let line = core::mem::take(&mut w.input);
+    w.cur.extend_from_slice(line.as_bytes());
+    push_line(w);
+    if w.pin != NONE_PIPE {
+        let mut data = line.into_bytes();
+        data.push(b'\n');
+        let _ = pipe::try_write(w.pin, &data);
+    }
+    crate::termbuf::trim(&mut w.lines);
+}
+
+/// Joylaşda bir qatorga eng köp qabul qilinadigan bayt.
+const TERM_PASTE_MAX: usize = 1024;
+
+/// Bufer matnini xuddi terilgandek yuboradi: `\n` (va `\r\n`) → `\r`, yaʼni Enter.
+fn term_paste(w: &mut Window) {
+    let t = crate::clip::get();
+    if t.is_empty() {
+        notify("Terminal", "Almaşuv buferi böş", 0xff9f0a);
+        return;
+    }
+    w.tsel = None;
+    w.term_scroll = 0;
+    for ch in t.replace("\r\n", "\n").chars().map(|c| if c == '\n' { '\r' } else { c }) {
+        match ch {
+            '\r' => term_enter(w),
+            '\t' => w.input.push(' '),
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {}
+            c if w.input.len() + c.len_utf8() <= TERM_PASTE_MAX => w.input.push(c),
+            _ => {}
+        }
+    }
 }
 
 /// Terminal oynalaridan çiqişni öqib, satrlarga qoşadi. Bola tugasa — qaytadan işga tuşiradi.
@@ -1393,6 +1520,7 @@ fn desktop() {
                         }
                         *FDRAG_PENDING.lock() = None;
                         ED_DRAG.store(false, Ordering::Relaxed);
+                        TERM_DRAG.store(false, Ordering::Relaxed);
                         for w in windows.iter_mut() {
                             w.pen = None;
                         }
@@ -1508,6 +1636,11 @@ fn desktop() {
                     if top == Some(Kind::Editor) {
                         editor_clip(windows.last_mut().unwrap(), e.code);
                         changed = true;
+                    } else if top == Some(Kind::Terminal) {
+                        // terminal: Alt+C — tanlovni nusxalaş, Alt+V — joylaş (Alt+X — nusxa)
+                        let w = windows.last_mut().unwrap();
+                        if e.code == 47 { term_paste(w) } else { term_copy(w) }
+                        changed = true;
                     } else if top == Some(Kind::Browser) && e.code == 47 && web_paste(windows.last_mut().unwrap()) {
                         changed = true;
                     } else if files_clip_key(&mut windows, &mut desk, e.code) {
@@ -1601,6 +1734,13 @@ fn desktop() {
             if let Some(w) = windows.last_mut().filter(|w| w.kind == Kind::Paint && w.pen.is_some()) {
                 paint_drag(w, cx, cy);
                 changed = true;
+            }
+            // Terminalda siçqon bilan sudrab tanlaş (tarix içida ham)
+            if TERM_DRAG.load(Ordering::Relaxed) {
+                if let Some(w) = windows.last_mut().filter(|w| w.kind == Kind::Terminal && !w.hidden) {
+                    term_drag(w, cx, cy);
+                    changed = true;
+                }
             }
             // Muharrirda siçqon bilan sudrab tanlaş
             if ED_DRAG.load(Ordering::Relaxed) {
@@ -1717,19 +1857,10 @@ fn type_key(w: &mut Window, code: u16, shift: bool) {
         return;
     }
     w.term_scroll = 0;
+    w.tsel = None; // tugma bosildi — tanlov tozalanadi
     match code {
-        28 => {
-            // Enter: qatorni bola stdin iga yuboramiz; ekranda özimiz aks ettiramiz (bola qaytarmaydi)
-            let line = core::mem::take(&mut w.input);
-            w.cur.extend_from_slice(line.as_bytes());
-            push_line(w);
-            if w.pin != NONE_PIPE {
-                let mut data = line.into_bytes();
-                data.push(b'\n');
-                let _ = pipe::try_write(w.pin, &data);
-            }
-            crate::termbuf::trim(&mut w.lines);
-        }
+        // Enter: qatorni bola stdin iga yuboramiz; ekranda özimiz aks ettiramiz (bola qaytarmaydi)
+        28 => term_enter(w),
         // ↑ / ↓ / Tab (va böş qatorda Backspace): terminalning özi qatorni tahrirlaydi —
         // terilgan matn + boşqaruv baytlarini quvurga yuboramiz, u \r + qator + ESC[K bilan qayta çizadi.
         // Faqat terminalning özi kiriş kutayotganda (oldingi planda dastur yöq).
@@ -1857,6 +1988,7 @@ fn handle_click(
             Kind::Paint => paint_click(&mut windows[i], cx, cy),
             Kind::Clock => clock_click(&mut windows[i], cx, cy),
             Kind::Editor => editor_click(&mut windows[i], cx, cy),
+            Kind::Terminal => term_click(&mut windows[i], cx, cy),
             Kind::Trash => match trash_click(&mut windows[i], cx, cy) {
                 2 => {
                     reload_all_files(windows);
@@ -2217,6 +2349,8 @@ enum CAct {
     Delete(String),          // savatga tashlaş
     Rename(usize, usize),    // (oyna, element) — nomini özgartiriş
     Copy(String, bool),      // buferga: (yöl, kesiş)
+    TermCopy(usize),         // terminal (oyna id): tanlovni nusxalaş
+    TermPaste(usize),        // terminal (oyna id): buferni terilgandek joylaş
     Paste(String),           // buferdagini papkaga joylaş
     Restore(String),         // savatdan tiklaş
     Purge(String),           // savatdan butunlay öçiriş
@@ -2261,6 +2395,13 @@ fn build_ctx(windows: &[Window], desk: &Desk, cx: usize, cy: usize) -> Option<Ct
             } else {
                 return None;
             }
+            return Some(Ctx { x: cx, y: cy, items });
+        }
+        if w.kind == Kind::Terminal {
+            if term_sel_text(w).is_some() {
+                items.push((s("Nusxa olish"), CAct::TermCopy(w.id)));
+            }
+            items.push((s("Joylaş"), CAct::TermPaste(w.id)));
             return Some(Ctx { x: cx, y: cy, items });
         }
         if w.kind != Kind::Files {
@@ -2425,6 +2566,16 @@ fn ctx_exec(act: CAct, desk: &mut Desk, windows: &mut Vec<Window>, opened: &mut 
             }
         }
         CAct::Copy(p, cut) => clip_set(desk, p, cut),
+        CAct::TermCopy(id) => {
+            if let Some(w) = windows.iter_mut().find(|w| w.id == id) {
+                term_copy(w);
+            }
+        }
+        CAct::TermPaste(id) => {
+            if let Some(w) = windows.iter_mut().find(|w| w.id == id) {
+                term_paste(w);
+            }
+        }
         CAct::Paste(dir) => paste_into(windows, desk, &dir),
         CAct::Restore(n) => {
             match trash_restore(&n) {
@@ -4035,8 +4186,14 @@ fn draw_terminal(win: &Window) {
     let li_cur = win.lines.len();
     let mut ty = top + pad;
     let mut ex = win.x + pad;
+    let adv = gfx::mono_advance(px);
     for &(li, a, b) in &rows[first..(first + vis).min(total)] {
         let src: &str = if li == li_cur { &full } else { &win.lines[li] };
+        if let Some((sa, sb)) = win.tsel.and_then(|(p, q)| crate::termbuf::row_span((li, a, b), p, q)) {
+            // tanlov — matn ostida koʻk fon
+            let x0 = win.x + pad + src[a..sa].chars().count() * adv;
+            gfx::blend_rect(x0, ty.saturating_sub(1), src[sa..sb].chars().count() * adv, lh, 0x2f88ff, 120);
+        }
         ex = draw_term_line(win.x + pad, ty, &src[a..b], px);
         ty += lh;
     }
