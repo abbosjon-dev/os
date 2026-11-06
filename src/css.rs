@@ -33,6 +33,11 @@ pub struct Sty {
     pub gcols: u8,   // grid ustunlari soni
     pub justify: u8, // 0 — boşidan, 1 — markaz, 2 — oraliq (space-between), 3 — oxiridan
     pub grow: f32,   // flex: 1 (ustun kengligi ulushi)
+    // Joylaşuv: position / float (meros bölib ötmaydi)
+    pub pos: u8,                 // 0 — static, 1 — relative, 2 — absolute, 3 — fixed
+    pub ins: [Option<f32>; 4],   // top, right, bottom, left (CSS px)
+    pub float: u8,               // 0 — yöq, 1 — çap, 2 — öng
+    pub clear: u8,               // 1 — left, 2 — right, 3 — both
 }
 
 impl Sty {
@@ -41,6 +46,7 @@ impl Sty {
             color: None, bg: None, size: 16.0, bold: false, italic: false, align: 0, hidden: false, underline: None, strike: false, block: None,
             mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
+            pos: 0, ins: [None; 4], float: 0, clear: 0,
         }
     }
     /// Meros: rang, ölçam, qalinlik, tekislaş, yaşiriş — bolaga ötadi; fon — ötmaydi.
@@ -48,6 +54,7 @@ impl Sty {
         Sty {
             bg: None, block: None, mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
+            pos: 0, ins: [None; 4], float: 0, clear: 0,
             ..*self
         }
     }
@@ -524,6 +531,39 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
                 }
             } else if let Some(px) = length(&low, s.size).filter(|v| *v > 0.0) {
                 s.maxw = Some((px, false));
+            }
+        }
+        "position" => {
+            s.pos = match low.as_str() {
+                "relative" | "sticky" => 1,
+                "absolute" => 2,
+                "fixed" => 3,
+                _ => 0,
+            }
+        }
+        "top" | "right" | "bottom" | "left" | "inset" => {
+            let v = if low == "auto" { None } else { low.split_whitespace().next().and_then(|x| length(x, s.size)).map(|v| v.clamp(-4000.0, 4000.0)) };
+            match prop {
+                "top" => s.ins[0] = v,
+                "right" => s.ins[1] = v,
+                "bottom" => s.ins[2] = v,
+                "left" => s.ins[3] = v,
+                _ => s.ins = [v; 4],
+            }
+        }
+        "float" => {
+            s.float = match low.as_str() {
+                "left" | "inline-start" => 1,
+                "right" | "inline-end" => 2,
+                _ => 0,
+            }
+        }
+        "clear" => {
+            s.clear = match low.as_str() {
+                "left" | "inline-start" => 1,
+                "right" | "inline-end" => 2,
+                "both" => 3,
+                _ => 0,
             }
         }
         "text-decoration" | "text-decoration-line" => {

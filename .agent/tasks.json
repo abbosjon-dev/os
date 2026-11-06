@@ -11,7 +11,9 @@
     {
       "id": "T2",
       "title": "CSS position: relative/absolute va float: left/right (asosiy)",
-      "detail": "src/css.rs da position, top/left, float xossalarini o'qish; lay() da oddiy joylashtirish."
+      "detail": "src/css.rs da position, top/left, float xossalarini o'qish; lay() da oddiy joylashtirish.",
+      "status": "done",
+      "done_at": "2026-11-06 10:32:55"
     },
     {
       "id": "T3",

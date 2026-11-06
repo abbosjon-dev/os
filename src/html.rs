@@ -82,6 +82,31 @@ pub struct Block {
     pub iw: u16,        // rasm: width/height atributlari (0 — yöq)
     pub ih: u16,
     pub rspan: u8,      // jadval katagi: rowspan (1 — oddiy)
+    // position / float: oqimdan taşqari element (eng yaqin absolute/fixed/float ajdod)
+    pub oser: u32,               // uning raqami (0 — yöq)
+    pub okind: u8,               // 1 — float çap, 2 — float öng, 3 — absolute, 4 — fixed
+    pub ow: Option<(f32, bool)>, // uning kengligi
+    pub oins: [Option<f32>; 4],  // top, right, bottom, left
+    pub pk: u32,                 // absolute uçun konteyner (eng yaqin joylaşgan ajdod; 0 — sahifa)
+    pub aser: u32,               // eng yaqin joylaşgan (static emas) ajdod — langar sifatida
+    pub rdx: f32,                // position: relative siljişlari yig'indisi (matn)
+    pub rdy: f32,
+    pub bdx: f32,                // ... va quti foni uçun
+    pub bdy: f32,
+    pub clear: u8,
+}
+
+impl Block {
+    /// innerHTML: yangi bloklar eski blokning position/float kontekstini oladi.
+    fn copy_pos(&mut self, t: &Block) {
+        if self.oser == 0 {
+            (self.oser, self.okind, self.ow, self.oins, self.pk) = (t.oser, t.okind, t.ow, t.oins, t.pk);
+        }
+        if self.aser == 0 {
+            self.aser = t.aser;
+        }
+        (self.rdx, self.rdy, self.bdx, self.bdy) = (self.rdx + t.rdx, self.rdy + t.rdy, self.bdx + t.bdx, self.bdy + t.bdy);
+    }
 }
 
 /// Forma maydoni.
@@ -219,6 +244,7 @@ impl Doc {
                         b.fgap = tmpl.fgap;
                         b.gcols = tmpl.gcols;
                         b.fw = tmpl.fw;
+                        b.copy_pos(&tmpl);
                         b.pad = tmpl.pad;
                         b.bw = tmpl.bw;
                         b.bc = tmpl.bc;
@@ -346,6 +372,7 @@ impl Doc {
                 b.fgap = t.fgap;
                 b.gcols = t.gcols;
                 b.fw = t.fw;
+                b.copy_pos(t);
             }
         }
         self.elems.extend(d.elems);
@@ -849,13 +876,74 @@ impl P {
             Some(o) => (o.sty.bg, o.serial, o.sty),
             None => (None, 0, Sty::root()),
         };
+        // position / float
+        let oi = self.stack.iter().rposition(|o| o.sty.float != 0 || o.sty.pos >= 2);
+        let (oser, okind, ow, oins, pk) = match oi {
+            Some(i) => {
+                let o = &self.stack[i];
+                let kind = match o.sty.pos {
+                    2 => 3,
+                    3 => 4,
+                    _ => o.sty.float,
+                };
+                let pk = self.stack[..i].iter().rev().find(|a| a.sty.pos != 0).map(|a| a.serial).unwrap_or(0);
+                (o.serial, kind, o.sty.maxw, o.sty.ins, pk)
+            }
+            None => (0, 0, None, [None; 4], 0),
+        };
+        let aser = self.stack.iter().rev().find(|a| a.sty.pos != 0).map(|a| a.serial).unwrap_or(0);
+        let off = |o: &Open| -> (f32, f32) {
+            if o.sty.pos != 1 {
+                return (0.0, 0.0);
+            }
+            let i = o.sty.ins;
+            (i[3].unwrap_or(-i[1].unwrap_or(0.0)), i[0].unwrap_or(-i[2].unwrap_or(0.0)))
+        };
+        let (mut rdx, mut rdy, mut bdx, mut bdy) = (0.0, 0.0, 0.0, 0.0);
+        for o in &self.stack {
+            let (dx, dy) = off(o);
+            rdx += dx;
+            rdy += dy;
+            if o.serial <= bgk {
+                bdx += dx;
+                bdy += dy;
+            }
+        }
         Block {
             kind: k, spans: Vec::new(), bg, align: st.align, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: st.hidden, bgk,
             pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, maxw: cs.maxw, center: cs.center, mt: st.mt, mb: st.mb,
             bmt: cs.mt, bmb: cs.mb,
             flex: fl.0, fcol: fl.1, fmode: fl.2, fgap: fl.3, gcols: fl.4, fjust: fl.5, fw: fl.6, fgrow: fl.7,
             mark: String::new(), det, summary, iw: 0, ih: 0, rspan: fl.8,
+            oser, okind, ow, oins, pk, aser, rdx, rdy, bdx, bdy, clear: st.clear,
         }
+    }
+    /// Böş (void) element (img) uçun float / position: uslubi hisoblanib, blok oqimdan çiqariladi.
+    fn void_pos(&mut self, blk: &mut Block, name: &str, tag: &str) {
+        let id = attr(tag, "id").unwrap_or_default();
+        let classes: Vec<String> = attr(tag, "class").map(|c| c.split_whitespace().map(String::from).collect()).unwrap_or_default();
+        let st = {
+            let anc: Vec<ElRef> = self.stack.iter().map(|o| ElRef { tag: &o.tag, id: &o.id, classes: &o.classes }).collect();
+            let me = ElRef { tag: name, id: &id, classes: &classes };
+            css::compute(&self.top(), &self.rules, &me, &anc, attr(tag, "style").as_deref())
+        };
+        let kind = match st.pos {
+            2 => 3,
+            3 => 4,
+            _ => st.float,
+        };
+        if kind != 0 {
+            self.serial += 1;
+            blk.oser = self.serial;
+            blk.okind = kind;
+            blk.ow = st.maxw;
+            blk.oins = st.ins;
+            blk.pk = blk.aser;
+        } else if st.pos == 1 {
+            blk.rdx += st.ins[3].unwrap_or(-st.ins[1].unwrap_or(0.0));
+            blk.rdy += st.ins[0].unwrap_or(-st.ins[2].unwrap_or(0.0));
+        }
+        blk.clear = st.clear;
     }
     fn start(&mut self, k: Kind) {
         self.flush();
@@ -1649,6 +1737,7 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool) -> Doc {
                         blk.iw = attr(t, "width").and_then(|v| v.trim_end_matches("px").trim().parse().ok()).unwrap_or(0);
                         blk.ih = attr(t, "height").and_then(|v| v.trim_end_matches("px").trim().parse().ok()).unwrap_or(0);
                         blk.spans.push(Span { text: alt, link: p.stack.iter().rev().find_map(|o| o.link.clone()), bold: false, code: false, br: false, color: None, size: 14.0, el: p.el(), button: false, underline: false, input: NO_EL, fx: 0 });
+                        p.void_pos(&mut blk, "img", t);
                         p.doc.blocks.push(blk);
                     }
                 }
@@ -1776,6 +1865,7 @@ pub fn plain(text: &str) -> Doc {
         pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false, mt: 0.0, mb: 0.0, bmt: 0.0, bmb: 0.0,
         flex: 0, fcol: 0, fmode: 0, fgap: 0.0, gcols: 0, fjust: 0, fw: None, fgrow: 0.0,
         mark: String::new(), det: NO_EL, summary: false, iw: 0, ih: 0, rspan: 1,
+        oser: 0, okind: 0, ow: None, oins: [None; 4], pk: 0, aser: 0, rdx: 0.0, rdy: 0.0, bdx: 0.0, bdy: 0.0, clear: 0,
     });
     d
 }
@@ -1823,4 +1913,33 @@ pub fn self_test_rowspan() -> Result<usize, &'static str> {
         return Err("rowspan: qator/ustun bog'lanişi notöğri");
     }
     Ok(seq.len())
+}
+
+/// CSS position / float tekşiruvi: oqimdan taşqari elementlar va relative siljişlar.
+pub fn self_test_position() -> Result<usize, &'static str> {
+    let d = parse("<style>.r{position:relative;top:4px;left:-2px}.a{position:absolute;right:0;top:10px;width:50%}</style>\
+        <div class=r><p>R</p><div class=a><p>A</p></div></div>\
+        <div style=\"float:left;width:100px\"><p>L</p></div><p style=\"clear:both\">C</p><img src=x.png style=\"float:right\">");
+    let find = |t: &str| d.blocks.iter().find(|b| b.spans.iter().any(|s| s.text.trim() == t));
+    let r = find("R").ok_or("position: R bloki yöq")?;
+    if r.rdx != -2.0 || r.rdy != 4.0 || r.oser != 0 || r.aser == 0 {
+        return Err("position: relative siljişi notöğri");
+    }
+    let a = find("A").ok_or("position: A bloki yöq")?;
+    if a.okind != 3 || a.pk != r.aser || a.oins[1] != Some(0.0) || a.oins[0] != Some(10.0) || a.ow != Some((50.0, true)) {
+        return Err("position: absolute notöğri");
+    }
+    let l = find("L").ok_or("float: L bloki yöq")?;
+    if l.okind != 1 || l.ow != Some((100.0, false)) {
+        return Err("float: left notöğri");
+    }
+    let c = find("C").ok_or("clear: C bloki yöq")?;
+    if c.clear != 3 || c.oser != 0 {
+        return Err("clear: both notöğri");
+    }
+    let img = d.blocks.iter().find(|b| b.kind == Kind::Img).ok_or("float: rasm yöq")?;
+    if img.okind != 2 {
+        return Err("float: rasm (right) notöğri");
+    }
+    Ok(5)
 }

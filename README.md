@@ -142,6 +142,12 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   `flex: N`, ustun `width`), `display:grid` (`grid-template-columns: repeat(n, …)`),
   **jadvallar** (`<tr>` — qator, `<td>/<th>` — ustunlar); `>` (bevosita bola) tanlagichi.
   Joylashuv rekursiv: har ustun o'z kengligida qayta joylanadi.
+- **position va float** — `position: relative` (`top/left/right/bottom` bilan siljitish,
+  oqimdagi joyi saqlanadi), `position: absolute` (eng yaqin joylashgan ajdodga nisbatan;
+  `width` bo'lmasa — mazmun kengligida, `right` bilan o'ngga bog'lanadi), `position: fixed`
+  (sahifaga nisbatan), `float: left/right` (bloklar va `<img>`: chetga suriladi, keyingi matn
+  yonidan toraygan sohada oqadi; ketma-ket floatlar yonma-yon) va `clear: left/right/both`.
+  Sinov sahifasi: `zamin://joylasuv`.
 - **JS** — `async function`, `async () =>`, `await` (fetch va taymerlarni kutadi),
   `localStorage`/`sessionStorage`, `document.cookie`.
 - **DOM** — har bir element ro'yxatda (ota-bolasi bilan): `innerHTML = "<b>…</b>"` (HTML

@@ -506,6 +506,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] HTML jadval: rowspan ({} katak, joy egallovçilar bilan)", n),
         Err(e) => panic!("HTML jadval tekşiruvi yiqildi: {}", e),
     }
+    match html::self_test_position() {
+        Ok(n) => println!("  [ok] CSS joylaşuv: position (relative/absolute) va float/clear ({} sinov)", n),
+        Err(e) => panic!("CSS position/float tekşiruvi yiqildi: {}", e),
+    }
     // Audio dekoderi: WAV
     audio::self_test().expect("audio (WAV) dekoderi yiqildi");
     tprintln!(msg::TEST_AUDIO);

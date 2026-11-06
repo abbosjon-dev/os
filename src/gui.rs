@@ -6656,6 +6656,22 @@ document.getElementById("parol").textContent = "Parol uzunligi: " + (p.get("paro
 document.getElementById("obuna").textContent = p.has("obuna") ? "Obuna: ha" : "Obuna: yöq";
 document.getElementById("qs").textContent = location.search;
 </script>"##,
+        "zamin://joylasuv" => r##"<title>CSS joylaşuv: position va float</title>
+<style>
+.karta{position:relative;background:#e8eefc;color:#1a2233;padding:12px;border:1px solid #9bb0e0;border-radius:8px}
+.nishon{position:absolute;top:8px;right:8px;background:#d93025;color:#fff;padding:2px 8px;border-radius:10px}
+.chap{float:left;width:140px;background:#fde7c4;color:#3a2a10;padding:8px;margin:0 8px 0 0}
+.ong{float:right;width:120px;background:#d6f5dd;color:#103a1a;padding:8px}
+.siljish{position:relative;left:24px;top:6px;color:#1e6fd9}
+</style>
+<h1>position va float</h1>
+<div class="karta"><h3>Karta (position: relative)</h3><p>Öng yuqori burçakdagi nişon — position: absolute; top/right: 8px.</p><span class="nishon">Yangi</span></div>
+<p class="siljish">Bu paragraf position: relative bilan 24px öngga va 6px pastga siljitilgan.</p>
+<div class="chap"><b>float: left</b><p>Çap ustun</p></div>
+<div class="ong"><b>float: right</b><p>Öng ustun</p></div>
+<p>Bu matn ikki float element orasidan oqadi. Zamin Brauzer endi CSS position (relative, absolute, fixed) va float (left, right) xossalarini, shuningdek clear xossasini tuşunadi. Matn float lar yonida toraygan sohada joylaşadi.</p>
+<p style="clear:both;background:#eee;color:#222;padding:6px">clear: both — bu blok float lar ostidan boşlanadi.</p>
+"##,
         "zamin://bosh" => r##"<title>Bosh sahifa</title>
 <style>
 .hero{background:#1e3a8a;color:#ffffff;text-align:center}
@@ -6674,6 +6690,7 @@ document.getElementById("qs").textContent = location.search;
 <li><a href="zamin://forma">Formalar va fetch() sinovi</a></li>
 <li><a href="zamin://veb">Flex, grid, jadval, async/await sinovi</a></li>
 <li><a href="zamin://html">Barça HTML elementlari sinovi</a></li>
+<li><a href="zamin://joylasuv">CSS position va float sinovi</a></li>
 <li><a href="zamin://tarix">Tarix</a> — körilgan sahifalar</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
 <li><a href="https://example.com/">example.com</a> (HTTPS, haqiqiy internet)</li>
@@ -7381,13 +7398,43 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
         .iter()
         .filter(|b| !b.hidden && !(b.kind == HK::P && b.spans.iter().all(|s| s.text.is_empty() && s.input == NO_EL)))
         .collect();
-    let y = lay(web, &vis, u, width.saturating_sub(u * 2), u / 2, 0, &mut items, &mut deco);
+    let mut anc = alloc::vec![(0u32, u, u / 2, width.saturating_sub(u * 2))];
+    let y = lay(web, &vis, u, width.saturating_sub(u * 2), u / 2, 0, &mut items, &mut deco, &mut anc);
+    // absolute elementlar ham sahifa balandligiga kiradi
+    let y = items.iter().map(|i| i.y + i.h).fold(y, usize::max);
     (items, deco, y + u)
 }
 
+/// position / float: oqimdan taşqari blokning (nusxa) quti maydonlarini tozalaydi — kenglikni lay() beradi.
+fn out_of_flow(run: &[&crate::html::Block]) -> Vec<crate::html::Block> {
+    run.iter()
+        .map(|b| {
+            let mut c = (*b).clone();
+            if c.bgk != 0 && c.bgk < c.oser {
+                // quti tasqaridagi ajdodniki — bu yerda çizilmaydi
+                (c.bg, c.bgk, c.pad, c.bw, c.bc, c.radius) = (None, 0, 0.0, 0.0, None, 0.0);
+            }
+            if c.bgk == c.oser || c.bgk == 0 {
+                (c.maxw, c.center) = (None, false);
+            }
+            c.oser = 0;
+            c.okind = 0;
+            c
+        })
+        .collect()
+}
+
+/// x=0 dan joylangan elementlarning tabiiy kengligi (shrink-to-fit): matn öng çeti + çap içki çekiniş (padding).
+fn items_right(items: &[WItem]) -> usize {
+    let r = items.iter().map(|i| i.x + i.w).max().unwrap_or(0);
+    let l = items.iter().map(|i| i.x).min().unwrap_or(0);
+    r + l
+}
+
 /// Bloklar ro'yxatini (x, kenglik) sohaga joylaydi; `skip` — joriy ustun içidagi flex (qayta guruhlamaslik uçun).
+/// `anc` — joylaşgan (position) elementlar langarlari: (raqam, x, y, kenglik); [0] — sahifa.
 #[allow(clippy::too_many_arguments)]
-fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0: usize, skip: u32, items: &mut Vec<WItem>, deco: &mut Vec<Deco>) -> usize {
+fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y0: usize, skip: u32, items: &mut Vec<WItem>, deco: &mut Vec<Deco>, anc: &mut Vec<(u32, usize, usize, usize)>) -> usize {
     let doc = &web.doc;
     let u = body();
     let k = (small() * 11 / 10) as f32 / 16.0;
@@ -7399,9 +7446,132 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
     let mut open_box: Option<(u32, usize, usize)> = None;
     // rowspan: pastki qatorlarga çoziladigan katak qutilari (deco raqami, qolgan qatorlar)
     let mut rs_pend: Vec<(usize, u8)> = Vec::new();
+    // float: (egallangan kenglik, pastki çeti) — çap va öng
+    let mut lf = (0usize, 0usize);
+    let mut rf = (0usize, 0usize);
+    // position: relative — siljitiladigan diapazonlar (items boşi, deco boşi, dx, dy) va quti fonlari
+    let spx = |v: f32| (v * k) as isize;
+    let mut shifts: Vec<(usize, usize, usize, usize, isize, isize)> = Vec::new();
+    let mut box_shifts: Vec<(usize, isize, isize)> = Vec::new();
+    let mut pend: Option<(usize, usize, isize, isize)> = None;
     let mut bi = 0;
     while bi < vis.len() {
+        if let Some((i0, d0, dx, dy)) = pend.take() {
+            shifts.push((i0, items.len(), d0, deco.len(), dx, dy));
+        }
         let b = vis[bi];
+        // clear: float lardan pastga
+        if b.clear & 1 != 0 && lf.1 > y {
+            y = lf.1;
+        }
+        if b.clear & 2 != 0 && rf.1 > y {
+            y = rf.1;
+        }
+        if y >= lf.1 {
+            lf.0 = 0;
+        }
+        if y >= rf.1 {
+            rf.0 = 0;
+        }
+        // float bilan torayişgan soha
+        let (page_pad, full) = if lf.0 + rf.0 + u * 4 < full0 { (page_pad0 + lf.0, full0 - lf.0 - rf.0) } else { (page_pad0, full0) };
+        // --- position: absolute / fixed va float: oqimdan taşqari ---
+        if b.oser != 0 && b.okind != 0 {
+            let mut j = bi;
+            while j < vis.len() && vis[j].oser == b.oser {
+                j += 1;
+            }
+            let run = out_of_flow(&vis[bi..j]);
+            let refs: Vec<&crate::html::Block> = run.iter().collect();
+            let gap = u / 2;
+            let ins = b.oins;
+            if b.okind >= 3 {
+                // langar: eng yaqin joylaşgan ajdod (yoki sahifa)
+                let a = if b.okind == 4 { anc[0] } else { anc.iter().rev().find(|a| a.0 == b.pk && b.pk != 0).copied().unwrap_or(anc[0]) };
+                let (l, r) = (ins[3].map(spx), ins[1].map(spx));
+                let given = match b.ow {
+                    Some((v, true)) => Some(a.3 * (v as usize).min(100) / 100),
+                    Some((v, false)) => Some(lpx(v)),
+                    None => None,
+                };
+                let mut w = match (given, l, r) {
+                    (Some(w), _, _) => w,
+                    (None, Some(l), Some(r)) => (a.3 as isize - l - r).max(u as isize * 2) as usize,
+                    (None, Some(l), None) => (a.3 as isize - l).max(u as isize * 4) as usize,
+                    (None, None, Some(r)) => (a.3 as isize - r).max(u as isize * 4) as usize,
+                    _ => full,
+                }
+                .max(u * 2);
+                if given.is_none() && !(l.is_some() && r.is_some()) {
+                    // shrink-to-fit: avval ölçab olamiz
+                    let (mut ti, mut td, mut ta): (Vec<WItem>, Vec<Deco>, _) = (Vec::new(), Vec::new(), anc.clone());
+                    lay(web, &refs, 0, w, 0, skip, &mut ti, &mut td, &mut ta);
+                    w = items_right(&ti).clamp(u, w);
+                }
+                let x = match (l, r) {
+                    (Some(l), _) => (a.1 as isize + l).max(0) as usize,
+                    (None, Some(r)) => (a.1 as isize + a.3 as isize - r - w as isize).max(0) as usize,
+                    _ => page_pad,
+                };
+                let yy = match ins[0] {
+                    Some(t) => (a.2 as isize + spx(t)).max(0) as usize,
+                    None => y,
+                };
+                let (i0, d0) = (items.len(), deco.len());
+                lay(web, &refs, x, w, yy, skip, items, deco, anc);
+                if l.is_none() && r.is_some() {
+                    // quti minimal kenglikdan kengroq çiqqan bölsa — öng çet joyida qolsin
+                    let real = items[i0..].iter().map(|i| i.x + i.w).chain(deco[d0..].iter().map(|d| d.x + d.w)).max().unwrap_or(x + w);
+                    let over = real.saturating_sub(x + w);
+                    if over > 0 {
+                        for it in items[i0..].iter_mut() {
+                            it.x = it.x.saturating_sub(over);
+                        }
+                        for d in deco[d0..].iter_mut() {
+                            d.x = d.x.saturating_sub(over);
+                        }
+                    }
+                }
+            } else {
+                // float: çap yoki öng çetga, matn yonidan oqadi
+                let mut w = match b.ow {
+                    Some((v, true)) => full0 * (v as usize).min(100) / 100,
+                    Some((v, false)) => lpx(v).min(full0),
+                    None => {
+                        let (mut ti, mut td, mut ta): (Vec<WItem>, Vec<Deco>, _) = (Vec::new(), Vec::new(), anc.clone());
+                        lay(web, &refs, 0, full0 / 2, 0, skip, &mut ti, &mut td, &mut ta);
+                        items_right(&ti).clamp(u * 2, full0 / 2)
+                    }
+                }
+                .max(u * 2);
+                if lf.0 + rf.0 + w > full0 && (lf.0 > 0 || rf.0 > 0) {
+                    // sig'madi — float lar ostiga
+                    y = y.max(if b.okind == 1 { lf.1 } else { rf.1 }).max(lf.1.min(rf.1));
+                    if y >= lf.1 {
+                        lf.0 = 0;
+                    }
+                    if y >= rf.1 {
+                        rf.0 = 0;
+                    }
+                }
+                w = w.min(full0.saturating_sub(lf.0 + rf.0)).max(u * 2);
+                let x = if b.okind == 1 { page_pad0 + lf.0 } else { page_pad0 + full0 - rf.0 - w };
+                let bottom = lay(web, &refs, x, w, y, skip, items, deco, anc);
+                let f = if b.okind == 1 { &mut lf } else { &mut rf };
+                if f.1 <= y {
+                    f.1 = 0;
+                }
+                f.0 += w + gap;
+                f.1 = f.1.max(bottom + u / 4);
+            }
+            open_box = None;
+            bi = j;
+            continue;
+        }
+        // langar (position: relative va boşqalar) — joylaşgan elementning boşi
+        if b.aser != 0 && !anc.iter().any(|a| a.0 == b.aser) && (b.flex == 0 || b.flex == skip || b.aser <= b.flex) {
+            anc.push((b.aser, page_pad, y, full));
+        }
         // --- Flex / grid / jadval: ketma-ket bloklarni ustunlarga ajratamiz ---
         if b.flex != 0 && b.flex != skip && (b.fmode == 1 || b.fmode == 3) {
             let mut j = bi;
@@ -7448,7 +7618,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
                 let mut rs_new: Vec<(usize, u8)> = Vec::new();
                 for (c, w) in row.iter().zip(widths.iter()) {
                     let d0 = deco.len();
-                    let yy = lay(web, &c.1, x, *w, y, b.flex, items, deco);
+                    let yy = lay(web, &c.1, x, *w, y, b.flex, items, deco, anc);
                     bottom = bottom.max(yy);
                     if c.1[0].rspan > 1 && deco.len() > d0 {
                         rs_new.push((d0, c.1[0].rspan - 1));
@@ -7490,6 +7660,9 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
                 y += lpx(b.bmt);
                 deco.push(Deco { x: cx, y, w: cw, h: 0, fill: b.bg, radius: lpx(b.radius), bw: bwp, bc: b.bc.unwrap_or(0x808080) });
                 open_box = Some((b.bgk, deco.len() - 1, inset));
+                if b.bdx != 0.0 || b.bdy != 0.0 {
+                    box_shifts.push((deco.len() - 1, spx(b.bdx), spx(b.bdy)));
+                }
                 y += inset;
             }
             (cx + inset, cw.saturating_sub(inset * 2), inset)
@@ -7498,6 +7671,9 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
             (page_pad, full, 0)
         };
         let _ = inset;
+        if b.rdx != 0.0 || b.rdy != 0.0 {
+            pend = Some((items.len(), deco.len(), spx(b.rdx), spx(b.rdy)));
+        }
         let pad = bx;
         let maxw = bwid;
         let (indent, gap_top, gap_bot) = match b.kind {
@@ -7709,7 +7885,26 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad: usize, full: usize, y0:
         }
         close_box(&mut y, deco, &mut open_box);
     }
-    y
+    if let Some((i0, d0, dx, dy)) = pend.take() {
+        shifts.push((i0, items.len(), d0, deco.len(), dx, dy));
+    }
+    // position: relative — joylaşuvdan keyin siljitamiz (oqimdagi joyi saqlanadi)
+    let mv = |v: usize, d: isize| (v as isize + d).max(0) as usize;
+    for (i0, i1, d0, d1, dx, dy) in shifts {
+        for it in items[i0..i1].iter_mut() {
+            (it.x, it.y) = (mv(it.x, dx), mv(it.y, dy));
+        }
+        for d in deco[d0..d1].iter_mut() {
+            (d.x, d.y) = (mv(d.x, dx), mv(d.y, dy));
+        }
+    }
+    for (di, dx, dy) in box_shifts {
+        if let Some(d) = deco.get_mut(di) {
+            (d.x, d.y) = (mv(d.x, dx), mv(d.y, dy));
+        }
+    }
+    // float lar konteyner içida qoladi
+    y.max(lf.1).max(rf.1)
 }
 
 fn draw_browser(win: &Window) {
