@@ -133,6 +133,8 @@ pub struct Task {
     env: Vec<(String, String)>,
     /// Işonçli (yadro işga tuşirgan terminal): tizim buyruqlariga ruxsat
     trusted: bool,
+    /// Bu jarayonning öz oldingi plan bolasi (grafik terminal: Ctrl+C uçun; 0 — yöq)
+    fg: Pid,
     /// Töxtatiş sörovi: jarayon xavfsiz nuqtada (foydalanuvçi rejimiga qaytişda) özi tugaydi
     killed: bool,
     /// Joriy papka (nisbiy yöllar şunga nisbatan)
@@ -298,6 +300,7 @@ fn idle_task(cpu: usize) -> Box<Task> {
         handles: Vec::new(),
         env: Vec::new(),
         trusted: false,
+        fg: 0,
         killed: false,
         cwd: String::from("/"),
         uid: 0,
@@ -379,6 +382,7 @@ pub fn spawn_kernel_ext(name: &str, entry: extern "C" fn(usize), arg: usize, det
         handles: Vec::new(),
         env: Vec::new(),
         trusted: false,
+        fg: 0,
         killed: false,
         cwd: String::from("/"),
         uid: 0,
@@ -503,6 +507,7 @@ pub fn spawn_user(name: &str, image: &[u8], args: &str, opts: SpawnOptions) -> R
         handles: stdio.iter().chain(extra.iter()).map(|h| Some(h.retain())).collect(),
         env,
         trusted,
+        fg: 0,
         killed: false,
         cwd,
         uid,
@@ -854,6 +859,7 @@ pub fn spawn_thread(entry: usize, stack_top: usize, arg: u64) -> Result<Pid, Spa
         handles: Vec::new(),
         env: Vec::new(),
         trusted: false,
+        fg: 0,
         killed: false,
         cwd,
         uid,
@@ -959,9 +965,28 @@ pub fn set_foreground(pid: Pid) {
     FOREGROUND.store(pid, Ordering::Release);
 }
 
-/// Oldingi plandagi jarayon (0 — terminalning özi kiriş kutyapti).
-pub fn foreground() -> Pid {
-    FOREGROUND.load(Ordering::Acquire)
+/// Işonçsiz jarayon (grafik terminal) öz oldingi plan bolasini belgilaydi: faqat 0 yoki
+/// özining bevosita bolasi qabul qilinadi (global FOREGROUND ga tegilmaydi).
+pub fn set_own_foreground(pid: Pid) -> bool {
+    let me = current_pid();
+    if pid != 0 && parent_of(pid) != Some(me) {
+        return false;
+    }
+    with_proc(|t| t.fg = pid);
+    true
+}
+
+/// `pid` jarayonining oldingi plan bolasi (tirik va haqiqatan uning bolasi bölsa), aks holda 0.
+pub fn foreground_of(pid: Pid) -> Pid {
+    let s = SCHED.lock();
+    let Some(fg) = s.tasks.iter().flatten().find(|t| t.pid == pid && t.leader == 0).map(|t| t.fg) else {
+        return 0;
+    };
+    if fg != 0 && s.tasks.iter().flatten().any(|t| t.pid == fg && t.parent == pid && !matches!(t.state, State::Dead(_))) {
+        fg
+    } else {
+        0
+    }
 }
 
 /// Joriy jarayon raqami (oqimdan çaqirilsa — jarayonniki).

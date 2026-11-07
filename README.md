@@ -533,6 +533,9 @@ pastda "2 / 4". Video oynasida **ijro/pauza** tugmasi (`Space`), kadrlar böyiç
 | `PrtSc` | Ekran rasmi (PNG, ~/Rasmlar) |
 | `AltGr` + s/c/o/g/' | ş ç ö ğ ʼ |
 | `Esc` | Menyu, bildirişnomalar paneli va almaştirgiçni yopiş |
+| `Ctrl+C` | Grafik terminalda: oldingi plandagi dasturni töxtatiş (`^C`); dastur yöq bölsa — kiriş qatorini bekor qiliş va yangi taklif |
+| `Ctrl+L` / `Ctrl+U` | Grafik terminalda: ekranni tozalaş (tarix yuqoriga aylantirib körinadi) / kiriş qatorini öçiriş |
+| `Ctrl+D` | Grafik terminalda böş qatorda — terminal oynasini yopiş |
 
 **Bildirişnomalar** öng yuqoridan sirpanib çiqadi (4.5 s, bosilsa yopiladi), menyu
 panelidagi qoʻngʻiroq — oxirgi xabarlar tarixi ("Tozalaş" bilan). Yadroning istalgan
@@ -811,6 +814,20 @@ abbosjon@zamin:~> çiqiş                                    # çiqiş (qayta ki
 - quvurlar: öquvçi maʼlumot kelgunça uxlaydi, yozuvçilar yopilsa — "fayl oxiri";
 - joriy papka va muhit özgaruvçilari (`PATH`, `UY`, `FOYDALANUVCHI`) bolaga meros bölib ötadi;
 - Ctrl+C — oldingi plandagi dasturni töxtatadi, Ctrl+D — kiriş oxiri;
+- grafik terminal oynasida ham Ctrl kuzatiladi (çap 29 / öng 97): `Ctrl+C` — oldingi planda
+  dastur bölsa u töxtatiladi va `^C` çiqadi, bölmasa terilgan qator `^C` bilan
+  bekor qilinib yangi taklif çiqadi; `Ctrl+L` — ekran tozalanadi (scrollback saqlanadi,
+  yuqoriga aylantirib körish mumkin); `Ctrl+U` — kiriş qatori öçiriladi; `Ctrl+D` — böş
+  qatorda terminal oynasi yopiladi. Boşqa oynalarda (masalan, muharrirda) Ctrl+harf belgi
+  sifatida kiritilmaydi, Alt yorliqlari özgarmagan. Mantiq sof funksiyada:
+  `gui::term_ctrl_action(tugma, fg_pid, qator_böşmi) -> TermCtrl`; yuklanişda
+  `[ok] terminal Ctrl` 4 yorliq va oldingi plan bor/yöq holatlarini tekşiradi.
+  Grafik terminal işonçsiz jarayon bölgani uçun global `FOREGROUND` ni özgartira olmaydi —
+  endi u `zamin::set_foreground(pid)` bilan jarayonning öz `fg` maydonini belgilaydi (yadro
+  faqat 0 yoki terminalning bevosita bolasini qabul qiladi), GUI esa
+  `task::foreground_of(terminal_pid)` orqali faqat şu oynaning dasturini töxtatadi.
+
+![Terminal: ping dan keyin Ctrl+C](docs/apps/terminal-ctrlc.png)
 - fondagi dastur klaviaturani "öğirlamaydi" (uning kirişi böş);
 - töxtatiş xavfsiz: jarayon yadro içida (masalan, qulf uşlab turganda) uzilmaydi, foydalanuvçi
   rejimiga qaytayotganda özi tugaydi.

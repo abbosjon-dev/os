@@ -173,6 +173,7 @@ struct Window {
     crow: usize,        // Muharrir: kursor qatori
     ccol: usize,        // Muharrir: kursor ustuni (belgilarda)
     scroll: usize,      // Muharrir: birinçi körinadigan qator
+    tclear: usize, // Terminal: Ctrl+L — ekran şu manba qatoridan boşlanadi (0 — yöq)
     term_scroll: usize, // Terminal: pastdan necha vizual qator yuqoriga aylantirilgan (0 — eng past)
     tsel: Option<(crate::termbuf::Pos, crate::termbuf::Pos)>, // Terminal: tanlov (langar, uç) — manba örinlarida
     dirty: bool,        // Muharrir: saqlanmagan özgarişlar
@@ -356,6 +357,7 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         ccol: 0,
         scroll: 0,
         term_scroll: 0,
+        tclear: 0,
         tsel: None,
         dirty: false,
         tiles: Vec::new(),
@@ -1044,6 +1046,7 @@ fn feed(win: &mut Window, bytes: &[u8]) {
                     // ekranni tozalaş (\x1b[2J)
                     win.lines.clear();
                     win.cur.clear();
+                    win.tclear = 0;
                 }
                 // \x1b[K (qator oxirigaça öçiriş): \r allaqaçon qatorni böşatadi, kursor doim
                 // oxirida — qöşimça iş kerak emas.
@@ -1069,7 +1072,7 @@ fn feed(win: &mut Window, bytes: &[u8]) {
         win.term_scroll = 0;
         win.tsel = None; // yangi çiqiş — tanlov tozalanadi
     }
-    crate::termbuf::trim(&mut win.lines);
+    term_trim(win);
 }
 
 fn push_line(win: &mut Window) {
@@ -1104,8 +1107,8 @@ fn term_text(win: &Window) -> (String, Vec<(usize, usize, usize)>) {
 /// Terminalni `d` vizual qatorga aylantiradi (musbat — yuqoriga, tarixga).
 fn term_scroll_by(win: &mut Window, d: isize) {
     let (_, vis) = term_geom(win);
-    let total = term_text(win).1.len();
-    let max = total.saturating_sub(vis) as isize;
+    let rows = term_text(win).1;
+    let max = term_first(win, &rows, vis).1 as isize;
     win.term_scroll = (win.term_scroll.min(max as usize) as isize + d).clamp(0, max) as usize;
 }
 
@@ -1130,9 +1133,7 @@ fn term_pos_at(win: &Window, cx: usize, cy: usize) -> crate::termbuf::Pos {
     let adv = gfx::mono_advance(small()).max(1);
     let tx = win.x + body() * 3 / 4;
     term_with(win, |src, rows| {
-        let total = rows.len();
-        let sc = win.term_scroll.min(total.saturating_sub(vis));
-        let first = total - vis.min(total) - sc;
+        let first = term_first(win, rows, vis).0;
         let k = if cy < ty0 { 0 } else { ((cy - ty0) / lh).min(vis.saturating_sub(1)) };
         let col = (cx.saturating_sub(tx) + adv / 2) / adv;
         crate::termbuf::vis_to_src(src, rows, first + k, col)
@@ -1207,7 +1208,7 @@ fn term_enter(w: &mut Window) {
         data.push(b'\n');
         let _ = pipe::try_write(w.pin, &data);
     }
-    crate::termbuf::trim(&mut w.lines);
+    term_trim(w);
 }
 
 /// Joylaşda bir qatorga eng köp qabul qilinadigan bayt.
@@ -1562,6 +1563,7 @@ fn desktop() {
     TRASH_N.store(usize::MAX, Ordering::Relaxed); // yangi foydalanuvçi — qayta hisoblanadi
     CPU_HIST.lock().clear();
     let mut alt = false;
+    let mut ctrl = false; // Ctrl (29 — çap, 97 — öng)
     {
         let name = accounts::current().map(|a| if a.full_name.is_empty() { a.username } else { a.full_name }).unwrap_or_default();
         notify("Xuş kelibsiz!", &alloc::format!("{} · Zamin OS {}", name, env!("CARGO_PKG_VERSION")), 0x2fbf5f);
@@ -1687,8 +1689,10 @@ fn desktop() {
                 match e.code {
                     42 | 54 => shift = e.value != 0,
                     56 => alt = e.value != 0,
+                    29 | 97 => ctrl = e.value != 0,
                     100 => ALTGR.store(e.value != 0, Ordering::Relaxed),
                     _ if e.value == 0 => {}
+                    _ if ctrl => {} // Ctrl+harf qidiruvga belgi bölib tuşmaydi
                     1 => desk.search = None,
                     57 if alt => desk.search = None,
                     103 => {
@@ -1795,6 +1799,7 @@ fn desktop() {
                     }
                 }
                 (input::EV_KEY, 42) | (input::EV_KEY, 54) => shift = e.value != 0,
+                (input::EV_KEY, 29) | (input::EV_KEY, 97) => ctrl = e.value != 0,
                 (input::EV_KEY, 100) => ALTGR.store(e.value != 0, Ordering::Relaxed),
                 (input::EV_KEY, 56) => {
                     alt = e.value != 0;
@@ -1933,6 +1938,16 @@ fn desktop() {
                     }
                 }
                 (input::EV_KEY, _) if alt => {}
+                (input::EV_KEY, code) if e.value == 1 && ctrl && keycode_char(code, false).is_some() => {
+                    // Ctrl+harf: terminalda boşqaruv (C/L/U/D); boşqa oynalarda belgi kiritilmaydi
+                    if windows.last().is_some_and(|w| !w.hidden && w.kind == Kind::Terminal) {
+                        if term_ctrl(windows.last_mut().unwrap(), code) {
+                            let mut w = windows.pop().unwrap();
+                            close_terminal(&mut w);
+                        }
+                        changed = true;
+                    }
+                }
                 (input::EV_KEY, code) if e.value == 1 => {
                     let top = windows.last().filter(|w| !w.hidden).map(|w| w.kind);
                     match top {
@@ -2097,6 +2112,111 @@ fn desktop() {
     }
 }
 
+/// Grafik terminaldagi Ctrl+harf natijasi.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TermCtrl {
+    /// Ctrl+C, oldingi planda dastur bor — uni töxtatiş (`^C`).
+    Interrupt,
+    /// Ctrl+C, dastur yöq — kiriş qatori bekor qilinadi, yangi taklif.
+    CancelLine,
+    /// Ctrl+L — ekranni tozalaş (tarix saqlanadi).
+    Clear,
+    /// Ctrl+U — kiriş qatorini öçiriş.
+    KillLine,
+    /// Ctrl+D böş qatorda — terminal oynasini yopiş.
+    Close,
+    /// Boşqa tugma / mos holat emas — heç narsa qilinmaydi.
+    None,
+}
+
+/// Ctrl+tugma (evdev kodi) → terminal amali. `fg_pid` — oldingi plandagi jarayon
+/// (0 — terminalning özi kiriş kutyapti), `input_empty` — kiriş qatori böşmi.
+pub fn term_ctrl_action(key: u16, fg_pid: usize, input_empty: bool) -> TermCtrl {
+    match key {
+        46 if fg_pid != 0 => TermCtrl::Interrupt,
+        46 => TermCtrl::CancelLine,
+        38 => TermCtrl::Clear,
+        22 => TermCtrl::KillLine,
+        32 if fg_pid == 0 && input_empty => TermCtrl::Close,
+        _ => TermCtrl::None,
+    }
+}
+
+/// `term_ctrl_action` self-testi: 4 ta yorliq, oldingi planda dastur bor/yöq holatlari.
+pub fn self_test_term_ctrl() -> Result<usize, &'static str> {
+    let cases: [(u16, usize, bool, TermCtrl); 12] = [
+        (46, 7, false, TermCtrl::Interrupt),
+        (46, 7, true, TermCtrl::Interrupt),
+        (46, 0, false, TermCtrl::CancelLine),
+        (46, 0, true, TermCtrl::CancelLine),
+        (38, 0, false, TermCtrl::Clear),
+        (38, 7, true, TermCtrl::Clear),
+        (22, 0, false, TermCtrl::KillLine),
+        (22, 7, false, TermCtrl::KillLine),
+        (32, 0, true, TermCtrl::Close),
+        (32, 0, false, TermCtrl::None),
+        (32, 7, true, TermCtrl::None),
+        (30, 0, true, TermCtrl::None),
+    ];
+    for &(k, fg, empty, want) in &cases {
+        if term_ctrl_action(k, fg, empty) != want {
+            return Err("term_ctrl_action notöğri natija");
+        }
+    }
+    Ok(cases.len())
+}
+
+/// Terminal oynasining oldingi plan dasturi (terminal jarayoni belgilagan bolasi; 0 — yöq).
+fn term_fg(w: &Window) -> task::Pid {
+    if w.pid == 0 { 0 } else { task::foreground_of(w.pid) }
+}
+
+/// Terminal oynasida Ctrl+tugma. `true` — oyna yopilişi kerak.
+fn term_ctrl(w: &mut Window, code: u16) -> bool {
+    let fg = term_fg(w);
+    let act = term_ctrl_action(code, fg, w.input.is_empty());
+    if act != TermCtrl::None {
+        w.term_scroll = 0;
+        w.tsel = None;
+    }
+    match act {
+        TermCtrl::Interrupt | TermCtrl::CancelLine => {
+            // terilgan matn + ^C — tugagan qator sifatida qoladi
+            let line = core::mem::take(&mut w.input);
+            w.cur.extend_from_slice(line.as_bytes());
+            w.cur.extend_from_slice(b"^C");
+            push_line(w);
+            term_trim(w);
+            if act == TermCtrl::Interrupt {
+                task::kill(fg);
+            } else if w.pin != NONE_PIPE {
+                let _ = pipe::try_write(w.pin, b"\x03"); // terminal yangi taklif çiqaradi
+            }
+        }
+        TermCtrl::Clear => w.tclear = w.lines.len(),
+        TermCtrl::KillLine => w.input.clear(),
+        TermCtrl::Close => return true,
+        TermCtrl::None => {}
+    }
+    false
+}
+
+/// Tarix çegarasi; Ctrl+L belgisi ham kesilgan qatorlarga moslanadi.
+fn term_trim(win: &mut Window) {
+    let before = win.lines.len();
+    crate::termbuf::trim(&mut win.lines);
+    win.tclear = win.tclear.saturating_sub(before - win.lines.len());
+}
+
+/// Pastki (aylantirilmagan) holatda birinçi körinadigan vizual qator — Ctrl+L dan
+/// keyin ekran tozalangan qatordan boşlanadi. Qaytaradi (birinçi qator, eng katta aylantiriş).
+fn term_first(win: &Window, rows: &[(usize, usize, usize)], vis: usize) -> (usize, usize) {
+    let total = rows.len();
+    let clear_row = if win.tclear == 0 { 0 } else { rows.iter().position(|r| r.0 >= win.tclear).unwrap_or(total) };
+    let base = total.saturating_sub(vis).max(clear_row.min(total.saturating_sub(1)));
+    (base - win.term_scroll.min(base), base)
+}
+
 fn type_key(w: &mut Window, code: u16, shift: bool) {
     if w.kind == Kind::Editor {
         editor_key(w, code, shift);
@@ -2116,7 +2236,7 @@ fn type_key(w: &mut Window, code: u16, shift: bool) {
         // ↑ / ↓ / Tab (va böş qatorda Backspace): terminalning özi qatorni tahrirlaydi —
         // terilgan matn + boşqaruv baytlarini quvurga yuboramiz, u \r + qator + ESC[K bilan qayta çizadi.
         // Faqat terminalning özi kiriş kutayotganda (oldingi planda dastur yöq).
-        103 | 108 | 15 | 14 if w.pin != NONE_PIPE && task::foreground() == 0 && (code != 14 || w.input.is_empty()) => {
+        103 | 108 | 15 | 14 if w.pin != NONE_PIPE && term_fg(w) == 0 && (code != 14 || w.input.is_empty()) => {
             let mut data = core::mem::take(&mut w.input).into_bytes();
             data.extend_from_slice(match code {
                 103 => b"\x1b[A",
@@ -4648,10 +4768,9 @@ fn draw_terminal(win: &Window) {
     let (_, vis) = term_geom(win);
     let (full, rows) = term_text(win);
     let total = rows.len();
-    let max = total.saturating_sub(vis);
-    let sc = win.term_scroll.min(max);
-    // pastga yopişgan; `sc` vizual qator yuqoriga aylantirilgan bölişi mumkin
-    let first = total - vis.min(total) - sc;
+    // pastga yopişgan (Ctrl+L dan keyin — tozalangan qatordan); yuqoriga aylantirilgan bölişi mumkin
+    let (first, max) = term_first(win, &rows, vis);
+    let sc = max - first;
     let li_cur = win.lines.len();
     let mut ty = top + pad;
     let mut ex = win.x + pad;
@@ -4671,7 +4790,7 @@ fn draw_terminal(win: &Window) {
         gfx::blend_rect(ex, ty - lh, gfx::mono_advance(px), px + 2, 0x5be37d, 190);
     }
     // öng çetda ingiçka aylantiriş çiziği
-    if total > vis {
+    if total > vis && max > 0 {
         let track_y = top + pad;
         let track_h = vis * lh;
         let thumb_h = (track_h * vis / total).max(px);

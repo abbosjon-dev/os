@@ -563,6 +563,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] terminal scrollback: {} qator çegarasi, söz/belgi böyiça öraş, UTF-8, tanlov va söz çegarasi ({} sinov)", termbuf::MAX_LINES, n),
         Err(e) => panic!("terminal scrollback tekşiruvi yiqildi: {}", e),
     }
+    match gui::self_test_term_ctrl() {
+        Ok(n) => println!("  [ok] terminal Ctrl: C (töxtatiş / qatorni bekor qiliş), L (tozalaş), U (qatorni öçiriş), D (yopiş), oldingi plan bor/yöq ({} sinov)", n),
+        Err(e) => panic!("terminal Ctrl tekşiruvi yiqildi: {}", e),
+    }
     match edit::self_test() {
         Ok(n) => println!("  [ok] muharrir undo/qidiruv/tanlaş: söz guruhlaş, {} qadam, UTF-8 ustun, köp qatorli nusxa/kesiş/joylaş ({} sinov)", edit::MAX_STEPS, n),
         Err(e) => panic!("muharrir undo/qidiruv tekşiruvi yiqildi: {}", e),

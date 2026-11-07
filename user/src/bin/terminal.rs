@@ -347,6 +347,11 @@ impl Shell {
                     edit = cur.into_bytes();
                     self.redraw(&String::from_utf8_lossy(&edit));
                 }
+                // Ctrl+C (grafik terminal `^C` ni özi çiqaradi): qator bekor, yangi taklif
+                0x03 => {
+                    edit.clear();
+                    self.prompt();
+                }
                 0..=0x1f => {}
                 _ => edit.push(b),
             }

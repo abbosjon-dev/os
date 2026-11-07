@@ -197,7 +197,9 @@
       "id": "T25",
       "title": "Grafik terminal: Ctrl tugmasi, Ctrl+C bilan dasturni to'xtatish, Ctrl+L, Ctrl+U, Ctrl+D",
       "detail": "GUI da Ctrl tugmasi umuman kuzatilmaydi: src/gui.rs da faqat shift (42|54), alt (56), AltGr (100) bor. Shuning uchun grafik terminalda ishlab turgan dasturni (masalan, 'ping' yoki cheksiz 'soat') to'xtatib bo'lmaydi. Yadroda esa task::interrupt_foreground() (src/task/mod.rs:951) tayyor turibdi va terminal.rs set_foreground() ni chaqiradi. Fayllar: src/gui.rs (asosiy input::poll() sikli ~1684 va boshqa shift/alt kuzatiladigan joylar: 29/97 kodlari uchun ctrl holati; Kind::Terminal klaviatura ishlovi ~2119), user/src/bin/terminal.rs (kerak bo'lsa 0x03/0x04/0x15/0x0c ga javob). Xatti-harakatlar: Ctrl+C — task::foreground() != 0 bo'lsa interrupt_foreground() chaqiriladi va '^C' chiqadi; foreground yo'q bo'lsa joriy kiritish qatori tozalanadi va yangi prompt chiqadi. Ctrl+L — ekran tozalanadi (scrollback saqlanadi). Ctrl+U — kiritish qatori o'chiriladi. Ctrl+D — bo'sh qatorda terminal oynasi yopiladi. Mavjud Alt yorliqlari (Alt+C/V va h.k.) buzilmasligi kerak. Muharrirda Ctrl+harf belgi sifatida kiritilmasligi kerak. Mantiq sof funksiyaga ajratiladi: term_ctrl_action(key, fg_pid, input_empty) -> TermCtrl. Qabul mezoni: self-test '[ok] terminal Ctrl' 4 ta yorliq va fg bor/yo'q holatlarini tekshiradi. Skrinshot docs/apps/terminal-ctrlc.png: 'ping' dan keyin '^C' va yangi prompt. README dagi 'Zamin terminali' va 'Klaviatura yorliqlari' bo'limlari yangilanadi. verify.sh full o'tadi.",
-      "batch": 4
+      "batch": 4,
+      "status": "done",
+      "done_at": "2026-11-07 02:50:03"
     },
     {
       "id": "T26",

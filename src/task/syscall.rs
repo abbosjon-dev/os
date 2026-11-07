@@ -297,7 +297,8 @@ fn handle(num: u64, a: [u64; 6]) -> SysResult {
         }
         SYS_FOREGROUND => {
             if !task::is_trusted() {
-                return Err(ERR_DENIED);
+                // grafik terminal: faqat öz bolasini (jarayonning öz maydoniga) belgilay oladi
+                return if task::set_own_foreground(a[0] as usize) { Ok(0) } else { Err(ERR_DENIED) };
             }
             task::set_foreground(a[0] as usize);
             Ok(0)
