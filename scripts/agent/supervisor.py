@@ -56,6 +56,9 @@ DEFAULT_CFG = {
 }
 
 RUNNING = {"child": None, "stop": False}
+# Agent tegmasligi kerak bo'lgan fayllar (billing himoyasi va boshqaruv)
+PROTECTED = ["scripts/agent/guard.py", "scripts/agent/supervisor.py", "scripts/agent/start.sh",
+             "scripts/agent/stop.sh", "scripts/agent/status.sh", ".agent/config.json", ".gitignore"]
 
 
 def now():
@@ -442,6 +445,19 @@ def loop(cfg, state):
             state["session_id"] = res["session_id"]
         recovering = False
         text = str(res.get("result", ""))
+        # Billing/supervisor fayllarini agent o'zgartira olmaydi — qaytariladi
+        prot = [f for f in git("diff", "--name-only", head0, "--", *PROTECTED).splitlines() if f]
+        prot += [f for f in git("ls-files", "--others", "--exclude-standard", "--", *PROTECTED).splitlines() if f]
+        if prot:
+            log("OGOHLANTIRISH: agent himoyalangan fayllarni o'zgartirdi — qaytarildi: " + ", ".join(prot))
+            for f in prot:
+                if subprocess.run(["git", "cat-file", "-e", f"{head0}:{f}"], cwd=REPO).returncode == 0:
+                    subprocess.run(["git", "checkout", head0, "--", f], cwd=REPO, capture_output=True)
+                else:
+                    try:
+                        os.remove(os.path.join(REPO, f))
+                    except OSError:
+                        pass
         ok, vlog = verify(cfg)
         claimed = "TASK_DONE" in text
         blocked = "TASK_BLOCKED" in text

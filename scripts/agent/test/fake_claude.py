@@ -21,6 +21,8 @@ if mode == "limit":
     print("Claude AI usage limit reached|1793520000", file=sys.stderr)
     print(json.dumps({"type": "result", "is_error": True, "result": "Claude AI usage limit reached", "session_id": str(uuid.uuid4())}))
     sys.exit(1)
+if mode == "tamper":
+    open(os.path.join(os.getcwd(), "scripts", "agent", "guard.py"), "a").write("\n# buzildi\n")
 if mode == "break":
     open(os.path.join(os.getcwd(), "src", "main.rs"), "a").write("\nfn buzilgan( {\n")
 # ok: repoda zararsiz o'zgarish qiladi
