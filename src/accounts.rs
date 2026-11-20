@@ -247,3 +247,67 @@ pub fn master_key() -> Option<[u8; 32]> {
 pub fn current_uid() -> u32 {
     CURRENT.lock().as_ref().map_or(0, |a| a.uid)
 }
+
+/// Parolni özgartiriş şartlari (sof mantiq, GUI va sinovlar uçun).
+/// `old_ok` — eski parol `verify` dan ötdimi.
+pub fn validate_password_change(old_ok: bool, new: &str, repeat: &str) -> Result<(), &'static str> {
+    if !old_ok {
+        return Err("Eski parol notöğri");
+    }
+    if new != repeat {
+        return Err("Parollar mos emas");
+    }
+    if new.chars().count() < 4 {
+        return Err("Juda qisqa (<4)");
+    }
+    Ok(())
+}
+
+/// Yangi foydalanuvçi maʼlumotlarini tekşiradi (login band emasligi ham).
+pub fn validate_new_user(full_name: &str, username: &str, password: &str) -> Result<(), &'static str> {
+    if full_name.trim().is_empty() {
+        return Err("Töliq ismni kiriting");
+    }
+    if !valid_username(username) {
+        return Err("Login notöğri: a-z, 0-9, - va _ (2-32)");
+    }
+    if find(username).is_some() {
+        return Err("Bunday login allaqaçon bor");
+    }
+    if password.chars().count() < 4 {
+        return Err("Juda qisqa (<4)");
+    }
+    Ok(())
+}
+
+/// Self-test: validatsiya, parolni almaştiriş (yangi parol ötadi, eskisi — yöq), login tekşiruvi.
+pub fn self_test() -> Result<usize, &'static str> {
+    let mut n = 0;
+    let mut check = |ok: bool, e: &'static str| -> Result<(), &'static str> {
+        n += 1;
+        if ok { Ok(()) } else { Err(e) }
+    };
+    check(validate_password_change(false, "abcd", "abcd") == Err("Eski parol notöğri"), "eski parol")?;
+    check(validate_password_change(true, "abcd", "abce") == Err("Parollar mos emas"), "mos emas")?;
+    check(validate_password_change(true, "abc", "abc") == Err("Juda qisqa (<4)"), "qisqa")?;
+    check(validate_password_change(true, "şöğç", "şöğç").is_ok(), "4 belgi (UTF-8)")?;
+    check(validate_password_change(true, "yangi-parol", "yangi-parol").is_ok(), "töğri")?;
+
+    let key = [0x5au8; 32];
+    let mut a = create("sinov-hisob", "Sinov", "eski1234", 60000, false, &key);
+    check(verify(&a, "eski1234"), "yaratilgan hisob")?;
+    set_password(&mut a, &key, "yangi5678");
+    check(verify(&a, "yangi5678"), "yangi parol ötmadi")?;
+    check(!verify(&a, "eski1234"), "eski parol hali ham ötyapti")?;
+    let mut k = unlock(&a, "yangi5678").ok_or("kalit oçilmadi")?;
+    check(k == key, "asosiy kalit özgarib qoldi")?;
+    zeroize(&mut k);
+
+    for bad in ["", "a", "Ali", "1ali", "ali vali", "ali!", "şahzod", "-ali"] {
+        check(validate_new_user("Ali Valiyev", bad, "parol1") == Err("Login notöğri: a-z, 0-9, - va _ (2-32)"), "notöğri login qabul qilindi")?;
+    }
+    check(validate_new_user("  ", "ali", "parol1").is_err(), "böş ism")?;
+    check(validate_new_user("Ali", "ali", "abc") == Err("Juda qisqa (<4)"), "qisqa parol")?;
+    check(validate_new_user("Şahzod Öktam", &suggest_username("Şahzod Öktam"), "parol1").is_ok(), "taklif qilingan login")?;
+    Ok(n)
+}

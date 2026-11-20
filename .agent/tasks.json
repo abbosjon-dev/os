@@ -205,7 +205,9 @@
       "id": "T26",
       "title": "Sozlamalar → Foydalanuvçilar: parolni o'zgartirish va yangi hisob qo'shish (admin)",
       "detail": "Hozir bu bo'lim (src/gui.rs:5126, 4-tab) faqat ro'yxatni ko'rsatadi. accounts.rs da esa verify, set_password, create, upsert, next_uid, valid_username, suggest_username bor. Fayllar: src/gui.rs (settings 4-tab chizish, settings_click ~5225, Settings oynasi uchun klaviatura kiritishi: Kind::Settings ni takes_keys ga faqat dialog ochiq bo'lganda qo'shish yoki alohida holat orqali), src/accounts.rs. Ishlar: (1) Joriy foydalanuvchi qatorida 'Parolni o'zgartirish' tugmasi bo'ladi. Dialogda eski parol, yangi parol va takror maydonlari (yulduzcha bilan), Enter/Tab ishlaydi. accounts::verify bilan tekshiriladi, keyin set_password(master_key()) chaqiriladi va hisoblar diskka saqlanadi (birinchi sozlashdagi saqlash yo'lidan foydalan). Xatolar matn bilan ko'rsatiladi: 'Eski parol noto'g'ri', 'Parollar mos emas', 'Juda qisqa (<4)'. (2) Admin uchun '+ Foydalanuvchi qo'shish' bo'ladi: to'liq ism, login (suggest_username bilan to'ldiriladi, valid_username bilan tekshiriladi), parol. Natijada bildirishnoma chiqadi. Mantiq sof funksiyada: validate_password_change(old_ok, new, repeat) -> Result<(), &str>. Qabul mezoni: self-test '[ok] hisob sozlamalari' validate funksiyasini, set_password'dan keyin yangi parol bilan verify true, eskisi bilan false ekanini, noto'g'ri login rad etilishini tekshiradi. Skrinshot docs/settings-users.png (dialog ochiq). README Sozlamalar bo'limi yangilanadi. verify.sh full o'tadi.",
-      "batch": 4
+      "batch": 4,
+      "status": "done",
+      "done_at": "2026-11-20 00:52:05"
     },
     {
       "id": "T27",

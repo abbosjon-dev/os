@@ -575,6 +575,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] fayllar saralaş: nom/hajm/sana/tur, teskari tartib, papkalar birinçi, human_size ({} sinov)", n),
         Err(e) => panic!("fayllar saralaş tekşiruvi yiqildi: {}", e),
     }
+    match accounts::self_test() {
+        Ok(n) => println!("  [ok] hisob sozlamalari: parolni özgartiriş tekşiruvi, set_password (yangi — ötadi, eski — yöq), login validatsiyasi ({} sinov)", n),
+        Err(e) => panic!("hisob sozlamalari tekşiruvi yiqildi: {}", e),
+    }
     match net::webstore::self_test() {
         Ok(n) => println!("  [ok] localStorage/cookie diskka saqlaş (~/.zamin): kodlaş ({} yozuv)", n),
         Err(e) => panic!("localStorage/cookie saqlaş tekşiruvi yiqildi: {}", e),

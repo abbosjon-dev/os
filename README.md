@@ -84,6 +84,25 @@ panelida karnay belgisi bor (daraja böyiça 1–3 tölqin; övozsiz bölsa usti
 
 <img src="docs/settings-sound.png" width="480">
 
+**Foydalanuvçilar: parolni özgartiriş va yangi hisob.** Sozlamalar → **Foydalanuvçilar**
+bölimida joriy foydalanuvçi qatorida **"Parolni özgartiriş"** tugmasi bor. Dialogda eski
+parol, yangi parol va takrori (yulduzça bilan) teriladi; `Tab` / `Shift+Tab` — maydonlar
+orasida, `Enter` — keyingi maydon / tasdiq, `Esc` — bekor. Eski parol `accounts::verify`
+bilan tekşiriladi, keyin `set_password` disk kalitini (`master_key()`) yangi parol bilan
+qayta öraydi va hisoblar birinçi sozlaşdagi yöl bilan diskka saqlanadi — fayllar qayta
+şifrlanmaydi. Xatolar dialogda matn bilan çiqadi: *"Eski parol notöğri"*, *"Parollar mos
+emas"*, *"Juda qisqa (<4)"*. Administrator uçun röyxat ostida **"+ Foydalanuvçi qöşiş"**:
+töliq ism, login (ismdan `suggest_username` bilan avtomatik töldiriladi, qölda
+özgartirilsa — saqlanadi; `valid_username` bilan tekşiriladi, band login rad etiladi) va
+parol. Natijada hisob (keyingi uid, uy papkasi bilan) yaratiladi va bildirişnoma çiqadi.
+Oddiy foydalanuvçiga bu tugma körsatilmaydi. Mantiq sof funksiyalarda:
+`accounts::validate_password_change(eski_töğrimi, yangi, takror)` va
+`validate_new_user(ism, login, parol)`; yuklanişda `[ok] hisob sozlamalari` ularni,
+`set_password` dan keyin yangi parol ötişini va eskisi ötmasligini (disk kaliti
+özgarmasligini ham), notöğri loginlar rad etilişini tekşiradi.
+
+<img src="docs/settings-users.png" width="480">
+
 ### Kontekst menyulari va öz rasmingiz fonda
 
 ![Kontekst menyulari](docs/context-menus.jpg)

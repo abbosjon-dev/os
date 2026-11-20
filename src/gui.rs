@@ -185,6 +185,7 @@ struct Window {
     find: Option<String>, // Muharrir: qidiruv maydoni (oçiq bölsa — so'rov)
     find_at: usize,     // Muharrir: joriy moslik indeksi
     sel: Option<(usize, usize)>, // Muharrir: tanlaş langari (qator, ustun); oxiri — kursor
+    udlg: Option<Box<UserDlg>>, // Sozlamalar → Foydalanuvçilar: oçiq dialog (parol / yangi hisob)
 }
 
 impl Window {
@@ -368,6 +369,7 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         find: None,
         find_at: 0,
         sel: None,
+        udlg: None,
     }
 }
 
@@ -1848,6 +1850,10 @@ fn desktop() {
                     editor_find_toggle(windows.last_mut().unwrap());
                     changed = true;
                 }
+                (input::EV_KEY, 1) if e.value == 1 && windows.last().is_some_and(|w| !w.hidden && w.udlg.is_some()) => {
+                    windows.last_mut().unwrap().udlg = None; // Sozlamalar dialogini yopiş
+                    changed = true;
+                }
                 (input::EV_KEY, 1) if e.value == 1 && windows.last().is_some_and(|w| w.rename.is_some()) => {
                     windows.last_mut().unwrap().rename = None; // nomini özgartirişni bekor qiliş
                     changed = true;
@@ -1957,6 +1963,7 @@ fn desktop() {
                         Some(Kind::Monitor) => monitor_key(windows.last_mut().unwrap(), code),
                         Some(Kind::Puzzle) => puzzle_key(windows.last_mut().unwrap(), code),
                         Some(Kind::Browser) => web_key(windows.last_mut().unwrap(), code, shift),
+                        Some(Kind::Settings) => udlg_key(windows.last_mut().unwrap(), code, shift),
                         Some(Kind::Trash) if code == 111 => {
                             let w = windows.last_mut().unwrap();
                             if let Some(name) = w.fsel.and_then(|s| w.rows.get(s)).map(|r| r.0.clone()) {
@@ -5140,8 +5147,15 @@ fn ip_str(ip: [u8; 4]) -> String {
     alloc::format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
 }
 
-/// Sozlamalar oynasi: çapda bölimlar, öngda tanlangan bölim.
+/// Sozlamalar oynasi: çapda bölimlar, öngda tanlangan bölim (+ oçiq dialog).
 fn draw_settings(win: &Window) {
+    draw_settings_body(win);
+    if win.tab == 4 && win.udlg.is_some() {
+        draw_udlg(win);
+    }
+}
+
+fn draw_settings_body(win: &Window) {
     let u = body();
     let top = win.y + title_h();
     let (sbw, x, y0, ih) = settings_geo(win);
@@ -5242,37 +5256,7 @@ fn draw_settings(win: &Window) {
                 ("MAC", if up { mac } else { String::from("—") }),
             ]);
         }
-        4 => {
-            let me = accounts::current().map(|a| a.username).unwrap_or_default();
-            let list = accounts::all();
-            let rh = u * 5 / 2;
-            fill_round_rect_a(x, y, rw, rh * list.len().max(1), u / 2, 0xffffff, 12);
-            for (i, a) in list.iter().enumerate() {
-                let ry = y + i * rh;
-                if i > 0 {
-                    fill_rect(x + u / 2, ry, rw - u, 1, 0x2a3346);
-                }
-                let ar = u * 3 / 4;
-                gfx::fill_circle(x + u + ar / 2, ry + rh / 2, ar, 0x1f8a46);
-                let ini = a.full_name.chars().next().unwrap_or('?').to_uppercase().collect::<String>();
-                gfx::draw_text_centered(x + u + ar / 2, ry + rh / 2 - small() / 2, &ini, OQ, small());
-                let tx = x + u * 3;
-                gfx::draw_text(tx, ry + u / 3, &a.full_name, OQ, small());
-                gfx::draw_text(tx, ry + u / 3 + small() + 2, &alloc::format!("@{} · uid {}", a.username, a.uid), 0x8a9ab0, small() * 4 / 5);
-                let mut badge = String::new();
-                if a.admin {
-                    badge.push_str("Administrator");
-                }
-                if a.username == me {
-                    if !badge.is_empty() {
-                        badge.push_str(" · ");
-                    }
-                    badge.push_str("Siz");
-                }
-                let bw = gfx::text_width(&badge, small() * 4 / 5);
-                gfx::draw_text((x + rw).saturating_sub(bw + u / 2), ry + (rh - small()) / 2, &badge, accent(), small() * 4 / 5);
-            }
-        }
+        4 => draw_users(win),
         5 => {
             let items = [
                 ("W^X", "Kod — faqat öqiş, maʼlumot — bajarilmaydi"),
@@ -5312,6 +5296,357 @@ fn draw_settings(win: &Window) {
     }
 }
 
+
+// ---------------- Sozlamalar → Foydalanuvçilar: parol va yangi hisob ----------------
+
+/// Foydalanuvçilar bölimidagi dialog turi.
+#[derive(Clone, Copy, PartialEq)]
+enum UdlgMode {
+    /// Joriy foydalanuvçi parolini özgartiriş: eski, yangi, takror
+    Passwd,
+    /// Administrator yangi hisob qöşadi: töliq ism, login, parol
+    AddUser,
+}
+
+struct UserDlg {
+    mode: UdlgMode,
+    fields: [String; 3],
+    focus: usize,
+    /// Login qölda tahrirlandimi (yöq bölsa — ismdan taklif qilinadi)
+    login_edited: bool,
+    err: Option<&'static str>,
+}
+
+impl UserDlg {
+    fn new(mode: UdlgMode) -> UserDlg {
+        UserDlg { mode, fields: [String::new(), String::new(), String::new()], focus: 0, login_edited: false, err: None }
+    }
+    fn title(&self) -> &'static str {
+        match self.mode {
+            UdlgMode::Passwd => "Parolni özgartiriş",
+            UdlgMode::AddUser => "Yangi foydalanuvçi",
+        }
+    }
+    fn label(&self, k: usize) -> &'static str {
+        match (self.mode, k) {
+            (UdlgMode::Passwd, 0) => "Eski parol",
+            (UdlgMode::Passwd, 1) => "Yangi parol",
+            (UdlgMode::Passwd, _) => "Yangi parolni takrorlang",
+            (UdlgMode::AddUser, 0) => "Töliq ism",
+            (UdlgMode::AddUser, 1) => "Login",
+            (UdlgMode::AddUser, _) => "Parol (kamida 4 belgi)",
+        }
+    }
+    /// Maydon yulduzça bilan yaşiriladimi.
+    fn masked(&self, k: usize) -> bool {
+        self.mode == UdlgMode::Passwd || k == 2
+    }
+    fn ok_label(&self) -> &'static str {
+        match self.mode {
+            UdlgMode::Passwd => "Saqlaş",
+            UdlgMode::AddUser => "Qöşiş",
+        }
+    }
+}
+
+impl Drop for UserDlg {
+    fn drop(&mut self) {
+        // Parollar xotirada qolmasin
+        for f in self.fields.iter_mut() {
+            accounts::forget(core::mem::take(f));
+        }
+    }
+}
+
+/// Foydalanuvçilar röyxati: (x, y, eni, qator balandligi).
+fn users_geo(win: &Window) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (_, x, y0, _) = settings_geo(win);
+    let rw = (win.x + win.w).saturating_sub(x + u);
+    (x, y0 + u * 2, rw, u * 5 / 2)
+}
+
+const PASSWD_BTN: &str = "Parolni özgartiriş";
+const ADD_USER_BTN: &str = "+ Foydalanuvçi qöşiş";
+
+/// i-qatordagi "Parolni özgartiriş" tugmasi.
+fn passwd_btn(win: &Window, i: usize) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (x, y, rw, rh) = users_geo(win);
+    let bw = gfx::text_width(PASSWD_BTN, small() * 4 / 5) + u * 3 / 2;
+    let bh = u * 5 / 4;
+    ((x + rw).saturating_sub(bw + u / 2), y + i * rh + (rh - bh) / 2, bw, bh)
+}
+
+/// Röyxat ostidagi "+ Foydalanuvçi qöşiş" tugmasi (n — hisoblar soni).
+fn add_user_btn(win: &Window, n: usize) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (x, y, _, rh) = users_geo(win);
+    let bw = gfx::text_width(ADD_USER_BTN, small() * 9 / 10) + u * 2;
+    (x, y + rh * n.max(1) + u * 2 / 3, bw, u * 3 / 2)
+}
+
+fn draw_users(win: &Window) {
+    let u = body();
+    let (x, y, rw, rh) = users_geo(win);
+    let me = accounts::current();
+    let me_name = me.as_ref().map(|a| a.username.clone()).unwrap_or_default();
+    let list = accounts::all();
+    fill_round_rect_a(x, y, rw, rh * list.len().max(1), u / 2, 0xffffff, 12);
+    for (i, a) in list.iter().enumerate() {
+        let ry = y + i * rh;
+        if i > 0 {
+            fill_rect(x + u / 2, ry, rw - u, 1, 0x2a3346);
+        }
+        let ar = u * 3 / 4;
+        gfx::fill_circle(x + u + ar / 2, ry + rh / 2, ar, 0x1f8a46);
+        let ini = a.full_name.chars().next().unwrap_or('?').to_uppercase().collect::<String>();
+        gfx::draw_text_centered(x + u + ar / 2, ry + rh / 2 - small() / 2, &ini, OQ, small());
+        let tx = x + u * 3;
+        gfx::draw_text(tx, ry + u / 3, &a.full_name, OQ, small());
+        gfx::draw_text(tx, ry + u / 3 + small() + 2, &alloc::format!("@{} · uid {}", a.username, a.uid), 0x8a9ab0, small() * 4 / 5);
+        let mut badge = String::new();
+        if a.admin {
+            badge.push_str("Administrator");
+        }
+        let mut right = x + rw - u / 2;
+        if a.username == me_name {
+            if !badge.is_empty() {
+                badge.push_str(" · ");
+            }
+            badge.push_str("Siz");
+            let (bx, by, bw, bh) = passwd_btn(win, i);
+            fill_round_rect_a(bx, by, bw, bh, bh / 2, accent(), 200);
+            gfx::draw_text_centered(bx + bw / 2, by + (bh - small() * 4 / 5) / 2, PASSWD_BTN, OQ, small() * 4 / 5);
+            right = bx.saturating_sub(u / 2);
+        }
+        let bw = gfx::text_width(&badge, small() * 4 / 5);
+        gfx::draw_text(right.saturating_sub(bw), ry + (rh - small()) / 2, &badge, accent(), small() * 4 / 5);
+    }
+    if me.as_ref().is_some_and(|a| a.admin) {
+        let (bx, by, bw, bh) = add_user_btn(win, list.len());
+        fill_round_rect_a(bx, by, bw, bh, bh / 2, 0xffffff, 26);
+        gfx::round_outline(bx, by, bw, bh, bh / 2, 1, 0x3a4458);
+        gfx::draw_text_centered(bx + bw / 2, by + (bh - small() * 9 / 10) / 2, ADD_USER_BTN, OQ, small() * 9 / 10);
+    } else {
+        let (bx, by, _, _) = add_user_btn(win, list.len());
+        gfx::draw_text(bx, by, "Yangi hisobni faqat administrator qöşa oladi", 0x6f7f95, small() * 4 / 5);
+    }
+}
+
+/// Röyxatdagi tugmalarga bosiş (dialog yopiq).
+fn users_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    let list = accounts::all();
+    let me = accounts::current();
+    if let Some(i) = me.as_ref().and_then(|m| list.iter().position(|a| a.username == m.username)) {
+        if in_rect(passwd_btn(win, i), cx, cy) {
+            win.udlg = Some(Box::new(UserDlg::new(UdlgMode::Passwd)));
+            return true;
+        }
+    }
+    if me.as_ref().is_some_and(|a| a.admin) && in_rect(add_user_btn(win, list.len()), cx, cy) {
+        win.udlg = Some(Box::new(UserDlg::new(UdlgMode::AddUser)));
+        return true;
+    }
+    false
+}
+
+/// Dialog kartasi: (x, y, eni, böyi).
+fn udlg_card(win: &Window) -> (usize, usize, usize, usize) {
+    let u = body();
+    let top = win.y + title_h();
+    let ch_area = (win.y + win.h).saturating_sub(top);
+    let cw = (u * 22).min(win.w.saturating_sub(u * 2));
+    let ch = u * 3 + 3 * (small() + u * 2) + u * 3 / 2 + u * 2;
+    (win.x + (win.w - cw) / 2, top + ch_area.saturating_sub(ch) / 2, cw, ch)
+}
+
+/// k-maydon kiriş qutisi.
+fn udlg_field(win: &Window, k: usize) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (x, y, w, _) = udlg_card(win);
+    let fy = y + u * 3 + k * (small() + u * 2) + small() + u / 6;
+    (x + u, fy, w - u * 2, u * 3 / 2)
+}
+
+/// Pastki tugmalar: 0 — bekor, 1 — tasdiq.
+fn udlg_btn(win: &Window, k: usize) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (x, y, w, h) = udlg_card(win);
+    let (bw, bh) = (u * 6, u * 3 / 2);
+    let by = y + h - bh - u * 2 / 3;
+    let bx = x + w - u - bw - if k == 0 { bw + u / 2 } else { 0 };
+    (bx, by, bw, bh)
+}
+
+fn draw_udlg(win: &Window) {
+    let Some(d) = win.udlg.as_ref() else { return };
+    let u = body();
+    let top = win.y + title_h();
+    // Oynani xiralaştiriş
+    fill_round_rect_a(win.x, top, win.w, (win.y + win.h).saturating_sub(top), radius(), 0x000000, 130);
+    let (x, y, w, h) = udlg_card(win);
+    gfx::fill_round_rect(x, y, w, h, u / 2, 0x1c2433);
+    gfx::round_outline(x, y, w, h, u / 2, 1, 0x3a4458);
+    gfx::draw_text(x + u, y + u * 2 / 3, d.title(), OQ, u * 11 / 10);
+    for k in 0..3 {
+        let (fx, fy, fw, fh) = udlg_field(win, k);
+        gfx::draw_text(fx, fy - small() - u / 6, d.label(k), 0x9fb0c3, small() * 4 / 5);
+        gfx::fill_round_rect(fx, fy, fw, fh, u / 3, 0x0f141d);
+        let focused = k == d.focus;
+        gfx::round_outline(fx, fy, fw, fh, u / 3, if focused { 2 } else { 1 }, if focused { accent() } else { 0x3a4458 });
+        let shown: String = if d.masked(k) { d.fields[k].chars().map(|_| '*').collect() } else { d.fields[k].clone() };
+        let px = small() * 9 / 10;
+        let mut t = shown;
+        // Uzun matnning oxiri körinadi
+        while gfx::text_width(&t, px) > fw.saturating_sub(u) && !t.is_empty() {
+            t.remove(0);
+        }
+        let ty = fy + (fh - px) / 2;
+        gfx::draw_text(fx + u / 2, ty, &t, OQ, px);
+        if focused {
+            let cxp = fx + u / 2 + gfx::text_width(&t, px) + 1;
+            fill_rect(cxp, ty, 2, px, accent());
+        }
+    }
+    if let Some(e) = d.err {
+        let (fx, fy, _, fh) = udlg_field(win, 2);
+        gfx::draw_text(fx, fy + fh + u / 3, e, 0xff6b60, small() * 9 / 10);
+    }
+    for k in 0..2 {
+        let (bx, by, bw, bh) = udlg_btn(win, k);
+        if k == 1 {
+            gfx::fill_round_rect(bx, by, bw, bh, bh / 2, accent());
+        } else {
+            fill_round_rect_a(bx, by, bw, bh, bh / 2, 0xffffff, 30);
+        }
+        let lbl = if k == 1 { d.ok_label() } else { "Bekor" };
+        gfx::draw_text_centered(bx + bw / 2, by + (bh - small() * 9 / 10) / 2, lbl, OQ, small() * 9 / 10);
+    }
+    // Yordam — tugmalar çapida, ular bilan bir qatorda (ustma-ust tuşmaydi)
+    let (b0x, b0y, _, b0h) = udlg_btn(win, 0);
+    let hpx = small() * 7 / 10;
+    let avail = b0x.saturating_sub(x + u + u / 2);
+    let hint = if gfx::text_width("Tab — keyingi · Enter — tasdiq · Esc — bekor", hpx) <= avail { "Tab — keyingi · Enter — tasdiq · Esc — bekor" } else { "Tab · Enter · Esc" };
+    gfx::draw_text(x + u, b0y + (b0h - hpx) / 2, &fit_text(hint, avail, hpx), 0x6f7f95, hpx);
+}
+
+/// Dialog oçiq: bosiş maydonni tanlaydi yoki tugmani bosadi; oyna içida hammasini yutadi.
+fn udlg_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    if in_rect(udlg_btn(win, 0), cx, cy) {
+        win.udlg = None;
+        return true;
+    }
+    if in_rect(udlg_btn(win, 1), cx, cy) {
+        udlg_submit(win);
+        return true;
+    }
+    let mut hit = None;
+    for k in 0..3 {
+        if in_rect(udlg_field(win, k), cx, cy) {
+            hit = Some(k);
+        }
+    }
+    if let (Some(k), Some(d)) = (hit, win.udlg.as_mut()) {
+        d.focus = k;
+    }
+    win.contains(cx, cy)
+}
+
+/// Dialogga tugma bosiş: harflar, Backspace, Tab (Shift+Tab), Enter.
+fn udlg_key(win: &mut Window, code: u16, shift: bool) {
+    if win.tab != 4 {
+        return;
+    }
+    let Some(d) = win.udlg.as_mut() else { return };
+    match code {
+        15 => d.focus = if shift { (d.focus + 2) % 3 } else { (d.focus + 1) % 3 },
+        28 => {
+            if d.focus < 2 {
+                d.focus += 1;
+            } else {
+                udlg_submit(win);
+            }
+            return;
+        }
+        14 => {
+            d.fields[d.focus].pop();
+            if d.mode == UdlgMode::AddUser && d.focus == 1 {
+                d.login_edited = !d.fields[1].is_empty();
+            }
+        }
+        _ => {
+            let Some(ch) = keycode_char(code, shift) else { return };
+            if d.fields[d.focus].chars().count() >= 64 {
+                return;
+            }
+            d.fields[d.focus].push(ch);
+            if d.mode == UdlgMode::AddUser && d.focus == 1 {
+                d.login_edited = true;
+            }
+        }
+    }
+    if d.mode == UdlgMode::AddUser && d.focus == 0 && !d.login_edited {
+        d.fields[1] = if d.fields[0].trim().is_empty() { String::new() } else { accounts::suggest_username(&d.fields[0]) };
+    }
+    d.err = None;
+}
+
+/// Tasdiq: tekşiradi va saqlaydi; xato bölsa dialogda körsatadi.
+fn udlg_submit(win: &mut Window) {
+    let Some(d) = win.udlg.as_mut() else { return };
+    let res = match d.mode {
+        UdlgMode::Passwd => passwd_apply(&d.fields[0], &d.fields[1], &d.fields[2]),
+        UdlgMode::AddUser => add_user_apply(d.fields[0].trim(), &d.fields[1], &d.fields[2]),
+    };
+    match res {
+        Ok(()) => win.udlg = None,
+        Err(e) => {
+            d.err = Some(e);
+            // Eski parol notöğri — boşidan; mos kelmasa — takrorni qayta yozdiramiz
+            if d.mode == UdlgMode::Passwd {
+                d.focus = if e == "Eski parol notöğri" { 0 } else { 1 };
+                for k in d.focus..3 {
+                    accounts::forget(core::mem::take(&mut d.fields[k]));
+                }
+            }
+        }
+    }
+}
+
+/// Joriy foydalanuvçi parolini almaştiradi: disk kaliti qayta öraladi va sozlamalar saqlanadi.
+fn passwd_apply(old: &str, new: &str, repeat: &str) -> Result<(), &'static str> {
+    let mut me = accounts::current().ok_or("Tizimga heç kim kirmagan")?;
+    // Avval arzon tekşiruvlar, keyin PBKDF2 (sekin)
+    accounts::validate_password_change(true, new, repeat)?;
+    accounts::validate_password_change(accounts::verify(&me, old), new, repeat)?;
+    let key = accounts::master_key().ok_or("Disk kaliti oçilmagan")?;
+    accounts::set_password(&mut me, &key, new);
+    accounts::upsert(me.clone());
+    accounts::set_current(Some(me));
+    if crate::config::save_current() {
+        notify("Parol özgartirildi", "Keyingi kirişda yangi parol işlatiladi", 0x2fbf5f);
+    } else {
+        notify("Parol özgartirildi", "Disk yöq — faqat şu seans uçun", 0xff9f0a);
+    }
+    Ok(())
+}
+
+/// Administrator yangi hisob qöşadi (uy papkasi bilan).
+fn add_user_apply(full_name: &str, login: &str, password: &str) -> Result<(), &'static str> {
+    if !accounts::current().is_some_and(|a| a.admin) {
+        return Err("Faqat administrator qöşa oladi");
+    }
+    accounts::validate_new_user(full_name, login, password)?;
+    let key = accounts::master_key().ok_or("Disk kaliti oçilmagan")?;
+    let uid = accounts::next_uid();
+    accounts::upsert(accounts::create(login, full_name, password, uid, false, &key));
+    let _ = crate::config::save_current();
+    let home = fs::setup_home(login, uid).unwrap_or_default();
+    notify("Foydalanuvçi qöşildi", &alloc::format!("{} · @{} · uid {} · {}", full_name, login, uid, home), 0x2fbf5f);
+    Ok(())
+}
+
 /// Övoz bölimidagi slayder yöli (x, y, eni, qalinligi).
 fn vol_track(win: &Window) -> (usize, usize, usize, usize) {
     let u = body();
@@ -5349,8 +5684,18 @@ fn settings_click(win: &mut Window, cx: usize, cy: usize) -> bool {
         let i = (cy - top - u / 2) / ih;
         if i < SETTINGS_TABS.len() {
             win.tab = i;
+            win.udlg = None;
             return true;
         }
+    }
+    if win.udlg.is_some() {
+        if win.tab == 4 {
+            return udlg_click(win, cx, cy);
+        }
+        win.udlg = None;
+    }
+    if win.tab == 4 && users_click(win, cx, cy) {
+        return true;
     }
     if win.tab == 2 {
         let (tx, ty, tw, th) = vol_track(win);
