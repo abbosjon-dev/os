@@ -277,7 +277,9 @@
       "id": "T35",
       "batch": 5,
       "title": "Bosqich yakuni: VPS porti — versiyani oshirish",
-      "detail": "VPS bosqichi vazifalari haqiqatan ishlashini verify.sh full va skrinshot bilan tasdiqla. Patch versiyani oshir (Cargo.toml, README 'Joriy versiya' va tarix, zamin://malumot.json). README ga 'VPS ga o'rnatish' bo'limi. Ishlamasa TASK_BLOCKED."
+      "detail": "VPS bosqichi vazifalari haqiqatan ishlashini verify.sh full va skrinshot bilan tasdiqla. Patch versiyani oshir (Cargo.toml, README 'Joriy versiya' va tarix, zamin://malumot.json). README ga 'VPS ga o'rnatish' bo'limi. Ishlamasa TASK_BLOCKED.",
+      "status": "done",
+      "done_at": "2026-11-23 20:49:32"
     }
   ],
   "batch": 5,

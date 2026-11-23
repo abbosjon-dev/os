@@ -1,6 +1,6 @@
 [package]
 name = "zamin-kernel"
-version = "0.0.30"
+version = "0.0.31"
 edition = "2024"
 authors = ["Abbosjon Dev <info@zamin.app>"]
 homepage = "https://zamin.app"
@@ -24,4 +24,7 @@ opt-level = 2
 [profile.release]
 panic = "abort"
 opt-level = 3
-lto = true
+# To'liq (fat) LTO JS interpretatorining eval/call ni bir-biriga inline qilib, har bir JS
+# çaqiruvi ~4.5 KiB stek olardi va 60 KiB yadro stekida fib(15) self-testi yiqilardi
+# (VPS obrazi --release bilan yuklanmasdi). Thin LTO: ~3.5 KiB, debug bilan bir xil.
+lto = "thin"

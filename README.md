@@ -731,6 +731,40 @@ bölimga yoziladi (MBR, ikkala GPT sarlavhasi va ESP butun) → qayta yuklanişd
 
 ![VPS obrazi: UEFI + GICv3 + virtio-pci](docs/vps-boot.png)
 
+## VPS ga örnatiş
+
+Zamin OS ARM64 VPS da (masalan, **Netcup VPS ARM G12**) öz yadrosi bilan, Linux siz
+işlaydi. Talablar: **AArch64**, **UEFI** firmware (EDK2/AAVMF), **virtio** disk va tarmoq
+(PCI orqali), GICv2 yoki GICv3; DTB yoki ACPI. Avval VPS ni tekşirib olish mumkin (faqat
+öqiydi): `bash scripts/vps/tekshir.sh`.
+
+1. **Obrazni yasang** (öz kompyuteringizda):
+
+   ```bash
+   scripts/vps/obraz.sh --release --xz    # → target/zamin-vps.img, .img.xz, .sha256
+   scripts/agent/verify.sh obraz          # ixtiyoriy: QEMU da Netcup ga öxşaş sinov
+   ```
+
+2. **Rescue tizimini yoqing**: Netcup SCP → serveringiz → Media → Rescue System. Server
+   Debian live bilan qayta yuklanadi; panel bergan parol bilan `ssh root@<IP>`.
+3. **Diskka yozing** (`lsblk` — odatda `/dev/vda`). **Diskdagi hamma narsa öçiriladi!**
+
+   ```bash
+   bash yoz.sh zamin-vps.img.xz /dev/vda --sha256 <summa>   # obrazni scp bilan yuklab
+   bash yoz.sh https://<obraz manzili>/zamin-vps.img.xz /dev/vda
+   ```
+
+   Skript GPT, disk hajmi va ulanmaganini tekşiradi, ikki marta tasdiq söraydi, `dd` bilan
+   yozadi, zaxira GPT ni disk oxiriga köçiradi va Zamin bölimini butun diskka kengaytiradi.
+4. **Rescue ni öçirib, qayta yoqing.** SCP → Screen (VNC) da Zamin OS ekrani: birinçi
+   yuklanişda til, ism, login va parol sozlanadi; tarmoq DHCP bilan avtomatik ulanadi.
+5. **Ortga qaytiş**: SCP → Media → Images dan istalgan rasmiy Linux obrazini qayta örnating.
+
+Panel orqali öz obrazini yuklaş (B usul), muammolarni hal qiliş va diskni öçirmaydigan
+muqobil yöl (`ornat.sh`, Linux ustida QEMU + noVNC) — [`scripts/vps/README.md`](scripts/vps/README.md).
+
+![Zamin OS 0.0.31: release VPS obrazi — sozlamalar Zamin bölimidan öqilgan, kiriş ekrani](docs/vps-0.0.31.png)
+
 ## Birinçi işga tuşiriş
 
 Tizim birinçi marta yoqilganda **birinçi sozlaş** boşlanadi:
@@ -1188,7 +1222,7 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [x] **9. Grafika** — virtio-gpu framebuffer, şrift, oynalar menejeri, grafik terminal, sichqoncha/klaviatura
 - [x] **9½. Media** — rasm (16+ format), audio (WAV/AIFF/FLAC/MP3/OGG-Vorbis + ADPCM/μ-law/A-law), video (MJPEG/AVI dekod; MP4/MOV/MKV/WebM taniş) — hammasi noldan, ffmpeg bilan tekşirilgan
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar (davom etmoqda)
-- [ ] **10½. VPS porti** — UEFI yuklaniş (BOOTAA64.EFI), GICv3, virtio-pci, ACPI zaxira yöli, GPT disk obrazi va örnatiş skripti (davom etmoqda)
+- [x] **10½. VPS porti** — UEFI yuklaniş (BOOTAA64.EFI), GICv3, virtio-pci, ACPI zaxira yöli, GPT disk obrazi va örnatiş skripti
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
 
 ## Grafika
@@ -1314,7 +1348,7 @@ API kalit / apiKeyHelper / boşqa BASE_URL → rad etiladi, 3 ketma-ket tekşiru
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.30**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.31**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -1402,5 +1436,13 @@ bosqiç (etap) yakunlanganda kötariladi.
   Ctrl+L, Ctrl+U, Ctrl+D); Sozlamalar → Foydalanuvçilar: parolni özgartiriş va yangi hisob qöşiş
   (admin); Fayllar menejerida nom böyiça tezkor filtr va bosiladigan yöl bölaklari; CSS maxsus
   xossalar `var(--x)` va `calc()`. Skrinşot: `docs/barqarorlik-0.0.30.png`.
+
+- 0.0.31 — **VPS porti** (Netcup ARM kabi ARM64 VPS uçun, Linux siz): yadro UEFI ilovasi
+  (`BOOTAA64.EFI`) böla oladi; GICv3 uzilişlar kontrolleri (GICv2 ham qoldi); virtio-pci
+  transporti (disk, tarmoq, GPU, klaviatura/sichqoncha, rng); DTB bölmasa ACPI zaxira yöli
+  (RSDP/XSDT, MADT, MCFG, SPCR, GTDT); GPT disk obrazi (ESP + Zamin maʼlumot bölimi) va
+  Rescue tizimidan örnatiş skripti (`scripts/vps/yoz.sh`). Release yiğişi endi thin LTO bilan
+  (töliq LTO JS çaqiruvi stekini ~4.5 KiB ga oşirib, `--release` obrazida self-test yiqilardi).
+  Skrinşot: `docs/vps-0.0.31.png` (release obrazi, qayta yuklanişdan keyingi kiriş ekrani).
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

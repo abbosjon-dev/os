@@ -3279,7 +3279,12 @@ pub fn self_test() -> Result<usize, String> {
         }
         for s in &prog {
             match s {
-                Stmt::Expr(x) => last = e.eval(x, &g, &mut doc).map_err(|_| format!("bajarilmadi: {}", code))?,
+                Stmt::Expr(x) => {
+                    last = e.eval(x, &g, &mut doc).map_err(|c| match c {
+                        Ctl::Throw(v) => format!("bajarilmadi: {} ({})", code, v.to_string()),
+                        _ => format!("bajarilmadi: {}", code),
+                    })?
+                }
                 Stmt::Try(..) => {
                     // try ichidagi oxirgi ifoda: catch blokidagini olamiz
                     if let Stmt::Try(_, Some((nm, cb)), _) = s {
