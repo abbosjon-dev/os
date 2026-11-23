@@ -285,7 +285,9 @@
       "id": "T36",
       "title": "Yumaloq burchaklar: zamin://matn ni VPS ekran o'lchamlarida (1280×800, 1920×1080) va UEFI+ACPI yo'lida qayta tekshirish va qolgan tishchalar",
       "detail": "Qora 'tishchalar' nuqsoni T9, T16 va T23 da tuzatilgan. Lekin check_corners.py hozir faqat standart -kernel/virtio-mmio va bitta ekran o'lchamida ishlaydi. Netcup VNC odatda boshqa o'lcham beradi (virtio-gpu GET_DISPLAY_INFO orqali). Shunda radius/qamrov (corner_cov) yaxlitlanishi va kasr koordinatalar boshqacha chiqadi, nuqson qaytishi mumkin. Fayllar: scripts/agent/shot.py (ekran o'lchami parametri: virtio-gpu-pci,xres=…,yres=… yoki -device virtio-gpu-device,xres/yres), scripts/agent/check_corners.py, scripts/agent/verify.sh (full: burchak bloki), src/gfx/mod.rs (corner_cov, fill_round_rect_a, round_ring/round_outline, shadow: kasr x/y va toq radiusda chegaraviy piksel), src/gui.rs (zamin://matn, web deco chizish sikli: deco koordinatalarini butun piksellarga to'g'ri yaxlitlash). Ishlar: (1) shot.py ga --size WxH qo'shiladi. verify.sh full zamin://matn ni 1024×768, 1280×800 va 1920×1080 da, shuningdek UEFI+ACPI+GICv3+virtio-gpu-pci yo'lida (verify.sh vps muhiti) suratga oladi. (2) Topilgan tishchalar sababi gfx/gui da tuzatiladi: aylantirishdagi kasr siljish, toq radius, chegara+soya birikmasi. (3) gfx::self_test_round() ga kasr boshlanish nuqtasi (x=10.5) va toq radius (r=7) holatlari qo'shiladi: burchak tashqarisidagi piksellar fondan qorong'iroq bo'lmasligi kerak. Qabul mezoni: verify.sh full '[ok] burchaklar: N surat toza' chiqaradi (N ≥ 7, uchta o'lcham va VPS yo'li ham kiradi). Ataylab qora piksel qo'yilgan surat bilan o'z-o'zini sinash 1 qaytaradi. Skrinshot docs/web-corners-1920.png olinadi. verify.sh full o'tadi.",
-      "batch": 6
+      "batch": 6,
+      "status": "done",
+      "done_at": "2026-11-23 21:22:22"
     },
     {
       "id": "T37",

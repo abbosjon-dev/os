@@ -316,11 +316,16 @@ fn rrect_sdf(px: f32, py: f32, cx: f32, cy: f32, hw: f32, hh: f32, r: f32) -> f3
 /// Elementning öz (töliq qoplangan) sohasiga çizilmaydi.
 #[allow(clippy::too_many_arguments)]
 pub fn box_shadow(ex: i32, ey: i32, ew: usize, eh: usize, er: usize, dx: i32, dy: i32, blur: usize, spread: i32, c: Color, alpha: u32) {
+    let g = FB.lock();
+    let Some(f) = g.as_ref() else { return };
+    box_shadow_on(f, ex, ey, ew, eh, er, dx, dy, blur, spread, c, alpha);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn box_shadow_on(f: &Fb, ex: i32, ey: i32, ew: usize, eh: usize, er: usize, dx: i32, dy: i32, blur: usize, spread: i32, c: Color, alpha: u32) {
     if ew == 0 || eh == 0 || alpha == 0 {
         return;
     }
-    let g = FB.lock();
-    let Some(f) = g.as_ref() else { return };
     let (sw, sh) = (ew as i32 + spread * 2, eh as i32 + spread * 2);
     if sw <= 0 || sh <= 0 {
         return;
@@ -339,13 +344,19 @@ pub fn box_shadow(ex: i32, ey: i32, ew: usize, eh: usize, er: usize, dx: i32, dy
     for py in y0..y1 {
         for px in x0..x1 {
             let (fx, fy) = (px as f32 + 0.5, py as f32 + 0.5);
-            // element ostida (töliq qoplangan) — chizmaymiz
-            if rrect_sdf(fx, fy, ecx, ecy, ew as f32 / 2.0, eh as f32 / 2.0, er) < -1.0 {
+            // Elementning piksel qamrovi (ke): töliq qoplangan pikselga chizmaymiz. CSS da
+            // tashqi soya faqat element TAŞQARISIDA; çet (AA) pikselda soya elementning
+            // öz qamrovi bilan ikki marta qöşilmasligi kerak — aks holda blur = 0 soyada
+            // burçak yoyi böylab fon va elementdan töqroq "tişça" piksellar çiqadi.
+            let ke = (0.5 - rrect_sdf(fx, fy, ecx, ecy, ew as f32 / 2.0, eh as f32 / 2.0, er)).clamp(0.0, 1.0);
+            if ke >= 0.999 {
                 continue;
             }
             let d = rrect_sdf(fx, fy, scx, scy, sw as f32 / 2.0, sh as f32 / 2.0, sr);
             let k = if bl == 0 {
-                (0.5 - d).clamp(0.0, 1.0)
+                // keskin soya: pikselning element taşqarisidagi qismini qança qoplaydi
+                let ks = (0.5 - d).clamp(0.0, 1.0);
+                ((ks - ke) / (1.0 - ke)).clamp(0.0, 1.0)
             } else {
                 let t = ((bl as f32 - d) / (2.0 * bl as f32)).clamp(0.0, 1.0);
                 t * t * (3.0 - 2.0 * t)
@@ -652,8 +663,93 @@ pub fn self_test_round() -> Result<usize, &'static str> {
             n += 1;
         }
     }
+    n += self_test_round_frac()?;
     n += self_test_round_box()?;
     n += self_test_round_alpha()?;
+    Ok(n)
+}
+
+/// CSS uzunligi (kasr piksel) → butun piksel: eng yaqin butunga yaxlitlaş (0.5 → yuqoriga).
+/// Kesib taşlaş (as usize) turli ekran ölçamlarida (masştab k) radius/çet/ofsetni
+/// bir tomonga surib yuborardi; quti çetlari alohida yaxlitlanadi — eni saqlanadi.
+#[inline]
+pub fn px_round(v: f32) -> usize {
+    if v <= 0.0 { 0 } else { (v + 0.5) as usize }
+}
+
+/// Kasr boşlanish nuqtasi (x = 10.5, y = 4.5) va toq radius (r = 7) holatlari: çetlar
+/// `px_round` bilan yaxlitlanadi, keyin soya (box_shadow_on) + quti + çegara (round_box_on)
+/// ofscreen buferga çiziladi (veb deco sikli tartibida). Tekşiriladi:
+/// (1) element taşqarisidagi (qamrovi 0) piksellar fon va soyadan töq emas;
+/// (2) element ostidagi keskin soya (blur 0, spread 0, siljişsiz) körinmaydi — natija soyasiz
+///     çizilgan quti bilan bir xil (AA çetda soya + quti ikki marta qöşilmaydi: "tişça" yöq);
+/// (3) hech bir piksel fon, soya, quti va çegara ranglarining eng töqidan töqroq emas.
+fn self_test_round_frac() -> Result<usize, &'static str> {
+    if px_round(10.5) != 11 || px_round(10.49) != 10 || px_round(-0.3) != 0 || px_round(31.5) - px_round(10.5) != 21 {
+        return Err("px_round notoʻgʻri yaxlitlaydi");
+    }
+    let (bw, bh) = (64usize, 48usize);
+    let mut buf = alloc::vec![0u32; bw * bh];
+    let mut plain = alloc::vec![0u32; bw * bh];
+    let mut shad = alloc::vec![0u32; bw * bh];
+    let lum = |c: u32| (c >> 16 & 0xff) + (c >> 8 & 0xff) + (c & 0xff);
+    let mut n = 0;
+    // (fon, quti, çegara, soya rangi)
+    for &(bg, fg, bc, sc) in &[(0xeef2f8u32, 0xffffffu32, 0xc9d3e3u32, 0x000000u32), (0x161b26, 0xeef2f8, 0x3a7bd5, 0x000000), (0xffffff, 0x3a7bd5, 0x1e3a8a, 0x1e3a8a)] {
+        // (x, y, eni, böyi — kasr; r; blur; spread; çegara qalinligi)
+        for &(fx, fy, fw, fh, r, blur, spread, t) in &[
+            (10.5f32, 4.5f32, 21.0f32, 15.0f32, 7usize, 0usize, 0i32, 0usize),
+            (10.5, 4.5, 21.5, 15.5, 7, 0, 0, 1),
+            (10.5, 3.25, 30.0, 20.0, 7, 3, 0, 1),
+            (9.75, 4.5, 25.0, 17.0, 7, 0, 1, 2),
+            (10.5, 10.5, 14.0, 14.0, 7, 4, 2, 1),
+        ] {
+            let (x, y) = (px_round(fx), px_round(fy));
+            let (w, h) = (px_round(fx + fw) - x, px_round(fy + fh) - y);
+            let draw = |b: &mut [u32], with_shadow: bool, with_box: bool| {
+                for p in b.iter_mut() {
+                    *p = bg;
+                }
+                let f = Fb { ptr: b.as_mut_ptr() as usize, w: bw, h: bh, noclip: true };
+                if with_shadow {
+                    box_shadow_on(&f, x as i32, y as i32, w, h, r, 0, 0, blur, spread, sc, 160);
+                }
+                if with_box {
+                    round_box_on(&f, x, y, w, h, 0, r, r, BoxFill::Solid(fg), t, bc, 255);
+                }
+            };
+            draw(&mut buf, true, true);
+            draw(&mut plain, false, true);
+            draw(&mut shad, true, false);
+            let rr = r.min(w / 2).min(h / 2);
+            let darkest = lum(bg).min(lum(fg)).min(if t > 0 { lum(bc) } else { 765 });
+            for py in 0..bh {
+                for px in 0..bw {
+                    let i = py * bw + px;
+                    let inside = px >= x && px < x + w && py >= y && py < y + h;
+                    let cov = if !inside {
+                        0
+                    } else {
+                        match corner_at(px - x, py - y, w, h, rr, rr) {
+                            Some((ox, oy, rc)) => corner_cov(ox, oy, rc),
+                            None => 255,
+                        }
+                    };
+                    let (p, s0) = (lum(buf[i]), lum(shad[i]));
+                    if cov == 0 && p + 3 < lum(bg).min(s0) {
+                        return Err("kasr x/toq r: burçak taşqarisi fon/soyadan töq");
+                    }
+                    if p + 3 < darkest.min(s0) {
+                        return Err("kasr x/toq r: fon, soya va qutidan töqroq piksel");
+                    }
+                    if blur == 0 && spread == 0 && (p as i32 - lum(plain[i]) as i32).abs() > 3 {
+                        return Err("kasr x/toq r: element ostidagi soya çetda körindi (tişça)");
+                    }
+                }
+            }
+            n += 1;
+        }
+    }
     Ok(n)
 }
 

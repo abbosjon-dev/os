@@ -617,7 +617,7 @@ fn self_tests() {
         Err(e) => panic!("CSS position/float tekşiruvi yiqildi: {}", e),
     }
     match gfx::self_test_round() {
-        Ok(n) => println!("  [ok] yumaloq burçaklar: qamrov (r=1..30), çegara 1..4 px, gradient, opacity 128 — yorugʻ/töq fonda töq piksel yöq ({} sinov)", n),
+        Ok(n) => println!("  [ok] yumaloq burçaklar: qamrov (r=1..30), çegara 1..4 px, gradient, opacity 128, kasr x=10.5 + toq r=7 + soya — yorugʻ/töq fonda töq piksel yöq ({} sinov)", n),
         Err(e) => panic!("yumaloq burçak tekşiruvi yiqildi: {}", e),
     }
     match html::self_test_dir() {

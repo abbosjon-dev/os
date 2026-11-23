@@ -291,15 +291,36 @@ echo "$RESULT"
 
 # --- Yumaloq burçaklar regressiyasi: brauzer sahifalari suratga olinadi va
 #     check_corners.py dan ötkaziladi ("qora tişçalar" qaytmasligi uçun) ---
-CDIR="$LOG_DIR/corners"; mkdir -p "$CDIR" /tmp/claude-0; rm -f "$CDIR"/*.png
-# brauzer (dock) → kattalaştiriş → zamin://matn (boşi, yarim aylantirilgan) → bosh → zamin://bezak → bosh → zamin://overflow
-M="m,1275,795;w,1"
-CLICKS="354,756;w,2;221,85;w,1;300,585;w,2;$M;snap,matn;m,640,400;wd,8;$M;snap,matn2;93,120;w,1;300,611;w,2;$M;snap,bezak;93,120;w,1;300,637;w,2;$M" \
-    timeout 240 python3 scripts/agent/shot.py "$KERNEL" "$CDIR/overflow.png" fresh >"$CDIR/shot.log" 2>&1
+#   Ekran ölçamlari: 1280x800 (QEMU standarti), 1024x768, 1920x1080 (Netcup VNC) — virtio-gpu
+#   xres/yres (yadro GET_DISPLAY_INFO orqali oladi), hamda VPS yöli: UEFI + ACPI + GICv3 +
+#   virtio-gpu-pci (1920x1080). Koordinatalar ("@browser", "@max", ...) zgeom.py dan.
+CDIR="$LOG_DIR/corners"; mkdir -p "$CDIR" /tmp/claude-0; rm -f "$CDIR"/*.png "$CDIR"/*.txt
+M="m,@park;w,1"
+# 1280x800: brauzer (dok) → kattalaştiriş → zamin://matn (boşi, yarim aylantirilgan) → zamin://bezak → zamin://overflow
+CLICKS="@browser;w,2;@max;w,1;u,zamin://matn;$M;snap,matn;m,@center;wd,8;$M;snap,matn2;u,zamin://bezak;$M;snap,bezak;u,zamin://overflow;$M" \
+    timeout 300 python3 scripts/agent/shot.py "$KERNEL" "$CDIR/overflow.png" fresh >"$CDIR/shot.log" 2>&1
 SHOTS=("$CDIR/overflow_matn.png" "$CDIR/overflow_matn2.png" "$CDIR/overflow_bezak.png" "$CDIR/overflow.png")
-for f in "${SHOTS[@]}"; do
-    [ -s "$f" ] || { echo "FAIL burçaklar: surat olinmadi ($f, qarang $CDIR/shot.log)"; exit 1; }
+# boşqa ölçamlar va VPS yöli: zamin://matn (boşi va yarim aylantirilgan)
+CM="@browser;w,2;@max;w,1;u,zamin://matn;$M;snap,top;m,@center;wd,8;$M"
+VPS_FW=""
+for f in /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/AAVMF/AAVMF_CODE.fd; do [ -f "$f" ] && { VPS_FW=$f; break; }; done
+for cfg in "1024x768" "1920x1080" "1920x1080 --vps"; do
+    sz=${cfg%% *}; tag=matn-$sz; [[ "$cfg" == *--vps ]] && { [ -n "$VPS_FW" ] || continue; tag=vps-$sz; }
+    # shellcheck disable=SC2086
+    CLICKS="$CM" timeout 420 python3 scripts/agent/shot.py "$KERNEL" "$CDIR/$tag.png" fresh --size $cfg >"$CDIR/shot-$tag.log" 2>&1
+    SHOTS+=("$CDIR/${tag}_top.png" "$CDIR/$tag.png")
 done
+for f in "${SHOTS[@]}"; do
+    [ -s "$f" ] || { echo "FAIL burçaklar: surat olinmadi ($f, qarang $CDIR/shot*.log)"; exit 1; }
+done
+# surat ölçami sorovga mos kelişi şart (yadro boşqa ölçamga qaytib ketmasin)
+for f in "${SHOTS[@]}"; do
+    want=1280x800; [[ "$f" =~ -([0-9]+x[0-9]+) ]] && want=${BASH_REMATCH[1]}
+    got=$(python3 -c "from PIL import Image; import sys; print('%dx%d' % Image.open(sys.argv[1]).size)" "$f")
+    [ "$got" = "$want" ] || { echo "FAIL burçaklar: $(basename "$f") ölçami $got (kutilgan $want)"; exit 1; }
+done
+[ -f "$CDIR/vps-1920x1080.png.log" ] && ! grep -qaE "ACPI MADT: GICv3" "$CDIR/vps-1920x1080.png.log" && {
+    echo "FAIL burçaklar: VPS surati ACPI + GICv3 yölida olinmadi"; exit 1; }
 NBAD=0
 for f in "${SHOTS[@]}"; do
     if ! python3 scripts/agent/check_corners.py "$f" >"$f.txt" 2>&1; then
@@ -307,8 +328,11 @@ for f in "${SHOTS[@]}"; do
     fi
 done
 [ "$NBAD" -eq 0 ] || { echo "FAIL burçaklar: $NBAD surat nuqsonli (qarang $CDIR)"; exit 1; }
-# o'z-o'zini sinaş: burçak yaqiniga bitta qora piksel — tekşiruvçi 1 qaytarişi şart
-python3 - "$CDIR/overflow_bezak.png" "$CDIR/selftest.png" <<'PY' || { echo "FAIL burçaklar: o'z-o'zini sinaş surati yasalmadi"; exit 1; }
+[ -s "$CDIR/matn-1920x1080_top.png" ] && cp "$CDIR/matn-1920x1080_top.png" docs/web-corners-1920.png
+# o'z-o'zini sinaş: burçak yaqiniga bitta qora piksel — tekşiruvçi 1 qaytarişi şart (1280 va 1920 suratlarda)
+for src in "$CDIR/overflow_bezak.png" "$CDIR/matn-1920x1080_top.png"; do
+    [ -s "$src" ] || continue
+    python3 - "$src" "$CDIR/selftest.png" <<'PY' || { echo "FAIL burçaklar: o'z-o'zini sinaş surati yasalmadi"; exit 1; }
 import subprocess, sys
 from PIL import Image
 out = subprocess.run([sys.executable, "scripts/agent/check_corners.py", sys.argv[1], "-v"], capture_output=True, text=True).stdout
@@ -318,10 +342,10 @@ im = Image.open(sys.argv[1]).convert("RGB")
 im.putpixel((cx + 2 * sx, cy + 2 * sy), (0, 0, 0))
 im.save(sys.argv[2])
 PY
-if python3 scripts/agent/check_corners.py "$CDIR/selftest.png" >"$CDIR/selftest.txt" 2>&1; then
-    echo "FAIL burçaklar: qora pikselli surat tekşiruvdan ötib ketdi (check_corners.py buzilgan)"; exit 1
-fi
-echo "[ok] burchaklar: ${#SHOTS[@]} surat toza"
+    python3 scripts/agent/check_corners.py "$CDIR/selftest.png" >"$CDIR/selftest.txt" 2>&1; st=$?
+    [ $st -eq 1 ] || { echo "FAIL burçaklar: qora pikselli surat ($(basename "$src")) tekşiruvdan ötib ketdi (kod $st, check_corners.py buzilgan)"; exit 1; }
+done
+echo "[ok] burchaklar: ${#SHOTS[@]} surat toza (1280x800, 1024x768, 1920x1080$([ -n "$VPS_FW" ] && echo ", VPS UEFI+ACPI+GICv3 1920x1080"))"
 
 # --- DTB + virtio-pci (GICv2/GICv3) ---
 pci_test || exit 1

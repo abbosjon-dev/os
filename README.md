@@ -277,7 +277,26 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   `self_test_round` ga alfa 128 bilan chizilgan qutilar qo'shildi (bir rangli va chegarali,
   yorug'/to'q fon, aylantirilgan holat).
 
+  **Har xil ekran o'lchamlari va VPS yo'li:** Netcup VNC odatda boshqa o'lcham beradi (virtio-gpu
+  `GET_DISPLAY_INFO`), shuning uchun `verify.sh full` endi `zamin://matn` ni 1024×768, 1280×800 va
+  1920×1080 da, hamda UEFI + ACPI + GICv3 + `virtio-gpu-pci` yo'lida (1920×1080) suratga oladi —
+  jami 10 ta surat (`[ok] burchaklar: 10 surat toza`); har surat o'lchami so'ralgan o'lchamga mos
+  kelishi ham tekshiriladi. `shot.py` ga `--size WxH` (virtio-gpu `xres`/`yres`) va `--vps`
+  (BOOTAA64.EFI + PCI qurilmalar) qo'shildi; bosish nuqtalari (`@browser`, `@max`, `@addr`,
+  `@center`, `@park`) va `check_corners.py` ning sahifa sohasi endi `scripts/agent/zgeom.py` dan —
+  `gui.rs` geometriya formulalarining nusxasi — surat o'lchamiga qarab hisoblanadi; sahifalar
+  havola bosish o'rniga manzil satriga URL yozib ochiladi (`u,zamin://matn`). O'z-o'zini sinash
+  (qora piksel → 1) 1280 va 1920 suratlarda bajariladi.
+  Tuzatildi: (1) element ostidagi keskin `box-shadow` (blur 0) burchak yoyidagi AA pikselda quti
+  bilan ikki marta qo'shilib, fon va qutidan to'qroq "tishcha" berardi — endi soya pikselning
+  faqat element *tashqarisidagi* qismiga chiziladi (CSS dagi kabi); (2) CSS uzunliklari
+  (radius, chegara, padding, soya ofseti) ekran masshtabida kesib tashlanardi (`as usize`) —
+  endi `gfx::px_round` bilan eng yaqin butun pikselga yaxlitlanadi. `self_test_round` ga kasr
+  boshlanish nuqtasi (x = 10.5, y = 4.5) va toq radius (r = 7) holatlari qo'shildi: soya + quti
+  + chegara, burchak tashqarisi fon/soyadan to'q emas, keskin soya quti chetida ko'rinmaydi.
+
   ![Yumaloq burchaklar: zamin://matn](docs/web-text-align.png)
+  ![zamin://matn, 1920×1080](docs/web-corners-1920.png)
 
   ![Aylantirilgan holat: pastdan kesilgan flex/rtl bloklar](docs/web-round-scroll.png)
 - **Ichma-ich blok konteynerlari** — ota blokning foni, chegarasi, padding'i va soyasi endi bola

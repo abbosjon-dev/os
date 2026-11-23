@@ -9753,7 +9753,8 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
     let u = body();
     let k = (small() * 11 / 10) as f32 / 16.0;
     let pxs = |size: f32| ((size * k) as usize).clamp(8, 90);
-    let lpx = |v: f32| (v * k) as usize;
+    // CSS px → ekran px: eng yaqin butunga (kesib taşlaş turli ekran ölçamlarida radius/çetni kiçraytirardi)
+    let lpx = |v: f32| gfx::px_round(v * k);
     let (page_bg, text_col, link_col, code_col, head_col) = web_palette(doc);
     let dark = luma(page_bg) < 128;
     let mut y = y0;
@@ -9765,7 +9766,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
     let mut lf = (0usize, 0usize);
     let mut rf = (0usize, 0usize);
     // position: relative — siljitiladigan diapazonlar (items boşi, deco boşi, dx, dy) va quti fonlari
-    let spx = |v: f32| (v * k) as isize;
+    let spx = |v: f32| { let t = v * k; if t < 0.0 { -(gfx::px_round(-t) as isize) } else { gfx::px_round(t) as isize } };
     // foizli kenglik + calc() px bölagi (calc(50% - 20px)) → piksel
     let pcw = |base: usize, v: f32, add: f32| ((base * (v as usize).min(100) / 100) as isize + spx(add)).max(0) as usize;
     let mut shifts: Vec<(usize, usize, usize, usize, isize, isize)> = Vec::new();

@@ -13,10 +13,12 @@ Bloklar qanday topiladi (rang ro'yxati sahifa bo'yicha avtomatik aniqlanadi):
     bir rangli qutilar, opacity bilan aralashgan qutilar, chegaralar;
   * to'yingan (max-min >= CHROMA) piksellar — gradientli va rangli qutilar.
 
-Foydalanish: check_corners.py surat.png [x0 y0 x1 y1] [-v]   (sahifa sohasi)
+Foydalanish: check_corners.py surat.png [x0 y0 x1 y1] [-v]   (sahifa sohasi;
+  berilmasa — surat ölçamiga qarab zgeom.py dan: 1024x768, 1280x800, 1920x1080, ...)
   -v — topilgan bloklar va tekshirilgan burchaklar ro'yxati ("BURCHAK x y sx sy").
 Chiqish kodi 0 — toza; 1 — nuqson topildi (yoki birorta burchak tekshirilmadi).
 """
+import os
 import sys
 import numpy as np
 from PIL import Image
@@ -150,7 +152,10 @@ def main():
     if len(args) >= 5:
         area = tuple(map(int, args[1:5]))
     else:
-        area = (8, 142, 1260, 686)  # kattalashtirilgan brauzer oynasi
+        # kattalashtirilgan brauzer oynasining sahifa sohasi — surat ölçamidan (zgeom.py)
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import zgeom
+        area = zgeom.metrics(img.shape[1], img.shape[0])["area"]
     bad, checked = check(img, area, verbose)
     sys.exit(1 if bad or checked == 0 else 0)
 
