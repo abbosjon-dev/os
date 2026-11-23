@@ -533,6 +533,11 @@ pub mod msg {
         "[test] SMP: потоки параллельно работали на {} ядрах — OK",
         "[test] SMP: threads ran in parallel on {} cores — OK",
     ];
+    pub const TEST_SGI: Text = [
+        "[test] SGI: {} ta yadro dasturiy uzilişni qabul qildi (GICv{}) — OK",
+        "[test] SGI: ядер, получивших программное прерывание: {} (GICv{}) — OK",
+        "[test] SGI: {} cores received a software interrupt (GICv{}) — OK",
+    ];
     pub const TEST_MUTEX: Text = [
         "[test] mutex: 4 oqim, uxlab kutiş, natija {} — OK",
         "[test] mutex: 4 потока, ожидание во сне, результат {} — OK",

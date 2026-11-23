@@ -5,6 +5,14 @@ use crate::{gic, timer, uart};
 /// "Qayta rejalaştir" — boşqa yadroga yangi vazifa tayyorligini bildiradi.
 pub const SGI_RESCHEDULE: u32 = 1;
 
+/// SGI qabul qilgan yadrolar (bit = yadro raqami) — self-test uçun.
+static SGI_SEEN: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// SGI belgilarini tozalaydi va hozirgiça qabul qilganlar niqobini qaytaradi.
+pub fn take_sgi_seen() -> u64 {
+    SGI_SEEN.swap(0, core::sync::atomic::Ordering::AcqRel)
+}
+
 pub fn init() {
     gic::init();
     gic::enable(SGI_RESCHEDULE);
@@ -31,7 +39,11 @@ pub fn handle() {
         match id {
             timer::IRQ => timer::handle_irq(),
             id if id == uart::irq() => uart::handle_irq(),
-            SGI_RESCHEDULE => {} // pastda preempt() — yangi vazifani olamiz
+            SGI_RESCHEDULE => {
+                // pastda preempt() — yangi vazifani olamiz
+                let bit = 1u64 << (crate::task::cpu_id() % 64);
+                SGI_SEEN.fetch_or(bit, core::sync::atomic::Ordering::Relaxed);
+            }
             // virtio-pci INTx liniyalari umumiy bölişi mumkin — ikkala drayver ham tekşiriladi
             id if id == crate::drivers::virtio_blk::irq() || (id == crate::drivers::virtio_net::irq() && id != 0) => {
                 if id == crate::drivers::virtio_blk::irq() {

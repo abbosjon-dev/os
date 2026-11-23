@@ -245,7 +245,9 @@
       "id": "T31",
       "title": "GICv3 uzilish kontrolleri drayveri",
       "detail": "DTB dagi 'arm,gic-v3' ni aniqlab GICv3 (distributor + redistributor, ICC_* sistem registrlari) ishlat; GICv2 saqlanib qolsin. Taymer, klaviatura, SMP (SGI) GICv3 da ishlasin. Sinov muhiti (Netcup VPS 500 ARM G12.5 ga o'xshash): qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd (yoki /usr/share/AAVMF/AAVMF_CODE.fd pflash), virtio-*-pci qurilmalar. Eski yo'l (-kernel, GICv2, virtio-mmio) BUZILMASLIGI shart — verify.sh full o'tsin. Yangi sinovni scripts/agent/verify.sh ga qo'sh (vps rejimi).",
-      "batch": 5
+      "batch": 5,
+      "status": "done",
+      "done_at": "2026-11-23 19:16:53"
     },
     {
       "id": "T32",

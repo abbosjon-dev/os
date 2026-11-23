@@ -6,7 +6,9 @@
 #                     + vps sinovi (UEFI firmware örnatilgan bölsa)
 #   verify.sh vps   — yiğiş + UEFI yuklaniş (Netcup ARM VPS ga öxşaş): BOOTAA64.EFI FAT32
 #                     diskda, virt,gic-version=3, QEMU_EFI.fd, virtio-*-pci qurilmalar —
-#                     til tanlaş ekranigaça, panic yöq, PCI disk uzilişi işlaydi
+#                     til tanlaş ekranigaça, panic yöq, PCI disk uzilişi işlaydi; GICv3 da
+#                     SGI (barça yadrolar), seriya klaviatura uzilişi ("3" → English sozlaş),
+#                     virtio-gpu/keyboard/tablet-pci
 # Çiqiş kodi 0 — ötdi. Natija qisqa matn sifatida stdout ga.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -37,28 +39,45 @@ vps_test() {
         echo "FAIL vps: ESP yasalmadi ($(tail -1 "$LOG_DIR/verify-mkesp.log"))"; rm -f "$esp" "$sys"; return 1
     fi
     truncate -s 128M "$sys"; : >"$log"
+    # stdin — FIFO: til tanlaş ekranida "3" yuboriladi (PL011 uzilişi GICv3 orqali)
+    local fifo; fifo=$(mktemp -u /tmp/zamin-vps-in-XXXX); mkfifo "$fifo"
+    sleep 200 >"$fifo" &
+    local holder=$!
     timeout 150 qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -m 1G -smp 4 -nographic \
         -bios "$fw" \
         -drive "file=$esp,if=none,format=raw,id=esp" -device virtio-blk-pci,drive=esp,bootindex=0 \
         -drive "file=$sys,if=none,format=raw,id=sys" -device virtio-blk-pci,drive=sys \
-        -device virtio-rng-pci -nic user,model=virtio-net-pci </dev/null >"$log" 2>&1 &
-    local qpid=$! res="FAIL vps: timeout (til tanlaş ekrani çiqmadi, qarang $log)"
+        -device virtio-rng-pci -nic user,model=virtio-net-pci \
+        -device virtio-gpu-pci -device virtio-keyboard-pci -device virtio-tablet-pci <"$fifo" >"$log" 2>&1 &
+    local qpid=$! res="FAIL vps: timeout (til tanlaş ekrani çiqmadi, qarang $log)" sent=0
     for _ in $(seq 1 140); do
         sleep 1
         if grep -qaiE 'panic|yiqildi' "$log"; then
             res="FAIL vps: $(grep -aiE -m2 'panic|yiqildi' "$log" | tr -d '\r' | tr '\n' ' ' | cut -c1-300)"; break
         fi
-        if grep -qaE 'Choose your language' "$log"; then
+        if [ $sent -eq 0 ] && grep -qaE 'Choose your language' "$log"; then
+            printf '3\r' >"$fifo"; sent=1; continue
+        fi
+        if [ $sent -ge 1 ] && ! grep -qaE 'First-time setup' "$log"; then
+            sent=$((sent + 1))
+            [ $sent -gt 15 ] && { res="FAIL vps: seriya klaviatura uzilişi (GICv3) işlamadi — '3' qabul qilinmadi"; break; }
+            continue
+        fi
+        if [ $sent -ge 1 ]; then
             if ! grep -qa 'UEFI: xotira xaritasi' "$log"; then res="FAIL vps: EFI yöli işlamadi (yadro boşqa yöl bilan yuklandi?)"
             elif ! grep -qaE 'GICv3' "$log"; then res="FAIL vps: GICv3 aniqlanmadi"
             elif ! grep -qaE '\[disk\] virtio-blk' "$log"; then res="FAIL vps: virtio-blk-pci disk topilmadi"
             elif ! grep -qaE 'uziliş orqali tugadi' "$log"; then res="FAIL vps: PCI disk uzilişi sinovi ötmadi"
-            else res="OK vps: UEFI (BOOTAA64.EFI) → GICv3, virtio-pci, til tanlaş ekrani ($(grep -acE '\[ok\]|— OK' "$log") self-test)"; fi
+            elif ! grep -qaE 'SGI: .*\(GICv3\) — OK' "$log"; then res="FAIL vps: GICv3 SGI sinovi ötmadi"
+            elif ! grep -qaE 'taymer: .* — OK' "$log"; then res="FAIL vps: taymer uzilişi sinovi ötmadi"
+            elif ! grep -qaE 'kiriş: 2 ta virtio-input' "$log"; then res="FAIL vps: virtio-input-pci (klaviatura/planşet) topilmadi"
+            else res="OK vps: UEFI (BOOTAA64.EFI) → GICv3 (taymer, SGI, seriya klaviatura), virtio-pci (blk, net, gpu, input), sozlaş ekrani ($(grep -acE '\[ok\]|— OK' "$log") self-test)"; fi
             break
         fi
         kill -0 $qpid 2>/dev/null || { res="FAIL vps: qemu erta çiqdi"; break; }
     done
-    kill $qpid 2>/dev/null; wait $qpid 2>/dev/null; rm -f "$esp" "$sys"
+    kill $qpid 2>/dev/null; wait $qpid 2>/dev/null; kill $holder 2>/dev/null; wait $holder 2>/dev/null
+    rm -f "$esp" "$sys" "$fifo"
     echo "$res"
     [[ "$res" == OK* ]]
 }

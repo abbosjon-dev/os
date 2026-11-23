@@ -278,6 +278,7 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
         let (w, h) = gfx::size();
         tprintln!(msg::GPU_READY, w, h);
         let inputs = drivers::virtio_input::init();
+        println!("  kiriş: {} ta virtio-input qurilma (klaviatura/planşet)", inputs);
         draw_desktop();
         if inputs > 0 {
             // Grafik muhit — kiriş bilan (alohida oqim)
@@ -406,6 +407,23 @@ extern "C" fn boot_tests(_: usize) {
         let seen = SEEN_CPUS.load(Ordering::Relaxed).count_ones();
         assert!(seen >= 2, "oqimlar faqat bitta yadroda işladi");
         tprintln!(msg::TEST_SMP, seen);
+
+        // SGI: dasturiy uziliş (GICv2: GICD_SGIR, GICv3: ICC_SGI1R_EL1) boşqa barça yadrolarga yetişi kerak
+        // (oqim yadrodan yadroga köçişi mumkin — kutilgan niqob har yuborişda yangilanadi)
+        let all = (1u64 << task::cpus_online()) - 1;
+        let (mut want, mut got) = (0u64, 0u64);
+        irq::take_sgi_seen();
+        for _ in 0..20 {
+            want |= all & !(1u64 << task::cpu_id());
+            gic::send_sgi_others(irq::SGI_RESCHEDULE);
+            task::sleep_ms(5);
+            got |= irq::take_sgi_seen();
+            if got & want == want {
+                break;
+            }
+        }
+        assert!(got & want == want, "SGI yetmadi: {:#x} / {:#x}", got, want);
+        tprintln!(msg::TEST_SGI, (got & want).count_ones(), gic::version());
     }
 
     // Mutex: 4 oqim, qulf içida ataylab navbat böşatiladi — natija aniq bölişi kerak

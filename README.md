@@ -668,16 +668,22 @@ Qanday işlaydi:
   boşi/hajmi, PCIe ECAM.
 - **GICv3** (`src/gic.rs`): distributor + har yadroning redistributori, `ICC_*` tizim
   registrlari, SGI (`ICC_SGI1R_EL1`). GICv2 ham işlaydi — versiya DTB dan tanlanadi.
+  Taymer (PPI 30), seriya klaviatura (PL011 SPI, `IROUTER` orqali 0-yadroga) va SMP
+  "qayta rejalaştir" SGI si ikkala versiyada ham işlaydi; yangi self-test
+  `[test] SGI: … (GICvN)` boşqa barça yadrolar dasturiy uzilişni olganini tekşiradi.
 - **PCIe / virtio-pci** (`src/drivers/pci.rs`, `virtio.rs`): ECAM orqali sanaş, zamonaviy
   virtio-pci (common/notify/isr/device capability lari), INTx uzilişlari. Birinçi 1 GiB dan
   taşqaridagi qurilmalar (ECAM `0x40_1000_0000`, 64-bit BAR lar) `mmu::ioremap` bilan
   yadro VA oynasiga xaritalanadi. Firmware bölmasa (`-kernel`), BAR lar DTB `ranges` dan
-  tayinlanadi. PCI orqali: **disk, tarmoq, GPU, rng**; klaviatura/siçqonça va övoz hozirça
-  faqat virtio-mmio.
+  tayinlanadi. PCI orqali: **disk, tarmoq, GPU, rng, klaviatura/planşet**
+  (virtio-input-pci, hodisalar sörov orqali); övoz hozirça faqat virtio-mmio.
 - Eski yöl (`-kernel`, GICv2, virtio-mmio) özgarmadi.
 
-Sinov: `scripts/agent/verify.sh vps` (ESP yasaydi, QEMU_EFI.fd bilan yuklaydi, til tanlaş
-ekranigaça, GICv3 va PCI disk uzilişi tekşiriladi); `verify.sh full` ham uni işlatadi.
+Sinov: `scripts/agent/verify.sh vps` (ESP yasaydi, `virt,gic-version=3` + QEMU_EFI.fd
+bilan yuklaydi; virtio-blk/net/rng/gpu/keyboard/tablet-pci). Til tanlaş ekranida seriya
+port orqali "3" yuboriladi — "First-time setup" çiqişi GICv3 da klaviatura uzilişi
+işlaşini isbotlaydi; GICv3, taymer, SGI, PCI disk uzilişi va 2 ta virtio-input qurilma
+tekşiriladi. `verify.sh full` ham uni işlatadi.
 
 ## Birinçi işga tuşiriş
 

@@ -1,5 +1,5 @@
 #![allow(dead_code)] // kiriş drayveri API — keyingi bosqiçlarda
-//! virtio-input drayveri (klaviatura va planşet). virtio-mmio ni özi boşqaradi.
+//! virtio-input drayveri (klaviatura va planşet): virtio-mmio va virtio-pci (VPS).
 //! Hodisa navbati (queue 0): qurilma 8 baytli hodisalar yozadi (type u16, code u16, value u32).
 
 use crate::memory::{PAGE_SIZE, frame};
@@ -52,6 +52,8 @@ struct Dev {
     bufs: usize,
     last_used: u16,
     avail_idx: u16,
+    /// virtio-pci: navbat 0 ning notify manzili (0 — virtio-mmio)
+    pci_notify: usize,
 }
 unsafe impl Send for Dev {}
 
@@ -125,7 +127,15 @@ impl Dev {
         unsafe { write_volatile((self.avail() + 2) as *mut u16, QSIZE as u16) };
         self.avail_idx = QSIZE as u16;
         barrier();
-        self.wr(QUEUE_NOTIFY, 0);
+        self.notify();
+    }
+
+    fn notify(&self) {
+        if self.pci_notify != 0 {
+            super::virtio::pci_notify(self.pci_notify, 0);
+        } else {
+            self.wr(QUEUE_NOTIFY, 0);
+        }
     }
 
     fn drain(&mut self, out: &mut Vec<Event>) {
@@ -155,7 +165,7 @@ impl Dev {
         barrier();
         unsafe { write_volatile((self.avail() + 2) as *mut u16, self.avail_idx) };
         barrier();
-        self.wr(QUEUE_NOTIFY, 0);
+        self.notify();
     }
 }
 
@@ -171,8 +181,24 @@ pub fn init() -> usize {
         let (Some(queue), Some(bufs)) = (frame::alloc_contiguous(2), frame::alloc_zeroed()) else { continue };
         unsafe { core::ptr::write_bytes(queue as *mut u8, 0, 2 * PAGE_SIZE) };
         let version = unsafe { read_volatile((base + 0x004) as *const u32) };
-        let mut d = Dev { base, queue, bufs, last_used: 0, avail_idx: 0 };
+        let mut d = Dev { base, queue, bufs, last_used: 0, avail_idx: 0, pci_notify: 0 };
         d.setup(version);
+        devs.push(d);
+    }
+    // virtio-pci (UEFI / VPS): hodisalar sörov orqali (poll) olinadi — INTx kerak emas
+    let mut n = 0;
+    while let Some(c) = super::virtio::PciCaps::find(DEVICE_INPUT, n) {
+        n += 1;
+        if c.begin(0).is_none() {
+            continue;
+        }
+        let (Some(queue), Some(bufs)) = (frame::alloc_contiguous(2), frame::alloc_zeroed()) else { continue };
+        unsafe { core::ptr::write_bytes(queue as *mut u8, 0, 2 * PAGE_SIZE) };
+        let mut d = Dev { base: 0, queue, bufs, last_used: 0, avail_idx: 0, pci_notify: 0 };
+        let Some(nt) = c.setup_queue(0, QSIZE, d.desc(), d.avail(), d.used()) else { continue };
+        d.pci_notify = nt;
+        c.driver_ok();
+        d.fill();
         devs.push(d);
     }
     devs.len()
