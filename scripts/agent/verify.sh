@@ -3,12 +3,14 @@
 #   verify.sh quick — yiğiş: xato va ogohlantirish yöq
 #   verify.sh full  — + QEMU da (grafikasiz) yuklaniş: barça self-test [ok], panic yöq;
 #                     + brauzer sahifalari surati: yumaloq burçaklarda töq piksel yöq
+#                     + pci sinovi (DTB + virtio-pci, GICv2/GICv3)
 #                     + vps sinovi (UEFI firmware örnatilgan bölsa)
 #   verify.sh vps   — yiğiş + UEFI yuklaniş (Netcup ARM VPS ga öxşaş): BOOTAA64.EFI FAT32
 #                     diskda, virt,gic-version=3, QEMU_EFI.fd, virtio-*-pci qurilmalar —
 #                     til tanlaş ekranigaça, panic yöq, PCI disk uzilişi işlaydi; GICv3 da
 #                     SGI (barça yadrolar), seriya klaviatura uzilişi ("3" → English sozlaş),
-#                     virtio-gpu/keyboard/tablet-pci
+#                     virtio-gpu/keyboard/tablet-pci, virtio-net/rng-pci
+#   verify.sh pci   — yiğiş + -kernel (DTB ECAM) GICv2 va GICv3 da faqat virtio-*-pci qurilmalar
 # Çiqiş kodi 0 — ötdi. Natija qisqa matn sifatida stdout ga.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -71,6 +73,9 @@ vps_test() {
             elif ! grep -qaE 'SGI: .*\(GICv3\) — OK' "$log"; then res="FAIL vps: GICv3 SGI sinovi ötmadi"
             elif ! grep -qaE 'taymer: .* — OK' "$log"; then res="FAIL vps: taymer uzilişi sinovi ötmadi"
             elif ! grep -qaE 'kiriş: 2 ta virtio-input' "$log"; then res="FAIL vps: virtio-input-pci (klaviatura/planşet) topilmadi"
+            elif ! grep -qaE '\[net \] virtio-net' "$log"; then res="FAIL vps: virtio-net-pci topilmadi"
+            elif ! grep -qaE '\[gpu \] virtio-gpu' "$log"; then res="FAIL vps: virtio-gpu-pci topilmadi"
+            elif ! grep -qaE 'manbalar: virtio-rng' "$log"; then res="FAIL vps: virtio-rng-pci topilmadi"
             else res="OK vps: UEFI (BOOTAA64.EFI) → GICv3 (taymer, SGI, seriya klaviatura), virtio-pci (blk, net, gpu, input), sozlaş ekrani ($(grep -acE '\[ok\]|— OK' "$log") self-test)"; fi
             break
         fi
@@ -81,6 +86,46 @@ vps_test() {
     echo "$res"
     [[ "$res" == OK* ]]
 }
+# --- DTB yöli + virtio-pci: -kernel, GICv2 va GICv3, faqat PCI qurilmalar (ECAM DTB dagi
+#     pci-host-ecam-generic dan, uzilişlar INTx/interrupt-map orqali) ---
+pci_test() {
+    local kernel=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel
+    local g sys log res
+    for g in 2 3; do
+        sys=$(mktemp /tmp/zamin-pci-XXXX.img); truncate -s 128M "$sys"
+        log=$LOG_DIR/verify-pci-gic$g.log; : >"$log"
+        timeout 100 qemu-system-aarch64 -machine virt,gic-version=$g -cpu max -m 512M -smp 4 -nographic \
+            -kernel "$kernel" -drive "file=$sys,if=none,format=raw,id=d" -device virtio-blk-pci,drive=d \
+            -device virtio-rng-pci -nic user,model=virtio-net-pci \
+            -device virtio-gpu-pci -device virtio-keyboard-pci -device virtio-tablet-pci </dev/null >"$log" 2>&1 &
+        local qpid=$!
+        res="FAIL pci (GICv$g): timeout (qarang $log)"
+        for _ in $(seq 1 90); do
+            sleep 1
+            if grep -qaiE 'panic|yiqildi' "$log"; then
+                res="FAIL pci (GICv$g): $(grep -aiE -m2 'panic|yiqildi' "$log" | tr -d '\r' | tr '\n' ' ' | cut -c1-300)"; break
+            fi
+            if grep -qaE 'Choose your language' "$log"; then
+                if ! grep -qaE 'PCIe: virtio-pci qurilmalari: .*blk' "$log"; then res="FAIL pci (GICv$g): ECAM sanaş (DTB) işlamadi"
+                elif ! grep -qaE '\[disk\] virtio-blk' "$log"; then res="FAIL pci (GICv$g): virtio-blk-pci topilmadi"
+                elif ! grep -qaE 'uziliş orqali tugadi' "$log"; then res="FAIL pci (GICv$g): INTx disk uzilişi ötmadi"
+                elif ! grep -qaE '\[net \] virtio-net' "$log"; then res="FAIL pci (GICv$g): virtio-net-pci topilmadi"
+                elif ! grep -qaE '\[gpu \] virtio-gpu' "$log"; then res="FAIL pci (GICv$g): virtio-gpu-pci topilmadi"
+                elif ! grep -qaE 'kiriş: 2 ta virtio-input' "$log"; then res="FAIL pci (GICv$g): virtio-input-pci topilmadi"
+                elif ! grep -qaE 'manbalar: virtio-rng' "$log"; then res="FAIL pci (GICv$g): virtio-rng-pci topilmadi"
+                else res="OK"; fi
+                break
+            fi
+            kill -0 $qpid 2>/dev/null || { res="FAIL pci (GICv$g): qemu erta çiqdi"; break; }
+        done
+        kill $qpid 2>/dev/null; wait $qpid 2>/dev/null; rm -f "$sys"
+        [ "$res" = OK ] || { echo "$res"; return 1; }
+    done
+    echo "OK pci: -kernel + DTB ECAM, GICv2 va GICv3 — virtio-pci (blk+INTx, net, gpu, input, rng)"
+}
+if [ "$MODE" = "pci" ]; then
+    pci_test; exit $?
+fi
 if [ "$MODE" = "vps" ]; then
     vps_test; rc=$?; [ $rc -eq 2 ] && exit 0; exit $rc
 fi
@@ -142,6 +187,9 @@ if python3 scripts/agent/check_corners.py "$CDIR/selftest.png" >"$CDIR/selftest.
     echo "FAIL burçaklar: qora pikselli surat tekşiruvdan ötib ketdi (check_corners.py buzilgan)"; exit 1
 fi
 echo "[ok] burchaklar: ${#SHOTS[@]} surat toza"
+
+# --- DTB + virtio-pci (GICv2/GICv3) ---
+pci_test || exit 1
 
 # --- VPS (UEFI) yuklaniş ---
 vps_test; rc=$?

@@ -253,7 +253,9 @@
       "id": "T32",
       "title": "virtio-pci transporti: disk, tarmoq, GPU, klaviatura/sichqoncha, rng",
       "detail": "DTB dagi 'pci-host-ecam-generic' dan ECAM ni o'qib PCI qurilmalarni sanab chiq, BAR larni tayinla, modern virtio-pci (capabilities: common/notify/isr/device cfg) transportini yoz, mavjud virtio drayverlarini mmio va pci ikkalasida ishlaydigan qil. Uzilishlar: INTx yoki MSI (GICv3 ITS bo'lmasa INTx). Sinov muhiti (Netcup VPS 500 ARM G12.5 ga o'xshash): qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd (yoki /usr/share/AAVMF/AAVMF_CODE.fd pflash), virtio-*-pci qurilmalar. Eski yo'l (-kernel, GICv2, virtio-mmio) BUZILMASLIGI shart — verify.sh full o'tsin. Yangi sinovni scripts/agent/verify.sh ga qo'sh (vps rejimi).",
-      "batch": 5
+      "batch": 5,
+      "status": "done",
+      "done_at": "2026-11-23 19:29:54"
     },
     {
       "id": "T33",

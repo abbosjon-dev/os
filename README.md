@@ -683,7 +683,12 @@ Sinov: `scripts/agent/verify.sh vps` (ESP yasaydi, `virt,gic-version=3` + QEMU_E
 bilan yuklaydi; virtio-blk/net/rng/gpu/keyboard/tablet-pci). Til tanlaş ekranida seriya
 port orqali "3" yuboriladi — "First-time setup" çiqişi GICv3 da klaviatura uzilişi
 işlaşini isbotlaydi; GICv3, taymer, SGI, PCI disk uzilişi va 2 ta virtio-input qurilma
-tekşiriladi. `verify.sh full` ham uni işlatadi.
+tekşiriladi (virtio-net/gpu/rng-pci ham). `verify.sh full` ham uni işlatadi.
+
+`scripts/agent/verify.sh pci` — UEFI siz yöl: `-kernel` bilan GICv2 va GICv3 da faqat
+virtio-*-pci qurilmalar. ECAM DTB dagi `pci-host-ecam-generic` dan öqiladi, BAR lar
+`ranges` dan tayinlanadi, disk INTx uzilişi, tarmoq, GPU, klaviatura/planşet va rng
+tekşiriladi. `verify.sh full` buni ham işlatadi.
 
 ## Birinçi işga tuşiriş
 
