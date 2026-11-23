@@ -226,11 +226,48 @@
       "batch": 4,
       "title": "Bosqich yakuni: versiyani oshirish (Barqarorlik va boshqaruv: burchak regressiyasi, ichma-ich bloklar, terminal Ctrl, hisoblar, fayl fil)",
       "detail": "Shu to'plamda (batch 4) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz."
+    },
+    {
+      "id": "T30",
+      "title": "UEFI yuklanish: yadroni EFI ilovasi (BOOTAA64.EFI) qilib yuklash",
+      "detail": "Yadro tasviriga PE/COFF (EFI stub) sarlavha qo'sh yoki alohida kichik EFI yuklovchi yoz (faqat core, tashqi crate yo'q). EFI dan xotira xaritasi va DTB (EFI configuration table, DTB GUID) ol, ExitBootServices, keyin mavjud kirish nuqtasiga o't. Xotira manzillari qattiq yozilgan joylarni (RAM boshi, UART 0x0900_0000) DTB dan o'qiladigan qil. Sinov: FAT disk (mtools yoki o'z skripting bilan) EFI/BOOT/BOOTAA64.EFI, til tanlash ekranigacha yetadi. Sinov muhiti (Netcup VPS 500 ARM G12.5 ga o'xshash): qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd (yoki /usr/share/AAVMF/AAVMF_CODE.fd pflash), virtio-*-pci qurilmalar. Eski yo'l (-kernel, GICv2, virtio-mmio) BUZILMASLIGI shart — verify.sh full o'tsin. Yangi sinovni scripts/agent/verify.sh ga qo'sh (vps rejimi).",
+      "batch": 5
+    },
+    {
+      "id": "T31",
+      "title": "GICv3 uzilish kontrolleri drayveri",
+      "detail": "DTB dagi 'arm,gic-v3' ni aniqlab GICv3 (distributor + redistributor, ICC_* sistem registrlari) ishlat; GICv2 saqlanib qolsin. Taymer, klaviatura, SMP (SGI) GICv3 da ishlasin. Sinov muhiti (Netcup VPS 500 ARM G12.5 ga o'xshash): qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd (yoki /usr/share/AAVMF/AAVMF_CODE.fd pflash), virtio-*-pci qurilmalar. Eski yo'l (-kernel, GICv2, virtio-mmio) BUZILMASLIGI shart — verify.sh full o'tsin. Yangi sinovni scripts/agent/verify.sh ga qo'sh (vps rejimi).",
+      "batch": 5
+    },
+    {
+      "id": "T32",
+      "title": "virtio-pci transporti: disk, tarmoq, GPU, klaviatura/sichqoncha, rng",
+      "detail": "DTB dagi 'pci-host-ecam-generic' dan ECAM ni o'qib PCI qurilmalarni sanab chiq, BAR larni tayinla, modern virtio-pci (capabilities: common/notify/isr/device cfg) transportini yoz, mavjud virtio drayverlarini mmio va pci ikkalasida ishlaydigan qil. Uzilishlar: INTx yoki MSI (GICv3 ITS bo'lmasa INTx). Sinov muhiti (Netcup VPS 500 ARM G12.5 ga o'xshash): qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd (yoki /usr/share/AAVMF/AAVMF_CODE.fd pflash), virtio-*-pci qurilmalar. Eski yo'l (-kernel, GICv2, virtio-mmio) BUZILMASLIGI shart — verify.sh full o'tsin. Yangi sinovni scripts/agent/verify.sh ga qo'sh (vps rejimi).",
+      "batch": 5
+    },
+    {
+      "id": "T33",
+      "title": "ACPI zaxira yo'li: DTB bo'lmasa RSDP/XSDT, MADT, MCFG, SPCR, GTDT ni o'qish",
+      "detail": "Ba'zi VPS UEFI faqat ACPI beradi. EFI config table dan RSDP ol; MADT dan GIC manzillari va CPU lar, MCFG dan PCI ECAM, SPCR dan UART, GTDT dan taymer uzilishi. Sinov: QEMU da -no-acpi yo'qligida va DTB ni yashirib (yoki acpi=force rejim). Sinov muhiti (Netcup VPS 500 ARM G12.5 ga o'xshash): qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd (yoki /usr/share/AAVMF/AAVMF_CODE.fd pflash), virtio-*-pci qurilmalar. Eski yo'l (-kernel, GICv2, virtio-mmio) BUZILMASLIGI shart — verify.sh full o'tsin. Yangi sinovni scripts/agent/verify.sh ga qo'sh (vps rejimi).",
+      "batch": 5
+    },
+    {
+      "id": "T34",
+      "title": "VPS disk obrazi va o'rnatish skripti (Netcup)",
+      "detail": "scripts/vps/obraz.sh: GPT raw obraz (masalan 2 GB) — ESP (FAT32, EFI/BOOT/BOOTAA64.EFI) + Zamin ma'lumot bo'limi; ZaminFS yadroda shu bo'limni topsin (GPT o'qish). scripts/vps/README.md (o'zbekcha): Netcup panelida obraz yuklash yoki Rescue tizimidan dd bilan yozish (tasdiq so'raydigan skript, faqat foydalanuvchi o'zi ishga tushiradi). Sinov: obraz QEMU+AAVMF+gic-version=3+virtio-pci da yuklanib, grafik ekran va tarmoq (DHCP) ishlaydi; skrinshot docs/vps-boot.png. Sinov muhiti (Netcup VPS 500 ARM G12.5 ga o'xshash): qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd (yoki /usr/share/AAVMF/AAVMF_CODE.fd pflash), virtio-*-pci qurilmalar. Eski yo'l (-kernel, GICv2, virtio-mmio) BUZILMASLIGI shart — verify.sh full o'tsin. Yangi sinovni scripts/agent/verify.sh ga qo'sh (vps rejimi).",
+      "batch": 5
+    },
+    {
+      "id": "T35",
+      "batch": 5,
+      "title": "Bosqich yakuni: VPS porti — versiyani oshirish",
+      "detail": "VPS bosqichi vazifalari haqiqatan ishlashini verify.sh full va skrinshot bilan tasdiqla. Patch versiyani oshir (Cargo.toml, README 'Joriy versiya' va tarix, zamin://malumot.json). README ga 'VPS ga o'rnatish' bo'limi. Ishlamasa TASK_BLOCKED."
     }
   ],
-  "batch": 4,
+  "batch": 5,
   "plan_notes": [
     "Ma'lum nuqson: zamin://matn sahifasida bloklar chetida kichik qora 'tishchalar' (yumaloq burchak chizish xatosi) — birinchi navbatda tuzat.",
-    "Har to'plamda kamida bitta vazifa veb/brauzerdan tashqari bo'lsin (ilovalar, terminal, fayl menejeri, sozlamalar, yadro)."
+    "Har to'plamda kamida bitta vazifa veb/brauzerdan tashqari bo'lsin (ilovalar, terminal, fayl menejeri, sozlamalar, yadro).",
+    "Foydalanuvchi Netcup VPS 500 ARM G12.5 (ARM64, UEFI, KVM) ga Zamin OS ni to'g'ridan-to'g'ri o'rnatmoqchi — VPS porti ustuvor."
   ]
 }
