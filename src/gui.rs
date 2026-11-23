@@ -162,6 +162,8 @@ struct Window {
     side: Vec<String>,  // Fayllar: yon panel papkalari (uy papkasidagi)
     thumbs: Vec<Option<crate::image::Image>>, // Fayllar: rasm eskizlari (rows bilan bir xil tartibda)
     fmeta: Vec<(u64, u64)>, // Fayllar: (hajm, özgartirilgan vaqt — unix) rows bilan bir xil tartibda
+    ffilter: Option<String>, // Fayllar: nom böyiça tezkor filtr (oçiq bölsa)
+    fall: Vec<((String, FKind), Option<crate::image::Image>, (u64, u64))>, // Fayllar: filtrsiz töliq röyxat
     id: usize,          // yagona raqam (animatsiya uçun)
     tab: usize,         // Sozlamalar: tanlangan bölim
     hidden: bool,       // dokka yashirilgan (sariq tugma)
@@ -346,6 +348,8 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         side: Vec::new(),
         thumbs: Vec::new(),
         fmeta: Vec::new(),
+        ffilter: None,
+        fall: Vec::new(),
         id: NEXT_WIN_ID.fetch_add(1, Ordering::Relaxed),
         tab: 0,
         hidden: false,
@@ -514,6 +518,9 @@ fn new_window(kind: Kind, n: usize) -> Window {
 
 /// Fayllar oynasiga papka tarkibini yuklaydi (papkalar oldin, keyin tanlangan saralaş).
 fn load_dir(win: &mut Window, path: &str) {
+    if win.path != path {
+        win.ffilter = None; // papka almaşsa — filtr tozalanadi
+    }
     win.path = String::from(path);
     win.rows.clear();
     let mut entries = fs::list(path).unwrap_or_default();
@@ -555,6 +562,104 @@ fn load_dir(win: &mut Window, path: &str) {
         win.rows.push((e.name.clone(), kind));
     }
     win.title = alloc::format!("Fayllar — {}", path);
+    win.fall = core::mem::take(&mut win.rows)
+        .into_iter()
+        .zip(core::mem::take(&mut win.thumbs))
+        .zip(core::mem::take(&mut win.fmeta))
+        .map(|((r, t), m)| (r, t, m))
+        .collect();
+    files_apply_filter(win);
+}
+
+/// Töliq röyxatdan (`fall`) filtr böyiça körinadigan `rows`/`thumbs`/`fmeta` ni
+/// tuzadi. Tanlov, Enter, F2, Delete şu filtrlangan röyxat bilan işlaydi.
+fn files_apply_filter(win: &mut Window) {
+    let q = win.ffilter.clone().unwrap_or_default();
+    let idx = filter_entries(&win.fall.iter().map(|e| e.0 .0.as_str()).collect::<Vec<_>>(), &q);
+    win.rows.clear();
+    win.thumbs.clear();
+    win.fmeta.clear();
+    for i in idx {
+        let (r, t, m) = &win.fall[i];
+        win.rows.push(r.clone());
+        win.thumbs.push(t.clone());
+        win.fmeta.push(*m);
+    }
+}
+
+/// Qidiruv uçun harfni kiçik shaklga keltiradi (ö/ğ/ş/ç va kirill ham);
+/// bitta belgi — bitta belgi (indekslar mos qolishi uçun).
+fn fold_char(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
+/// `name` içida `query` (katta-kiçik harfga qaramay) birinçi uçragan joy:
+/// (boşlanğiç belgi indeksi, uzunligi belgilarda). Böş so'rov — `Some((0, 0))`.
+fn match_span(name: &str, query: &str) -> Option<(usize, usize)> {
+    let n: Vec<char> = name.chars().map(fold_char).collect();
+    let q: Vec<char> = query.chars().map(fold_char).collect();
+    if q.is_empty() {
+        return Some((0, 0));
+    }
+    if q.len() > n.len() {
+        return None;
+    }
+    (0..=n.len() - q.len()).find(|&i| n[i..i + q.len()] == q[..]).map(|i| (i, q.len()))
+}
+
+/// Tezkor filtr: nomida `query` bor elementlar indekslari (tartib saqlanadi).
+/// Böş so'rov — hammasi.
+fn filter_entries<S: AsRef<str>>(entries: &[S], query: &str) -> Vec<usize> {
+    (0..entries.len()).filter(|&i| match_span(entries[i].as_ref(), query).is_some()).collect()
+}
+
+/// Yöl bölaklari orasidagi ajratkiç.
+const CRUMB_SEP: &str = " › ";
+
+/// Yöl bölaklari (breadcrumb): (körinadigan nom, öşa papka yöli).
+/// "~/Hujjatlar/a" → [("Uy","~"), ("Hujjatlar","~/Hujjatlar"), ("a","~/Hujjatlar/a")].
+/// Jami kenglik (`px` şriftda) `max_w` dan oşsa, boşidagi bölaklar bitta
+/// ("…", yaşirilgan oxirgi papka yöli) ga qisqaradi; oxirgi bölak doim qoladi.
+fn crumbs_px(path: &str, max_w: usize, px: usize) -> Vec<(String, String)> {
+    let mut all: Vec<(String, String)> = Vec::new();
+    let (root, rest) = if path == "~" || path.starts_with("~/") {
+        all.push((String::from("Uy"), String::from("~")));
+        ("~", path.get(2..).unwrap_or(""))
+    } else {
+        all.push((String::from("/"), String::from("/")));
+        ("/", path.trim_start_matches('/'))
+    };
+    let mut cur = String::from(root);
+    for part in rest.split('/').filter(|p| !p.is_empty()) {
+        cur = path_join(&cur, part);
+        all.push((String::from(part), cur.clone()));
+    }
+    let sep = gfx::text_width(CRUMB_SEP, px);
+    let w = |c: &(String, String)| gfx::text_width(&c.0, px);
+    let total: usize = all.iter().map(w).sum::<usize>() + sep * (all.len() - 1);
+    if total <= max_w || all.len() == 1 {
+        return all;
+    }
+    // oxiridan boşlab sig'ganiça olamiz ("…" bölagi uçun joy qoldirib)
+    let ell = gfx::text_width("…", px) + sep;
+    let mut used = w(all.last().unwrap());
+    let mut first = all.len() - 1;
+    while first > 1 {
+        let add = w(&all[first - 1]) + sep;
+        if ell + used + add > max_w {
+            break;
+        }
+        used += add;
+        first -= 1;
+    }
+    let mut out = alloc::vec![(String::from("…"), all[first - 1].1.clone())];
+    out.extend(all.drain(first..));
+    out
+}
+
+/// Yöl bölaklari asboblar qatori şriftida.
+fn crumbs(path: &str, max_w: usize) -> Vec<(String, String)> {
+    crumbs_px(path, max_w, small())
 }
 
 /// Yöl birlaştiradi (yoki ".." — ota papka).
@@ -804,6 +909,56 @@ pub fn self_test_files_sort() -> Result<usize, &'static str> {
     n += 1;
     if fmt_mtime(0) != "—" {
         return Err("fmt_mtime(0)");
+    }
+    Ok(n)
+}
+
+/// Fayllar tezkor filtri va yöl bölaklari self-testi. Qaytaradi — tekşiruvlar soni.
+pub fn self_test_files_filter() -> Result<usize, &'static str> {
+    let mut n = 0;
+    let names = ["öy.txt", "Uy_öyi", "boy.md", "Şahar", "ÇAQMOQ.png", "Ğisht", "Документ.txt", "rasm.png"];
+    let mut check = |q: &str, want: &[usize]| -> Result<(), &'static str> {
+        n += 1;
+        if filter_entries(&names, q) != want { Err("filter_entries natijasi notöğri") } else { Ok(()) }
+    };
+    check("ÖY", &[0, 1])?;
+    check("", &[0, 1, 2, 3, 4, 5, 6, 7])?;
+    check("şa", &[3])?;
+    check("çaq", &[4])?;
+    check("ğIS", &[5])?;
+    check("докУМ", &[6])?;
+    check(".PNG", &[4, 7])?;
+    check("yo'q", &[])?;
+    check("öyi_x", &[])?;
+    n += 1;
+    if match_span("Uy_öyi", "ÖY") != Some((3, 2)) || match_span("a", "") != Some((0, 0)) {
+        return Err("match_span notöğri");
+    }
+    // yöl bölaklari
+    let paths = |v: &[(String, String)]| v.iter().map(|c| (c.0.clone(), c.1.clone())).collect::<Vec<_>>();
+    let s = |a: &str, b: &str| (String::from(a), String::from(b));
+    n += 1;
+    if paths(&crumbs("~/Hujjatlar/a/b", 100_000))
+        != [s("Uy", "~"), s("Hujjatlar", "~/Hujjatlar"), s("a", "~/Hujjatlar/a"), s("b", "~/Hujjatlar/a/b")]
+    {
+        return Err("crumbs yöllari notöğri");
+    }
+    n += 1;
+    if paths(&crumbs("~", 100_000)) != [s("Uy", "~")] || paths(&crumbs("/etc/x", 100_000)) != [s("/", "/"), s("etc", "/etc"), s("x", "/etc/x")] {
+        return Err("crumbs (uy / ildiz) notöğri");
+    }
+    // tor en: boşi "…" ga qisqaradi, "…" yaşirilgan oxirgi papkaga olib boradi
+    let px = 16;
+    let w_b = gfx::text_width("b", px);
+    let w_a = gfx::text_width("a", px);
+    let narrow = gfx::text_width("…", px) + 2 * gfx::text_width(CRUMB_SEP, px) + w_a + w_b + 1;
+    n += 1;
+    if paths(&crumbs_px("~/Hujjatlar/a/b", narrow, px)) != [s("…", "~/Hujjatlar"), s("a", "~/Hujjatlar/a"), s("b", "~/Hujjatlar/a/b")] {
+        return Err("crumbs tor enda '…' bilan qisqarmadi");
+    }
+    n += 1;
+    if paths(&crumbs_px("~/Hujjatlar/a/b", 1, px)) != [s("…", "~/Hujjatlar/a"), s("b", "~/Hujjatlar/a/b")] {
+        return Err("crumbs juda tor enda oxirgi bölakni saqlamadi");
     }
     Ok(n)
 }
@@ -1832,6 +1987,13 @@ fn desktop() {
                     // Alt+W — yopiş, Alt+M — yashiriş, Alt+F — kattalaştiriş
                     if let Some(i) = windows.iter().rposition(|w| !w.hidden) {
                         match e.code {
+                            33 if windows[i].kind == Kind::Files && i + 1 == windows.len() => {
+                                // Alt+F — Fayllarda tezkor filtr (oçiq bölsa — yopiladi)
+                                let w = &mut windows[i];
+                                w.ffilter = if w.ffilter.is_some() { None } else { Some(String::new()) };
+                                files_apply_filter(w);
+                                w.fsel = None;
+                            }
                             17 if windows[i].kind == Kind::Browser && !windows[i].web_tabs.is_empty() => {
                                 tab_close(&mut windows[i]); // Alt+W — faol tabni yopiş
                             }
@@ -1876,6 +2038,17 @@ fn desktop() {
                             changed = true;
                         }
                     }
+                }
+                (input::EV_KEY, 1) if e.value == 1 && desk.menu.is_none() && desk.ctx.is_none()
+                    && windows.last().is_some_and(|w| !w.hidden && w.kind == Kind::Files && w.ffilter.is_some() && w.rename.is_none()) =>
+                {
+                    // Esc — Fayllardagi tezkor filtrni yopadi
+                    let w = windows.last_mut().unwrap();
+                    let sel = w.fsel.and_then(|s| w.rows.get(s)).map(|r| r.0.clone());
+                    w.ffilter = None;
+                    files_apply_filter(w);
+                    w.fsel = sel.and_then(|n| w.rows.iter().position(|r| r.0 == n));
+                    changed = true;
                 }
                 (input::EV_KEY, 1) if e.value == 1 => {
                     // Esc — menyu, panel va almaştirgiçni yopadi
@@ -2430,6 +2603,8 @@ fn handle_click(
         if windows[i].kind == Kind::Files {
             let target = if files_back(&windows[i], cx, cy) {
                 Some(path_join(&windows[i].path, ".."))
+            } else if let Some(p) = files_crumb_at(&windows[i], cx, cy) {
+                Some(p)
             } else {
                 files_side_at(&windows[i], cx, cy)
             };
@@ -4344,6 +4519,73 @@ fn files_view_btns(win: &Window) -> [(usize, usize, usize, usize); 2] {
     [(x1, by, w1, bh), (x2, by, w2, bh)]
 }
 
+/// Tezkor filtr maydoni (x, y, w, h) — Grid/Röyxat tugmalaridan çapda; filtr yopiq — None.
+fn files_filter_rect(win: &Window) -> Option<(usize, usize, usize, usize)> {
+    win.ffilter.as_ref()?;
+    let g = files_geo(win);
+    let u = body();
+    let vb = files_view_btns(win);
+    let free = vb[0].0.saturating_sub(g.tx + u * 4);
+    let fw = (u * 9).min(free * 3 / 5).max(u * 4);
+    let fx = vb[0].0.saturating_sub(fw + u / 2);
+    Some((fx, vb[0].1, fw, vb[0].3))
+}
+
+/// Yöl bölaklari va ularning joyi: (nom, yöl, (x, y, w, h)). Kenglik ajratkiç
+/// " › " gaça (ajratkiç bölak tugmasidan keyin çiziladi).
+fn files_crumb_rects(win: &Window) -> Vec<(String, String, (usize, usize, usize, usize))> {
+    let g = files_geo(win);
+    let u = body();
+    let px = small();
+    let x0 = g.tx + u / 2 + u * 3 / 2 + u / 3;
+    let right = match files_filter_rect(win) {
+        Some((fx, ..)) => fx,
+        None => {
+            let cnt = alloc::format!("{} ta element", win.rows.len());
+            files_view_btns(win)[0].0.saturating_sub(gfx::text_width(&cnt, small() * 4 / 5) + u / 2)
+        }
+    }
+    .saturating_sub(u / 2);
+    let pad = u / 2; // har bölak tugmasi içki çeti (ikki tomon)
+    let list = crumbs(&win.path, right.saturating_sub(x0));
+    // tugma çetlari ham joy oladi — kerak bölsa yana qisqartiramiz
+    let sep = gfx::text_width(CRUMB_SEP, px);
+    let mut list = list;
+    let width = |l: &[(String, String)]| l.iter().map(|c| gfx::text_width(&c.0, px) + pad + sep).sum::<usize>();
+    while list.len() > 2 && x0 + width(&list) > right {
+        let budget = right.saturating_sub(x0).saturating_sub(list.len() * (pad + sep));
+        let nl = crumbs(&win.path, budget);
+        if nl.len() >= list.len() {
+            break;
+        }
+        list = nl;
+    }
+    let by = g.top + u / 4;
+    let bh = u * 3 / 2;
+    let mut x = x0;
+    let mut out = Vec::new();
+    let n = list.len();
+    for (k, (name, path)) in list.into_iter().enumerate() {
+        let mut w = gfx::text_width(&name, px) + pad;
+        if k + 1 == n {
+            w = w.min(right.saturating_sub(x).max(u * 2));
+        }
+        out.push((name, path, (x, by, w, bh)));
+        x += w + sep;
+    }
+    out
+}
+
+/// Bosilgan yöl bölagi — öşa papka yöli (oxirgi, joriy bölak — None).
+fn files_crumb_at(win: &Window, cx: usize, cy: usize) -> Option<String> {
+    let cr = files_crumb_rects(win);
+    let n = cr.len();
+    cr.into_iter()
+        .enumerate()
+        .find(|(k, (_, _, r))| *k + 1 < n && in_rect(*r, cx, cy))
+        .map(|(_, (_, p, _))| p)
+}
+
 /// Röyxat sarlavhasida bosilgan ustun.
 fn list_header_at(win: &Window, cx: usize, cy: usize) -> Option<SortKey> {
     if !files_prefs().list {
@@ -4479,15 +4721,21 @@ fn draw_files(win: &Window) {
         ],
         if win.path == "~" || win.path == "/" { 0x4a5568 } else { 0xdbe3ee },
     );
-    // yöl (breadcrumb)
-    let crumb = if win.path == "~" {
-        String::from("Uy")
-    } else if let Some(rest) = win.path.strip_prefix("~/") {
-        alloc::format!("Uy  /  {}", rest.replace('/', "  /  "))
-    } else {
-        win.path.clone()
-    };
-    gfx::draw_text(bx + u2 + u / 2, g.top + (g.th - small()) / 2, &crumb, 0xf0f4fa, small());
+    // yöl bölaklari (bosiladigan breadcrumb)
+    let cr = files_crumb_rects(win);
+    let ty = g.top + (g.th - small()) / 2;
+    let n_cr = cr.len();
+    for (k, (name, _, (x, y, w, h))) in cr.iter().enumerate() {
+        let last = k + 1 == n_cr;
+        if last {
+            fill_round_rect_a(*x, *y, *w, *h, u / 4, 0xffffff, 14);
+        }
+        let lbl = fit_text(name, w.saturating_sub(u / 2), small());
+        gfx::draw_text(x + u / 4, ty, &lbl, if last { 0xf0f4fa } else { 0xaab6c6 }, small());
+        if !last {
+            gfx::draw_text(x + w, ty, CRUMB_SEP, 0x6f7f95, small());
+        }
+    }
     // Grid / Röyxat almaştirgiçi
     let pr = files_prefs();
     let vb = files_view_btns(win);
@@ -4503,9 +4751,38 @@ fn draw_files(win: &Window) {
         let lbl = if k == 0 { "Grid" } else { "Röyxat" };
         gfx::draw_text_centered(x + w / 2, y + (h - bpx) / 2, lbl, if on { OQ } else { 0xaab6c6 }, bpx);
     }
-    let cnt = alloc::format!("{} ta element", win.rows.len());
-    let cw = gfx::text_width(&cnt, small() * 4 / 5);
-    gfx::draw_text(sx.saturating_sub(cw + u / 2), g.top + (g.th - small()) / 2 + 2, &cnt, 0x6f7f95, small() * 4 / 5);
+    if let (Some(q), Some((fx, fy, fw, fh))) = (&win.ffilter, files_filter_rect(win)) {
+        // tezkor filtr maydoni (o'ng yuqorida)
+        let fpx = small() * 9 / 10;
+        gfx::fill_round_rect(fx, fy, fw, fh, u / 3, 0x0d1220);
+        gfx::round_outline(fx, fy, fw, fh, u / 3, 1, accent());
+        // lupa belgisi
+        let (lx, ly, lr) = (fx + u / 2, fy + fh / 2, (fh / 5).max(3));
+        gfx::round_outline(lx - lr, ly - lr, lr * 2, lr * 2, lr, 1, 0x8a9bb0);
+        gfx::fill_poly(&[((lx + lr) as f32, (ly + lr - 1) as f32), ((lx + lr * 2) as f32, (ly + lr * 2) as f32), ((lx + lr * 2 - 1) as f32, (ly + lr * 2 + 1) as f32), ((lx + lr - 1) as f32, (ly + lr) as f32)], 0x8a9bb0);
+        let cnt = alloc::format!("{}/{}", win.rows.len(), win.fall.len());
+        let cpx = small() * 4 / 5;
+        let cw = gfx::text_width(&cnt, cpx);
+        let tx0 = lx + lr * 2 + u / 3;
+        let avail = (fx + fw).saturating_sub(tx0 + cw + u / 2 + u / 3);
+        let (txt, col) = if q.is_empty() { (String::from("Filtr…"), 0x5f6f85) } else { (q.clone(), OQ) };
+        // uzun so'rovning oxiri körinadi
+        let v: Vec<char> = txt.chars().collect();
+        let mut k = 0;
+        while k < v.len() && gfx::text_width(&v[k..].iter().collect::<String>(), fpx) > avail {
+            k += 1;
+        }
+        let vis: String = v[k..].iter().collect();
+        let ex = gfx::draw_text(tx0, fy + (fh - fpx) / 2, &vis, col, fpx);
+        let cur_x = if q.is_empty() { tx0 } else { ex + 1 };
+        fill_rect(cur_x, fy + 4, 2, fh.saturating_sub(8), 0x63a8ff);
+        let ccol = if win.rows.is_empty() && !q.is_empty() { 0xff6b6b } else { 0x8a9bb0 };
+        gfx::draw_text((fx + fw).saturating_sub(cw + u / 2), fy + (fh - cpx) / 2, &cnt, ccol, cpx);
+    } else {
+        let cnt = alloc::format!("{} ta element", win.rows.len());
+        let cw = gfx::text_width(&cnt, small() * 4 / 5);
+        gfx::draw_text(sx.saturating_sub(cw + u / 2), g.top + (g.th - small()) / 2 + 2, &cnt, 0x6f7f95, small() * 4 / 5);
+    }
     fill_rect(g.tx, g.top + g.th, win.w - g.sbw, 1, 0x2a3346);
     if pr.list {
         draw_files_list(win, &g, pr);
@@ -4544,9 +4821,29 @@ fn draw_files(win: &Window) {
         } else {
             let lbl = fit_text(name, g.cw - u / 3, npx);
             let col = if selected { OQ } else { 0xe7edf6 };
+            let lx = (x0 + g.cw / 2).saturating_sub(gfx::text_width(&lbl, npx) / 2);
+            draw_match_hl(win, name, &lbl, lx, y0 + isz + u / 2, npx);
             gfx::draw_text_centered(x0 + g.cw / 2, y0 + isz + u / 2, &lbl, col, npx);
         }
     }
+}
+
+/// Filtrga mos qismni nom ostida belgilaydi (`lbl` — çizilgan, ehtimol "…" bilan
+/// qisqartirilgan nom, `x` — uning boşi).
+fn draw_match_hl(win: &Window, name: &str, lbl: &str, x: usize, y: usize, px: usize) {
+    let Some(q) = win.ffilter.as_deref().filter(|q| !q.is_empty()) else { return };
+    let Some((st, len)) = match_span(name, q) else { return };
+    let lc: Vec<char> = lbl.chars().collect();
+    let shown = if lbl.ends_with('…') && lbl != name { lc.len() - 1 } else { lc.len() };
+    if st >= shown {
+        return;
+    }
+    let end = (st + len).min(shown);
+    let pre: String = lc[..st].iter().collect();
+    let mid: String = lc[st..end].iter().collect();
+    let x0 = x + gfx::text_width(&pre, px);
+    let w = gfx::text_width(&mid, px).max(2);
+    fill_round_rect_a(x0.saturating_sub(1), y.saturating_sub(1), w + 2, px + 3, 3, 0xffcc00, 110);
 }
 
 /// Nomni özgartiriş maydoni (oxiri körinadi).
@@ -4624,6 +4921,7 @@ fn draw_files_list(win: &Window, g: &FilesGeo, pr: FilesPrefs) {
             draw_rename_box(r, tx - u / 6, y0 + 2, nw + u / 6, rh - 4, npx);
         } else {
             let lbl = fit_text(name, nw, npx);
+            draw_match_hl(win, name, &lbl, tx, ty, npx);
             gfx::draw_text(tx, ty, &lbl, if selected { OQ } else { 0xe7edf6 }, npx);
         }
         let (size, mtime) = win.fmeta.get(i).copied().unwrap_or((0, 0));
@@ -6605,6 +6903,33 @@ fn files_key(windows: &mut Vec<Window>, desk: &mut Desk, code: u16, shift: bool,
                     }
                 }
             }
+            return;
+        }
+        // Tezkor filtr: harflar — so'rovga, Backspace — öçiradi (böş bölsa yopadi).
+        // Strelkalar, Enter, F2, Delete — filtrlangan röyxatda odatdagidek.
+        let ch = keycode_char(code, shift).filter(|c| !c.is_control() && *c != '/');
+        if let Some(q) = w.ffilter.as_mut() {
+            if code == 14 {
+                if q.pop().is_none() {
+                    w.ffilter = None;
+                }
+                files_apply_filter(w);
+                w.fsel = if w.rows.is_empty() { None } else { Some(0) };
+                return;
+            }
+            if let Some(c) = ch {
+                if q.chars().count() < 40 {
+                    q.push(c);
+                }
+                files_apply_filter(w);
+                w.fsel = if w.rows.is_empty() { None } else { Some(0) };
+                return;
+            }
+        } else if let Some(c) = ch.filter(|c| *c != ' ') {
+            // harf yozilsa — filtr oçiladi
+            w.ffilter = Some(String::from(c));
+            files_apply_filter(w);
+            w.fsel = if w.rows.is_empty() { None } else { Some(0) };
             return;
         }
     }

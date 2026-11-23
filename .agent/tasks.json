@@ -213,7 +213,9 @@
       "id": "T27",
       "title": "Fayllar menejeri: nom bo'yicha tezkor filtr va bosiladigan yo'l bo'laklari (breadcrumb)",
       "detail": "Fayllar: src/gui.rs (draw_files 4295, draw_files_list 4446, FilesGeo, fayllar bosish/klaviatura ishlovi, Window dagi fayllar holati). Ishlar: (1) Asboblar panelidagi matnli yo'l o'rniga bosiladigan bo'laklar chiqadi: 'Uy › Hujjatlar › Loyiha'. Har bo'lak bosilsa o'sha papkaga o'tiladi, sig'masa boshidagi bo'laklar '…' ga qisqaradi. (2) Fayllar oynasi fokusda bo'lib, harf yozilsa yoki Alt+F bosilsa, o'ng yuqorida filtr maydoni ochiladi. Joriy papka elementlari nomida katta-kichik harfni farqlamasdan (o'zbek ö/ğ/ş/ç va kirill bilan) qidiriladi. Grid va ro'yxat ko'rinishi ikkalasi ham filtrlanadi, mos qism belgilanadi. Esc filtrni yopadi, papka almashsa filtr tozalanadi. Tanlash, Enter, F2, Delete filtrlangan ro'yxatda to'g'ri element bilan ishlaydi. Mantiq sof funksiyalarda: filter_entries(entries, query) -> Vec<usize> va crumbs(path, max_w) -> Vec<(nom, yo'l)>. Qabul mezoni: mavjud '[ok] fayllar saralash' self-testi kengaytiriladi yoki yangi '[ok] fayllar filtr' qo'shiladi: 'ÖY' so'rovi 'öy.txt' va 'Uy_öyi' ni topadi; bo'sh so'rov hammasini qaytaradi; crumbs('~/Hujjatlar/a/b') to'g'ri yo'llarni beradi va tor enda '…' bilan qisqaradi. Skrinshot docs/apps/files-filter.png olinadi. README 'Fayl boshqaruvi' bo'limi yangilanadi. verify.sh full o'tadi.",
-      "batch": 4
+      "batch": 4,
+      "status": "done",
+      "done_at": "2026-11-23 18:03:42"
     },
     {
       "id": "T28",

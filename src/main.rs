@@ -575,6 +575,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] fayllar saralaş: nom/hajm/sana/tur, teskari tartib, papkalar birinçi, human_size ({} sinov)", n),
         Err(e) => panic!("fayllar saralaş tekşiruvi yiqildi: {}", e),
     }
+    match gui::self_test_files_filter() {
+        Ok(n) => println!("  [ok] fayllar filtr: katta-kiçik harfsiz qidiruv (ö/ğ/ş/ç, kirill), böş so'rov — hammasi, yöl bölaklari va '…' qisqartiriş ({} sinov)", n),
+        Err(e) => panic!("fayllar filtr tekşiruvi yiqildi: {}", e),
+    }
     match accounts::self_test() {
         Ok(n) => println!("  [ok] hisob sozlamalari: parolni özgartiriş tekşiruvi, set_password (yangi — ötadi, eski — yöq), login validatsiyasi ({} sinov)", n),
         Err(e) => panic!("hisob sozlamalari tekşiruvi yiqildi: {}", e),

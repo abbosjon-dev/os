@@ -151,6 +151,24 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   yuklanişda `[ok] fayllar saralaş` self-testi nom/hajm/sana böyiça teskari tartibni,
   papkalar birinçi turişini va `human_size(0 / 1023 / 1024 / 5 MB)` ni tekşiradi.
 
+![Fayllar: tezkor filtr va yöl bölaklari](docs/apps/files-filter.png)
+
+- **Bosiladigan yöl bölaklari (breadcrumb)** — asboblar qatorida matnli yöl örniga
+  `Uy › Hujjatlar › Loyiha`; har bölak bosilsa öşa papkaga ötiladi (joriy — oxirgisi
+  ajratib körsatiladi). Sig'masa boşidagi bölaklar bitta `…` ga qisqaradi (u yaşirilgan
+  eng yaqin papkaga olib boradi), oxirgi bölak doim qoladi.
+- **Tezkor filtr** — Fayllar oynasi fokusda bölib harf yozilsa yoki `Alt+F` bosilsa,
+  öng yuqorida filtr maydoni oçiladi (`topildi/jami` hisobçisi bilan). Joriy papka
+  elementlari nomida katta-kiçik harfni farqlamasdan qidiriladi (ö/ğ/ş/ç va kirill ham);
+  grid va röyxat körinişi ikkalasi ham filtrlanadi, nomning mos qismi sariq bilan
+  belgilanadi. `Backspace` — oxirgi harfni öçiradi (böş so'rovda — yopadi), `Esc` — filtrni
+  yopadi (tanlangan element saqlanadi), papka almaşsa filtr tozalanadi. Tanlaş, strelkalar,
+  `Enter`, `F2`, `Delete` filtrlangan röyxatdagi aynan körinib turgan element bilan işlaydi.
+- Mantiq sof funksiyalarda: `filter_entries(nomlar, so'rov) -> Vec<usize>`, `match_span` va
+  `crumbs(yöl, max_eni) -> Vec<(nom, yöl)>`; yuklanişda `[ok] fayllar filtr` "ÖY" so'rovi
+  `öy.txt` va `Uy_öyi` ni topişini, böş so'rov hammasini qaytarişini, kirill/ş/ç/ğ
+  qidiruvini, `crumbs("~/Hujjatlar/a/b")` yöllarini va tor enda `…` qisqartirişini tekşiradi.
+
 ### Brauzer: to'liq HTML (`zamin://html` sinov sahifasi)
 
 | Matn teglari va belgilar | Ro'yxatlar (A./iv./teskari), ichma-ich belgilar |
