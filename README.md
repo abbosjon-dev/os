@@ -335,6 +335,24 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   `self_test_overflow` (25 tekshiruv: tahlil, meros, qirqish, nowrap, ellipsis, pre va opacity).
 
   ![overflow, ellipsis, pre va opacity: zamin://overflow](docs/web-overflow.png)
+- **CSS maxsus xossalar `var(--x)` va `calc()`** — `--nom: qiymat` e'lonlari elementda saqlanadi
+  va bolalarga meros bo'ladi (bola ularni qayta belgilay oladi; `:root` endi faqat hujjat ildiziga
+  mos keladi). Qiymat qo'llanishidan oldin `var(--nom[, zaxira])` almashtiriladi: ichma-ich `var`
+  va zaxira qiymatlar (zaxira ichida yana `var`) ishlaydi; o'zgaruvchi ichidagi `var()` e'lon
+  qilingan elementda yechiladi. Sikl (`--a: var(--b); --b: var(--a)`) panic bermaydi — 8 darajada
+  to'xtaydi va o'zgaruvchi yaroqsiz deb hisoblanadi. `calc()`: `+ - * /`, qavslar, ichma-ich
+  `calc()`, birliklar `px`/`em`/`rem`/`pt`/`vw`/`vh`/`%`; turli birliklar aralashsa (`100% - 2em`)
+  kontekstda hisoblanadi. `width`/`max-width` dagi foizli `calc` maket bosqichida yechiladi:
+  `(foiz, true)` + px bo'lagi (`wpx`) sifatida saqlanadi va konteyner eniga nisbatan hisoblanadi
+  (flex ustunlari, ichma-ich qutilar, float/absolute). `margin`/`padding` dagi `%` (oddiy yoki
+  `calc` ichida) taxminiy konteyner eniga nisbatan. Noto'g'ri ifoda (`calc(50% - )`, `10px * 2px`,
+  nolga bo'lish, topilmagan zaxirasiz `var`) xossani e'tiborsiz qoldiradi. Sinov:
+  `zamin://ozgaruvchi` (`:root` o'zgaruvchilari bilan tugmalar va kartalar, `width: calc(50% -
+  20px)` li ikki ustun), yuklanish self-testida `css::self_test_vars` (17 tekshiruv: `var(--c)`
+  rangi, zaxira, meros va qayta belgilash, sikl, `calc(10px + 2em)` = 42 (16px shrift),
+  `calc(50% - 20px)` = 280 (600 enli konteyner)).
+
+  ![var() va calc(): zamin://ozgaruvchi](docs/web-vars.png)
 - **`<iframe>` — ichki hujjat haqiqiy chiziladi** — `srcdoc="…"` (belgilar bilan kodlangan yoki
   tirnoq ichida xom HTML) alohida hujjat sifatida **o'z CSS i bilan** tahlil qilinadi va ramka-quti
   ichida chiziladi: fon — ichki `body` foni (bo'lmasa oq), `width` (px yoki %) yoki CSS `width`,

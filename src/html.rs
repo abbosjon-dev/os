@@ -65,6 +65,7 @@ pub struct Block {
     pub grad: Option<css::Grad>,     // konteyner foni: linear-gradient
     pub shadow: Option<css::Shadow>, // konteyner soyasi: box-shadow
     pub maxw: Option<(f32, bool)>,
+    pub wpx: f32, // calc(): foizli maxw ga qöşiladigan px bölagi
     pub center: bool,
     pub mt: f32,
     pub mb: f32,
@@ -78,6 +79,7 @@ pub struct Block {
     pub gcols: u8,
     pub fjust: u8,
     pub fw: Option<(f32, bool)>, // ustun kengligi (bolaning width)
+    pub fwpx: f32,               // ... calc() px bölagi
     pub fgrow: f32,
     pub mark: String,   // ro'yxat belgisi ("a.", "iv.", "3.")
     pub det: u16,       // <details> raqami (NO_EL — yöq)
@@ -89,6 +91,7 @@ pub struct Block {
     pub oser: u32,               // uning raqami (0 — yöq)
     pub okind: u8,               // 1 — float çap, 2 — float öng, 3 — absolute, 4 — fixed
     pub ow: Option<(f32, bool)>, // uning kengligi
+    pub owpx: f32,               // ... calc() px bölagi
     pub oins: [Option<f32>; 4],  // top, right, bottom, left
     pub pk: u32,                 // absolute uçun konteyner (eng yaqin joylaşgan ajdod; 0 — sahifa)
     pub aser: u32,               // eng yaqin joylaşgan (static emas) ajdod — langar sifatida
@@ -127,6 +130,7 @@ pub struct Cbox {
     pub grad: Option<css::Grad>,
     pub shadow: Option<css::Shadow>,
     pub maxw: Option<(f32, bool)>,
+    pub wpx: f32,
     pub center: bool,
     pub mt: f32,
     pub mb: f32,
@@ -140,14 +144,14 @@ impl Block {
     pub fn chain(&self) -> Vec<Cbox> {
         let mut v = self.outer.clone();
         if self.bgk != 0 {
-            v.push(Cbox { ser: self.bgk, bg: self.bg, pad: self.pad, bw: self.bw, bc: self.bc, radius: self.radius, grad: self.grad, shadow: self.shadow, maxw: self.maxw, center: self.center, mt: self.bmt, mb: self.bmb, op: self.bop, dx: self.bdx, dy: self.bdy });
+            v.push(Cbox { ser: self.bgk, bg: self.bg, pad: self.pad, bw: self.bw, bc: self.bc, radius: self.radius, grad: self.grad, shadow: self.shadow, maxw: self.maxw, wpx: self.wpx, center: self.center, mt: self.bmt, mb: self.bmb, op: self.bop, dx: self.bdx, dy: self.bdy });
         }
         v
     }
     /// innerHTML: yangi bloklar eski blokning position/float kontekstini oladi.
     fn copy_pos(&mut self, t: &Block) {
         if self.oser == 0 {
-            (self.oser, self.okind, self.ow, self.oins, self.pk) = (t.oser, t.okind, t.ow, t.oins, t.pk);
+            (self.oser, self.okind, self.ow, self.owpx, self.oins, self.pk) = (t.oser, t.okind, t.ow, t.owpx, t.oins, t.pk);
         }
         if self.aser == 0 {
             self.aser = t.aser;
@@ -299,6 +303,7 @@ impl Doc {
                         b.fgap = tmpl.fgap;
                         b.gcols = tmpl.gcols;
                         b.fw = tmpl.fw;
+                        b.fwpx = tmpl.fwpx;
                         b.copy_pos(&tmpl);
                         b.outer = tmpl.outer.clone();
                         b.pad = tmpl.pad;
@@ -306,6 +311,7 @@ impl Doc {
                         b.bc = tmpl.bc;
                         b.radius = tmpl.radius;
                         b.maxw = tmpl.maxw;
+                        b.wpx = tmpl.wpx;
                         b.center = tmpl.center;
                         if b.color.is_none() {
                             b.color = tmpl.color;
@@ -458,6 +464,7 @@ impl Doc {
                 b.bc = t.bc;
                 b.radius = t.radius;
                 b.maxw = t.maxw;
+                b.wpx = t.wpx;
                 b.center = t.center;
                 b.flex = t.flex;
                 b.fcol = t.fcol;
@@ -465,6 +472,7 @@ impl Doc {
                 b.fgap = t.fgap;
                 b.gcols = t.gcols;
                 b.fw = t.fw;
+                b.fwpx = t.fwpx;
                 b.copy_pos(t);
             }
         }
@@ -492,16 +500,18 @@ impl Doc {
     fn style_of(&self, el: usize) -> Sty {
         let ch = self.chain(el);
         let mut parent = Sty::root();
+        let mut pvars = css::no_vars();
         let mut anc: Vec<ElRef> = Vec::new();
         for &k in &ch {
             let info = &self.elems[k];
             let me = ElRef { tag: &info.tag, id: &info.id, classes: &info.classes, hover: self.hovered.contains(&(k as u16)) };
             let inline = if info.style.is_empty() { None } else { Some(info.style.as_str()) };
-            let st = css::compute(&parent, &self.rules, &me, &anc, inline);
+            let (st, v) = css::compute_v(&parent, &pvars, &self.rules, &me, &anc, inline);
             if k == el {
                 return st;
             }
             parent = st;
+            pvars = v;
             anc.push(me);
         }
         parent
@@ -957,6 +967,7 @@ struct Open {
     input: u16,
     rspan: u8,
     nb: usize, // ochilganda doc.blocks soni (böş height li element uçun)
+    vars: css::Vars, // maxsus xossalar (--nom), bolalarga meros
 }
 
 /// Blok darajasidagi element (height / min-height faqat şularga qöllanadi).
@@ -1041,6 +1052,9 @@ struct P {
 }
 
 impl P {
+    fn top_vars(&self) -> css::Vars {
+        self.stack.last().map(|o| o.vars.clone()).unwrap_or_else(css::no_vars)
+    }
     fn top(&self) -> Sty {
         self.stack.last().map(|o| o.sty).unwrap_or(Sty::root())
     }
@@ -1077,13 +1091,13 @@ impl P {
         let fl = match self.stack.iter().rposition(|o| o.sty.flex == 1 || o.sty.flex == 3) {
             Some(k) => {
                 let c = &self.stack[k];
-                let (col, fw, grow, rs) = match self.stack.get(k + 1) {
-                    Some(ch) => (ch.serial, ch.sty.maxw, ch.sty.grow, ch.rspan),
-                    None => (c.serial, None, 0.0, 1),
+                let (col, fw, grow, rs, fwpx) = match self.stack.get(k + 1) {
+                    Some(ch) => (ch.serial, ch.sty.maxw, ch.sty.grow, ch.rspan, ch.sty.wpx),
+                    None => (c.serial, None, 0.0, 1, 0.0),
                 };
-                (c.serial, col, c.sty.flex, c.sty.gap, c.sty.gcols, c.sty.justify, fw, grow, rs)
+                (c.serial, col, c.sty.flex, c.sty.gap, c.sty.gcols, c.sty.justify, fw, grow, rs, fwpx)
             }
-            None => (0, 0, 0, 0.0, 0, 0, None, 0.0, 1),
+            None => (0, 0, 0, 0.0, 0, 0, None, 0.0, 1, 0.0),
         };
         // Quti: flex konteynerdan içkaridagisi (aks holda butun qator bitta qutiga tuşib qoladi)
         let fk = self.stack.iter().rposition(|o| o.sty.flex == 1 || o.sty.flex == 3).map(|k| k + 1).unwrap_or(0);
@@ -1096,7 +1110,7 @@ impl P {
         let outer_open: Vec<&Open> = self.stack[fk.min(self.stack.len())..].iter().rev().take_while(|o| o.tag != "body" && o.tag != "html").filter(|o| o.sty.is_box() && o.serial < bgk).collect();
         // position / float
         let oi = self.stack.iter().rposition(|o| o.sty.float != 0 || o.sty.pos >= 2);
-        let (oser, okind, ow, oins, pk) = match oi {
+        let (oser, okind, ow, oins, pk, owpx) = match oi {
             Some(i) => {
                 let o = &self.stack[i];
                 let kind = match o.sty.pos {
@@ -1105,9 +1119,9 @@ impl P {
                     _ => o.sty.float,
                 };
                 let pk = self.stack[..i].iter().rev().find(|a| a.sty.pos != 0).map(|a| a.serial).unwrap_or(0);
-                (o.serial, kind, o.sty.maxw, o.sty.ins, pk)
+                (o.serial, kind, o.sty.maxw, o.sty.ins, pk, o.sty.wpx)
             }
-            None => (0, 0, None, [None; 4], 0),
+            None => (0, 0, None, [None; 4], 0, 0.0),
         };
         let aser = self.stack.iter().rev().find(|a| a.sty.pos != 0).map(|a| a.serial).unwrap_or(0);
         let off = |o: &Open| -> (f32, f32) {
@@ -1155,16 +1169,16 @@ impl P {
                 }
                 let op = opq(self.stack.iter().filter(|o| o.serial <= c.serial).map(|o| o.sty.opacity).product());
                 let t = &c.sty;
-                Cbox { ser: c.serial, bg: t.bg, pad: t.pad, bw: t.bw, bc: t.bc, radius: t.radius, grad: t.grad, shadow: t.shadow, maxw: t.maxw, center: t.center, mt: t.mt, mb: t.mb, op, dx, dy }
+                Cbox { ser: c.serial, bg: t.bg, pad: t.pad, bw: t.bw, bc: t.bc, radius: t.radius, grad: t.grad, shadow: t.shadow, maxw: t.maxw, wpx: t.wpx, center: t.center, mt: t.mt, mb: t.mb, op, dx, dy }
             })
             .collect();
         Block {
             kind: k, spans: Vec::new(), bg, align: css::resolve_align(st.align, st.rtl), rtl: st.rtl, size: st.size, color: st.color, el: self.el(), src: String::new(), hidden: st.hidden, bgk,
-            pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, grad: cs.grad, shadow: cs.shadow, maxw: cs.maxw, center: cs.center, mt: st.mt, mb: st.mb,
+            pad: cs.pad, bw: cs.bw, bc: cs.bc, radius: cs.radius, grad: cs.grad, shadow: cs.shadow, maxw: cs.maxw, wpx: cs.wpx, center: cs.center, mt: st.mt, mb: st.mb,
             bmt: cs.mt, bmb: cs.mb,
-            flex: fl.0, fcol: fl.1, fmode: fl.2, fgap: fl.3, gcols: fl.4, fjust: fl.5, fw: fl.6, fgrow: fl.7,
+            flex: fl.0, fcol: fl.1, fmode: fl.2, fgap: fl.3, gcols: fl.4, fjust: fl.5, fw: fl.6, fwpx: fl.9, fgrow: fl.7,
             mark: String::new(), det, summary, iw: 0, ih: 0, rspan: fl.8,
-            oser, okind, ow, oins, pk, aser, rdx, rdy, bdx, bdy, clear: st.clear,
+            oser, okind, ow, owpx, oins, pk, aser, rdx, rdy, bdx, bdy, clear: st.clear,
             hser, hmin, hfix, lh: line_factor(&st),
             ws: st.ws, clip, ellip, op, bop, outer,
         }
@@ -1176,7 +1190,7 @@ impl P {
         let st = {
             let anc: Vec<ElRef> = self.stack.iter().map(|o| ElRef { tag: &o.tag, id: &o.id, classes: &o.classes, hover: false }).collect();
             let me = ElRef { tag: name, id: &id, classes: &classes, hover: false };
-            css::compute(&self.top(), &self.rules, &me, &anc, attr(tag, "style").as_deref())
+            css::compute_v(&self.top(), &self.top_vars(), &self.rules, &me, &anc, attr(tag, "style").as_deref()).0
         };
         let kind = match st.pos {
             2 => 3,
@@ -1188,6 +1202,7 @@ impl P {
             blk.oser = self.serial;
             blk.okind = kind;
             blk.ow = st.maxw;
+            blk.owpx = st.wpx;
             blk.oins = st.ins;
             blk.pk = blk.aser;
         } else if st.pos == 1 {
@@ -1285,7 +1300,7 @@ impl P {
         let key = self.serial;
         for b in blocks.iter_mut() {
             // Bitta ramka-quti: ichki hujjat foni, çegara, iframe kengligi
-            (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.center, b.bmt, b.bmb) = (Some(fbg), key, 8.0, border, Some(bc), 2.0, width, false, 6.0, 6.0);
+            (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.wpx, b.center, b.bmt, b.bmb) = (Some(fbg), key, 8.0, border, Some(bc), 2.0, width, 0.0, false, 6.0, 6.0);
             (b.grad, b.shadow) = (None, None);
             b.outer = Vec::new();
         }
@@ -1482,11 +1497,11 @@ impl P {
             Some("ltr") => parent.rtl = false,
             _ => {}
         }
-        let mut st = {
+        let (mut st, vars) = {
             let anc: Vec<ElRef> = self.stack.iter().map(|o| ElRef { tag: &o.tag, id: &o.id, classes: &o.classes, hover: false }).collect();
             let me = ElRef { tag: name, id: &id, classes: &classes, hover: false };
             let style = attr(tag, "style");
-            css::compute(&parent, &self.rules, &me, &anc, style.as_deref())
+            css::compute_v(&parent, &self.top_vars(), &self.rules, &me, &anc, style.as_deref())
         };
         // Eski HTML atributlari
         if let Some(c) = attr(tag, "bgcolor").and_then(|c| css::parse_color(&c)) {
@@ -1517,9 +1532,11 @@ impl P {
                 if let Some(p) = w.strip_suffix('%') {
                     if let Ok(v) = p.trim().parse::<f32>() {
                         st.maxw = Some((v, true));
+                        st.wpx = 0.0;
                     }
                 } else if let Ok(v) = w.trim().parse::<f32>() {
                     st.maxw = Some((v, false));
+                    st.wpx = 0.0;
                 }
             }
         }
@@ -1564,7 +1581,7 @@ impl P {
         let serial = self.serial;
         let rspan = if name == "td" || name == "th" { attr(tag, "rowspan").and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(1).clamp(1, 64) } else { 1 };
         let nb = self.doc.blocks.len();
-        self.stack.push(Open { tag: String::from(name), id, classes, sty: st, el, link, serial, input: NO_EL, rspan, nb });
+        self.stack.push(Open { tag: String::from(name), id, classes, sty: st, el, link, serial, input: NO_EL, rspan, nb, vars });
     }
     /// rowspan: joriy qatorda yuqoridan çozilgan kataklar uçun bo'ş joy egallovçi kataklar.
     /// `all` — qator oxiri (qolgan hamma ustunlar), aks holda faqat joriy ustundagilar.
@@ -1603,9 +1620,10 @@ impl P {
             b.fgap = tsty.gap;
             b.fjust = tsty.justify;
             b.fw = fw;
+            b.fwpx = 0.0;
             b.fgrow = grow;
             b.rspan = 0; // joy egallovçi
-            (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.center) = (None, 0, 0.0, 0.0, None, 0.0, None, false);
+            (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.wpx, b.center) = (None, 0, 0.0, 0.0, None, 0.0, None, 0.0, false);
             (b.grad, b.shadow) = (None, None);
             b.outer = Vec::new();
             b.spans.push(Span { text: String::from("\u{2007}"), link: None, bold: false, code: false, br: false, color: None, size: b.size, el: NO_EL, button: false, underline: false, input: NO_EL, fx: 0 });
@@ -2420,10 +2438,10 @@ pub fn plain(text: &str) -> Doc {
         src: String::new(),
         hidden: false,
         bgk: 0,
-        pad: 0.0, bw: 0.0, bc: None, radius: 0.0, grad: None, shadow: None, maxw: None, center: false, mt: 0.0, mb: 0.0, bmt: 0.0, bmb: 0.0,
-        flex: 0, fcol: 0, fmode: 0, fgap: 0.0, gcols: 0, fjust: 0, fw: None, fgrow: 0.0,
+        pad: 0.0, bw: 0.0, bc: None, radius: 0.0, grad: None, shadow: None, maxw: None, wpx: 0.0, center: false, mt: 0.0, mb: 0.0, bmt: 0.0, bmb: 0.0,
+        flex: 0, fcol: 0, fmode: 0, fgap: 0.0, gcols: 0, fjust: 0, fw: None, fwpx: 0.0, fgrow: 0.0,
         mark: String::new(), det: NO_EL, summary: false, iw: 0, ih: 0, rspan: 1,
-        oser: 0, okind: 0, ow: None, oins: [None; 4], pk: 0, aser: 0, rdx: 0.0, rdy: 0.0, bdx: 0.0, bdy: 0.0, clear: 0,
+        oser: 0, okind: 0, ow: None, owpx: 0.0, oins: [None; 4], pk: 0, aser: 0, rdx: 0.0, rdy: 0.0, bdx: 0.0, bdy: 0.0, clear: 0,
         hser: 0, hmin: 0.0, hfix: false, lh: 0.0,
         ws: 0, clip: 0, ellip: false, op: 255, bop: 255, outer: Vec::new(),
     });

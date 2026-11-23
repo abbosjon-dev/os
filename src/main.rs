@@ -539,6 +539,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] CSS linear-gradient (töxtaşlar, burçak) va box-shadow ({} sinov)", n),
         Err(e) => panic!("CSS gradient/soya tekşiruvi yiqildi: {}", e),
     }
+    match css::self_test_vars() {
+        Ok(n) => println!("  [ok] CSS maxsus xossalar var(--x) (zaxira, meros, sikl) va calc() ({} sinov)", n),
+        Err(e) => panic!("CSS var()/calc() tekşiruvi yiqildi: {}", e),
+    }
     match html::self_test_box_height() {
         Ok(n) => println!("  [ok] CSS height/min-height, line-height va text-transform ({} sinov)", n),
         Err(e) => panic!("CSS height/line-height/text-transform tekşiruvi yiqildi: {}", e),

@@ -55,6 +55,10 @@ pub struct Sty {
     pub ovf: u8,       // overflow: 0 — visible, 1 — hidden (auto / scroll / clip ham şunday)
     pub ellip: bool,   // text-overflow: ellipsis
     pub opacity: f32,  // opacity: 0..=1
+    // calc(): aralaş kenglik — foizli `maxw` ga qöşiladigan px bölagi (calc(50% - 20px) → (50, true) + -20)
+    pub wpx: f32,
+    // Taxminiy konteyner kontent eni (CSS px; 0 — kö'riş maydoni) — margin/padding/width foizlari uçun (meros)
+    pub cw: f32,
 }
 
 /// Gradient rang töxtaşlari soni çegarasi.
@@ -87,7 +91,7 @@ impl Sty {
             mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
             pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None,
-            h: None, minh: None, lh: 0.0, tt: 0, ws: 0, ovf: 0, ellip: false, opacity: 1.0,
+            h: None, minh: None, lh: 0.0, tt: 0, ws: 0, ovf: 0, ellip: false, opacity: 1.0, wpx: 0.0, cw: 0.0,
         }
     }
     /// Meros: rang, ölçam, qalinlik, tekislaş, yaşiriş — bolaga ötadi; fon — ötmaydi.
@@ -96,7 +100,7 @@ impl Sty {
             bg: None, block: None, mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
             pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None, h: None, minh: None,
-            ovf: 0, ellip: false, opacity: 1.0,
+            ovf: 0, ellip: false, opacity: 1.0, wpx: 0.0,
             ..*self
         }
     }
@@ -113,6 +117,7 @@ pub struct Compound {
     pub classes: Vec<String>,
     pub direct: bool, // keyingi (öngdagi) bilan ">" — bevosita ota
     pub hover: bool,  // :hover — siçqonça ostidagi element (yoki uning ajdodi)
+    pub root: bool,   // :root — hujjat ildizi (html yoki eng yuqori element)
 }
 
 #[derive(Clone)]
@@ -326,7 +331,7 @@ pub fn media_state(rules: &[Rule]) -> Vec<bool> {
 pub fn hover_hits(rules: &[Rule], tag: &str, id: &str, classes: &[String]) -> bool {
     let me = ElRef { tag, id, classes, hover: true };
     rules.iter().any(|r| {
-        r.sel.iter().any(|ch| ch.iter().any(|c| c.hover) && ch.last().is_some_and(|l| compound_match(l, &me)))
+        r.sel.iter().any(|ch| ch.iter().any(|c| c.hover) && ch.last().is_some_and(|l| compound_match(l, &me, false)))
     })
 }
 
@@ -388,7 +393,10 @@ fn parse_compound(s: &str) -> Option<Compound> {
                 // Zararsiz psevdo-klasslar e'tiborsiz; holatga bogʻliqlari (:hover…) — qoida taşlanadi
                 let rest = &s[i + 1..];
                 let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
-                if matches!(name.as_str(), "link" | "visited" | "root" | "any-link") {
+                if name == "root" {
+                    c.root = true;
+                    i += 1 + name.len();
+                } else if matches!(name.as_str(), "link" | "visited" | "any-link") {
                     i += 1 + name.len();
                 } else if name == "hover" {
                     c.hover = true;
@@ -534,8 +542,9 @@ pub struct ElRef<'a> {
     pub hover: bool, // siçqonça şu element (yoki uning avlodi) ustidami
 }
 
-fn compound_match(c: &Compound, e: &ElRef) -> bool {
+fn compound_match(c: &Compound, e: &ElRef, top: bool) -> bool {
     (!c.hover || e.hover)
+        && (!c.root || top || e.tag == "html")
         && c.tag.as_ref().is_none_or(|t| t == e.tag)
         && c.id.as_ref().is_none_or(|i| i == e.id)
         && c.classes.iter().all(|k| e.classes.iter().any(|x| x == k))
@@ -544,14 +553,14 @@ fn compound_match(c: &Compound, e: &ElRef) -> bool {
 /// Tanlagiç zanjiri: oxirgisi — elementning özi, oldingilari — ajdodlarida (tartib bilan).
 pub fn matches(chain: &[Compound], el: &ElRef, ancestors: &[ElRef]) -> bool {
     let Some((last, prev)) = chain.split_last() else { return false };
-    if !compound_match(last, el) {
+    if !compound_match(last, el, ancestors.is_empty()) {
         return false;
     }
     let mut k = ancestors.len();
     for c in prev.iter().rev() {
         if c.direct {
             // "c > keyingi": bevosita ota bölişi şart
-            if k == 0 || !compound_match(c, &ancestors[k - 1]) {
+            if k == 0 || !compound_match(c, &ancestors[k - 1], k == 1) {
                 return false;
             }
             k -= 1;
@@ -562,7 +571,7 @@ pub fn matches(chain: &[Compound], el: &ElRef, ancestors: &[ElRef]) -> bool {
                 return false;
             }
             k -= 1;
-            if compound_match(c, &ancestors[k]) {
+            if compound_match(c, &ancestors[k], k == 0) {
                 break;
             }
         }
@@ -863,6 +872,17 @@ fn length(v: &str, fsize: f32) -> Option<f32> {
 /// Bitta e'lonni uslubga qöllaydi. `parent` — ota shrift ölçami.
 pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
     let low = val.to_ascii_lowercase();
+    if low.contains("calc(") {
+        apply_calc(s, prop, &low, parent);
+        return;
+    }
+    let cwb = if s.cw > 0.0 { s.cw } else { viewport().0 };
+    let lenp = |x: &str, fs: f32| -> Option<f32> {
+        match x.trim().strip_suffix('%') {
+            Some(p) => parse_f(p).map(|f| f * cwb / 100.0),
+            None => length(x, fs),
+        }
+    };
     match prop {
         "color" => {
             if let Some(c) = parse_color(val) {
@@ -978,18 +998,18 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
         }
         "margin" => {
             let p: Vec<&str> = low.split_whitespace().collect();
-            let top = p.first().and_then(|x| length(x, s.size)).unwrap_or(0.0);
-            let bot = p.get(2).or(p.first()).and_then(|x| length(x, s.size)).unwrap_or(top);
+            let top = p.first().and_then(|x| lenp(x, s.size)).unwrap_or(0.0);
+            let bot = p.get(2).or(p.first()).and_then(|x| lenp(x, s.size)).unwrap_or(top);
             s.mt = top.clamp(0.0, 200.0);
             s.mb = bot.clamp(0.0, 200.0);
             let horiz = if p.len() >= 2 { p[1] } else { p.first().copied().unwrap_or("") };
             s.center = horiz == "auto";
         }
-        "margin-top" => s.mt = length(&low, s.size).unwrap_or(0.0).clamp(0.0, 200.0),
-        "margin-bottom" => s.mb = length(&low, s.size).unwrap_or(0.0).clamp(0.0, 200.0),
+        "margin-top" => s.mt = lenp(&low, s.size).unwrap_or(0.0).clamp(0.0, 200.0),
+        "margin-bottom" => s.mb = lenp(&low, s.size).unwrap_or(0.0).clamp(0.0, 200.0),
         "margin-left" | "margin-right" | "margin-inline" if low == "auto" => s.center = true,
         "padding" | "padding-top" | "padding-left" | "padding-inline" | "padding-block" => {
-            if let Some(v) = low.split_whitespace().next().and_then(|x| length(x, s.size)) {
+            if let Some(v) = low.split_whitespace().next().and_then(|x| lenp(x, s.size)) {
                 s.pad = s.pad.max(v.clamp(0.0, 80.0));
             }
         }
@@ -1020,9 +1040,11 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
             if let Some(p) = low.strip_suffix('%') {
                 if let Some(f) = parse_f(p) {
                     s.maxw = Some((f.clamp(1.0, 100.0), true));
+                    s.wpx = 0.0;
                 }
             } else if let Some(px) = length(&low, s.size).filter(|v| *v > 0.0) {
                 s.maxw = Some((px, false));
+                s.wpx = 0.0;
             }
         }
         "height" | "min-height" => {
@@ -1131,6 +1153,319 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// calc() va maxsus xossalar (--nom / var())
+// ---------------------------------------------------------------------------
+
+/// calc() natijasi: `px + pct%` (foiz — konteyner eniga nisbatan) yoki toza raqam (`num`).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Calc {
+    pub px: f32,
+    pub pct: f32,
+    pub num: bool,
+}
+
+struct CalcP<'a> {
+    b: &'a [u8],
+    i: usize,
+    fs: f32,
+}
+
+impl CalcP<'_> {
+    fn ws(&mut self) {
+        while self.i < self.b.len() && self.b[self.i].is_ascii_whitespace() {
+            self.i += 1;
+        }
+    }
+    fn peek(&self) -> u8 {
+        self.b.get(self.i).copied().unwrap_or(0)
+    }
+    fn expr(&mut self, d: u8) -> Option<Calc> {
+        if d > 16 {
+            return None;
+        }
+        let mut a = self.term(d)?;
+        loop {
+            self.ws();
+            let op = self.peek();
+            if op != b'+' && op != b'-' {
+                return Some(a);
+            }
+            self.i += 1;
+            let t = self.term(d)?;
+            if t.num != a.num {
+                return None; // raqam va uzunlik qöşilmaydi
+            }
+            let k = if op == b'-' { -1.0 } else { 1.0 };
+            a.px += k * t.px;
+            a.pct += k * t.pct;
+        }
+    }
+    fn term(&mut self, d: u8) -> Option<Calc> {
+        let mut a = self.factor(d)?;
+        loop {
+            self.ws();
+            match self.peek() {
+                b'*' => {
+                    self.i += 1;
+                    let t = self.factor(d)?;
+                    let (n, mut v) = if a.num { (a.px, t) } else if t.num { (t.px, a) } else { return None };
+                    v.px *= n;
+                    v.pct *= n;
+                    a = v;
+                }
+                b'/' => {
+                    self.i += 1;
+                    let t = self.factor(d)?;
+                    if !t.num || t.px == 0.0 {
+                        return None; // faqat noldan farqli raqamga bölinadi
+                    }
+                    a.px /= t.px;
+                    a.pct /= t.px;
+                }
+                _ => return Some(a),
+            }
+        }
+    }
+    fn factor(&mut self, d: u8) -> Option<Calc> {
+        self.ws();
+        let rest = &self.b[self.i..];
+        if rest.first() == Some(&b'(') || rest.starts_with(b"calc(") {
+            self.i += if rest[0] == b'(' { 1 } else { 5 };
+            let v = self.expr(d + 1)?;
+            self.ws();
+            if self.peek() != b')' {
+                return None;
+            }
+            self.i += 1;
+            return Some(v);
+        }
+        match self.peek() {
+            b'-' | b'+' => {
+                let neg = self.peek() == b'-';
+                self.i += 1;
+                let mut v = self.factor(d + 1)?;
+                if neg {
+                    v.px = -v.px;
+                    v.pct = -v.pct;
+                }
+                return Some(v);
+            }
+            _ => {}
+        }
+        // raqam
+        let st = self.i;
+        while self.i < self.b.len() && (self.b[self.i].is_ascii_digit() || self.b[self.i] == b'.') {
+            self.i += 1;
+        }
+        if self.i == st {
+            return None;
+        }
+        let n = parse_f(core::str::from_utf8(&self.b[st..self.i]).ok()?)?;
+        // birlik
+        let us = self.i;
+        while self.i < self.b.len() && (self.b[self.i].is_ascii_alphabetic() || self.b[self.i] == b'%') {
+            self.i += 1;
+        }
+        let (vw, vh) = viewport();
+        let l = |px: f32| Some(Calc { px, pct: 0.0, num: false });
+        match &self.b[us..self.i] {
+            b"" => Some(Calc { px: n, pct: 0.0, num: true }),
+            b"px" => l(n),
+            b"em" => l(n * self.fs),
+            b"rem" => l(n * 16.0),
+            b"pt" => l(n * 4.0 / 3.0),
+            b"vw" => l(n * vw / 100.0),
+            b"vh" => l(n * vh / 100.0),
+            b"%" => Some(Calc { px: 0.0, pct: n, num: false }),
+            _ => None,
+        }
+    }
+}
+
+/// `calc(...)` ifodasini hisoblaydi (`fs` — em uçun shrift ölçami). Noto'g'ri ifoda — None.
+pub fn calc(v: &str, fs: f32) -> Option<Calc> {
+    let low = v.trim().to_ascii_lowercase();
+    if !low.starts_with("calc(") {
+        return None;
+    }
+    let mut p = CalcP { b: low.as_bytes(), i: 0, fs };
+    let r = p.factor(0)?;
+    p.ws();
+    if p.i != p.b.len() || !r.px.is_finite() || !r.pct.is_finite() {
+        return None;
+    }
+    Some(r)
+}
+
+/// Qavs mosini topadi: `s[open]` — '(' ; qaytaradi — mos ')' indeksi.
+fn close_paren(s: &str, open: usize) -> Option<usize> {
+    let mut d = 0i32;
+    for (i, c) in s.bytes().enumerate().skip(open) {
+        match c {
+            b'(' => d += 1,
+            b')' => {
+                d -= 1;
+                if d == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Qiymat içidagi har bir calc(...) ni hisoblangan sonli qiymatga almaştiradi
+/// (foiz `base` ga nisbatan). Biror ifoda noto'g'ri bölsa — None.
+pub fn subst_calc(v: &str, fs: f32, base: f32) -> Option<String> {
+    let mut out = String::new();
+    let mut rest = v;
+    while let Some(k) = rest.find("calc(") {
+        let e = close_paren(rest, k + 4)?;
+        let c = calc(&rest[k..=e], fs)?;
+        out.push_str(&rest[..k]);
+        let n = c.px + c.pct * base / 100.0;
+        out.push_str(&if c.num { alloc::format!("{}", n) } else { alloc::format!("{}px", n) });
+        rest = &rest[e + 1..];
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
+/// calc() li e'lon: width / max-width — (foiz, px) juftligi maket bosqiçida yeçiladi;
+/// font-size — ota shriftga nisbatan; qolganlari — sonli qiymatga almaştirilib qöllanadi.
+fn apply_calc(s: &mut Sty, prop: &str, low: &str, parent: f32) {
+    let t = low.trim();
+    let whole = t.starts_with("calc(") && close_paren(t, 4) == Some(t.len() - 1);
+    match prop {
+        "width" | "max-width" if whole => {
+            if let Some(c) = calc(t, s.size).filter(|c| !c.num) {
+                if c.pct != 0.0 {
+                    s.maxw = Some((c.pct.clamp(0.1, 1000.0), true));
+                    s.wpx = c.px;
+                } else if c.px > 0.0 {
+                    s.maxw = Some((c.px, false));
+                    s.wpx = 0.0;
+                }
+            }
+        }
+        "font-size" if whole => {
+            if let Some(c) = calc(t, parent).filter(|c| !c.num) {
+                s.size = (c.px + c.pct * parent / 100.0).clamp(6.0, 96.0);
+            }
+        }
+        _ => {
+            let base = match prop {
+                "height" | "min-height" | "top" | "bottom" => viewport().1,
+                "line-height" => s.size,
+                _ if s.cw > 0.0 => s.cw,
+                _ => viewport().0,
+            };
+            if let Some(v) = subst_calc(low, s.size, base) {
+                apply(s, prop, &v, parent);
+            }
+        }
+    }
+}
+
+/// Foizli kenglik (`maxw`) + calc() px bölagi → CSS px (`base` — konteyner eni).
+pub fn resolve_w(w: (f32, bool), wpx: f32, base: f32) -> f32 {
+    if w.1 { base * w.0 / 100.0 + wpx } else { w.0 }
+}
+
+/// Maxsus xossalar (`--nom: qiymat`) — elementda saqlanadi va bolalarga meros bo'ladi.
+/// Qiymatlar içidagi var() lar e'lon qilingan elementda yeçilgan holda saqlanadi.
+pub type Vars = alloc::rc::Rc<Vec<(String, String)>>;
+
+/// Böş o'zgaruvçilar tóplami (ildiz).
+pub fn no_vars() -> Vars {
+    alloc::rc::Rc::new(Vec::new())
+}
+
+/// var() ichma-ichligi çegarasi (sikl — `--a: var(--b); --b: var(--a)` — şu yerda töxtaydi).
+const VAR_DEPTH: u8 = 8;
+
+/// Qiymat içidagi var(--nom[, zaxira]) larni almaştiradi. Topilmasa va zaxira yöq bölsa,
+/// yoki sikl / ichma-ichlik çegarasi oşsa — None (xossa e'tiborsiz qoladi).
+pub fn subst_var(v: &str, vars: &[(String, String)], depth: u8) -> Option<String> {
+    if depth > VAR_DEPTH {
+        return None;
+    }
+    let mut out = String::new();
+    let mut rest = v;
+    loop {
+        let Some(k) = rest.find("var(").or_else(|| rest.find("VAR(")) else { break };
+        let e = close_paren(rest, k + 3)?;
+        let inner = &rest[k + 4..e];
+        // birinçi yuqori darajadagi vergul — nom va zaxira qiymat orasida
+        let mut d = 0i32;
+        let comma = inner.bytes().position(|c| {
+            match c {
+                b'(' => d += 1,
+                b')' => d -= 1,
+                _ => {}
+            }
+            c == b',' && d == 0
+        });
+        let (name, fb) = match comma {
+            Some(i) => (inner[..i].trim(), Some(inner[i + 1..].trim())),
+            None => (inner.trim(), None),
+        };
+        let name = name.to_ascii_lowercase();
+        if !name.starts_with("--") {
+            return None;
+        }
+        let val = match vars.iter().rev().find(|(n, _)| *n == name) {
+            Some((_, x)) => subst_var(x, vars, depth + 1)?,
+            None => subst_var(fb?, vars, depth + 1)?,
+        };
+        out.push_str(&rest[..k]);
+        out.push_str(&val);
+        rest = &rest[e + 1..];
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
+/// Elementning yangi maxsus xossalari (tartib böyiça, oxirgisi ustun) → meros bölgan tóplam bilan birlaşma.
+fn merge_vars(pvars: &Vars, new: Vec<(String, String)>) -> Vars {
+    if new.is_empty() {
+        return pvars.clone();
+    }
+    let mut m: Vec<(String, String)> = (**pvars).clone();
+    let mut keys: Vec<String> = Vec::new();
+    for (k, v) in new {
+        match m.iter_mut().find(|(n, _)| *n == k) {
+            Some(x) => x.1 = v,
+            None => m.push((k.clone(), v)),
+        }
+        if !keys.contains(&k) {
+            keys.push(k);
+        }
+    }
+    // şu elementda e'lon qilinganlarni yeçamiz (bir-biriga va otadan kelganlarga tayanişi mumkin)
+    let res: Vec<(String, Option<String>)> = keys
+        .into_iter()
+        .map(|k| {
+            let raw = m.iter().find(|(n, _)| *n == k).map(|x| x.1.clone()).unwrap_or_default();
+            let r = if raw.contains("var(") || raw.contains("VAR(") { subst_var(&raw, &m, 0) } else { Some(raw) };
+            (k, r)
+        })
+        .collect();
+    for (k, r) in res {
+        match r {
+            Some(v) => {
+                if let Some(x) = m.iter_mut().find(|(n, _)| *n == k) {
+                    x.1 = v;
+                }
+            }
+            None => m.retain(|(n, _)| *n != k), // yaroqsiz (sikl) — e'lon qilinmagandek
+        }
+    }
+    alloc::rc::Rc::new(m)
+}
+
 /// Blok uçun yakuniy tekislaş: 0 — çap, 1 — markaz, 2 — öng, 3 — justify
 /// (start/end yönalişga — `direction` / `dir` ga qarab aniqlanadi).
 pub fn resolve_align(align: u8, rtl: bool) -> u8 {
@@ -1146,23 +1481,46 @@ pub fn resolve_align(align: u8, rtl: bool) -> u8 {
 
 /// Uslublar jadvali va inline uslubdan elementning hisoblangan uslubi.
 pub fn compute(parent: &Sty, rules: &[Rule], el: &ElRef, ancestors: &[ElRef], inline: Option<&str>) -> Sty {
+    compute_v(parent, &no_vars(), rules, el, ancestors, inline).0
+}
+
+/// `compute` + maxsus xossalar: ota o'zgaruvçilaridan (`pvars`) meros oladi, öz `--nom` larini
+/// qöşadi va var() larni qiymat qöllanişidan oldin almaştiradi. Qaytaradi: uslub va bolalar uçun tóplam.
+pub fn compute_v(parent: &Sty, pvars: &Vars, rules: &[Rule], el: &ElRef, ancestors: &[ElRef], inline: Option<&str>) -> (Sty, Vars) {
     let mut s = parent.inherit();
+    let inl = inline.map(parse_decls).unwrap_or_default();
+    let mut decls: Vec<(&str, &str)> = Vec::new();
     for r in rules {
         if !media_ok(&r.media) {
             continue;
         }
         if r.sel.iter().any(|ch| matches(ch, el, ancestors)) {
-            for (k, v) in &r.decls {
-                apply(&mut s, k, v, parent.size);
+            decls.extend(r.decls.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        }
+    }
+    decls.extend(inl.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    let custom: Vec<(String, String)> = decls.iter().filter(|(k, _)| k.starts_with("--")).map(|(k, v)| (String::from(*k), String::from(*v))).collect();
+    let vars = merge_vars(pvars, custom);
+    for (k, v) in decls {
+        if k.starts_with("--") {
+            continue;
+        }
+        if v.contains("var(") || v.contains("VAR(") {
+            if let Some(x) = subst_var(v, &vars, 0) {
+                apply(&mut s, k, &x, parent.size);
             }
+        } else {
+            apply(&mut s, k, v, parent.size);
         }
     }
-    if let Some(st) = inline {
-        for (k, v) in parse_decls(st) {
-            apply(&mut s, &k, &v, parent.size);
-        }
-    }
-    s
+    // bolalar uçun taxminiy konteyner eni
+    let base = if parent.cw > 0.0 { parent.cw } else { viewport().0 };
+    let w = match s.maxw {
+        Some(m) => resolve_w(m, s.wpx, base).min(base),
+        None => base,
+    };
+    s.cw = (w - 2.0 * (s.pad + s.bw)).max(1.0);
+    (s, vars)
 }
 
 /// camelCase (JS: `style.backgroundColor`) → kebab-case (`background-color`).
@@ -1177,4 +1535,112 @@ pub fn kebab(prop: &str) -> String {
         }
     }
     out
+}
+
+/// O'z-özini tekşiruv: maxsus xossalar (var(), zaxira, meros, sikl) va calc().
+pub fn self_test_vars() -> Result<usize, &'static str> {
+    let mut n = 0;
+    let rules = parse_sheet(
+        ":root { --c: #ff0000; --pad: 8px; --a: var(--b); --b: var(--a); --x: var(--c) }
+         p { color: var(--c); padding: var(--pad) }
+         .fb { color: var(--yoq, #00ff00) }
+         .fb2 { color: var(--yoq, var(--c2, rgb(0, 0, 255))) }
+         .ota { --c: #123456 }
+         .cyc { color: var(--a, #00ff00); background-color: var(--b) }
+         .nx { color: var(--x) }
+         .calc { width: calc(50% - 20px); margin-top: calc(10px + 2em); font-size: 16px }
+         .bad { width: calc(50% - ); padding: calc(10px * 2px) }",
+    );
+    let none: [String; 0] = [];
+    let cls = |c: &'static str| alloc::vec![String::from(c)];
+    fn el<'a>(tag: &'a str, classes: &'a [String]) -> ElRef<'a> {
+        ElRef { tag, id: "", classes, hover: false }
+    }
+    let root = Sty::root();
+    let (hs, hv) = compute_v(&root, &no_vars(), &rules, &el("html", &none), &[], None);
+    let html = el("html", &none);
+    // 1) var(--c) rangi
+    let (p, _) = compute_v(&hs, &hv, &rules, &el("p", &none), core::slice::from_ref(&html), None);
+    if p.color != Some(0xff0000) || (p.pad - 8.0).abs() > 0.01 {
+        return Err("var(--c) rangi / var(--pad) öqilmadi");
+    }
+    n += 1;
+    // 2) zaxira qiymat (oddiy va ichma-ich)
+    let fb = cls("fb");
+    let (s, _) = compute_v(&hs, &hv, &rules, &el("div", &fb), core::slice::from_ref(&html), None);
+    if s.color != Some(0x00ff00) {
+        return Err("var() zaxira qiymati ishlamadi");
+    }
+    let fb2 = cls("fb2");
+    let (s, _) = compute_v(&hs, &hv, &rules, &el("div", &fb2), core::slice::from_ref(&html), None);
+    if s.color != Some(0x0000ff) {
+        return Err("ichma-ich var() zaxirasi ishlamadi");
+    }
+    n += 2;
+    // 3) meros va qayta belgilaş: .ota --c ni özgartiradi, uning bolasi p yangi qiymatni oladi
+    let ota = cls("ota");
+    let (os, ov) = compute_v(&hs, &hv, &rules, &el("div", &ota), core::slice::from_ref(&html), None);
+    let anc = [el("html", &none), el("div", &ota)];
+    let (p2, _) = compute_v(&os, &ov, &rules, &el("p", &none), &anc, None);
+    if p2.color != Some(0x123456) {
+        return Err("bola ota o'zgaruvçisini qayta belgilay olmadi");
+    }
+    // inline uslubdagi o'zgaruvçi va :root dan meros (avlodda --x hali ham :root dagi --c ga teng)
+    let (p3, _) = compute_v(&hs, &hv, &rules, &el("p", &none), core::slice::from_ref(&html), Some("--c: blue; color: var(--c)"));
+    let nx = cls("nx");
+    let (p4, _) = compute_v(&os, &ov, &rules, &el("span", &nx), &anc, None);
+    if p3.color != Some(0x0000ff) || p4.color != Some(0xff0000) {
+        return Err("inline --nom yoki ildizda yeçilgan var() noto'g'ri");
+    }
+    n += 2;
+    // 4) sikl — panic yöq, zaxira ishlaydi, zaxirasiz xossa e'tiborsiz
+    let cyc = cls("cyc");
+    let (s, _) = compute_v(&hs, &hv, &rules, &el("div", &cyc), core::slice::from_ref(&html), None);
+    if s.color != Some(0x00ff00) || s.bg.is_some() || hv.iter().any(|(k, _)| k == "--a" || k == "--b") {
+        return Err("var() sikli noto'g'ri yeçildi");
+    }
+    if subst_var("var(--q)", &[(String::from("--q"), String::from("var(--q)"))], 0).is_some() {
+        return Err("öz-özini kö'rsatuvçi var() töxtamadi");
+    }
+    n += 2;
+    // 5) calc()
+    let c = calc("calc(10px + 2em)", 16.0).ok_or("calc(10px + 2em) tahlil qilinmadi")?;
+    if (c.px - 42.0).abs() > 0.01 || c.pct != 0.0 {
+        return Err("calc(10px + 2em) ≠ 42");
+    }
+    let c = calc("calc(50% - 20px)", 16.0).ok_or("calc(50% - 20px) tahlil qilinmadi")?;
+    if (c.px + c.pct * 600.0 / 100.0 - 280.0).abs() > 0.01 {
+        return Err("calc(50% - 20px) 600 da ≠ 280");
+    }
+    for (e, v) in [("calc((10px + 5px) * 2)", 30.0), ("calc(100px / 4 - -5px)", 30.0), ("calc(2 * (1rem + 4px))", 40.0), ("calc(calc(1em) + 1pt * 3)", 20.0)] {
+        if calc(e, 16.0).is_none_or(|c| (c.px - v).abs() > 0.01) {
+            return Err("calc(): qavslar / * / ichma-ich hisob xato");
+        }
+    }
+    for e in ["calc(10px + 2)", "calc(10px * 2px)", "calc(1px / 0)", "calc(50% - )", "calc(1px", "calc(3foo)"] {
+        if calc(e, 16.0).is_some() {
+            return Err("noto'g'ri calc() ifodasi qabul qilindi");
+        }
+    }
+    n += 7;
+    // 6) uslub orqali: 600 enli konteynerda calc(50% - 20px) → 280; margin-top → 42
+    let parent = Sty { cw: 600.0, ..Sty::root() };
+    let cc = cls("calc");
+    let s = compute(&parent, &rules, &el("div", &cc), &[], None);
+    match s.maxw {
+        Some(m) if (resolve_w(m, s.wpx, 600.0) - 280.0).abs() < 0.01 => {}
+        _ => return Err("width: calc(50% - 20px) uslubda 280 bölmadi"),
+    }
+    if (s.mt - 42.0).abs() > 0.01 || (s.cw - 280.0).abs() > 0.01 {
+        return Err("margin-top: calc(10px + 2em) ≠ 42 yoki konteyner eni xato");
+    }
+    // foizli padding konteyner eniga nisbatan; noto'g'ri calc — xossa e'tiborsiz
+    let s = compute(&parent, &rules, &el("div", &none), &[], Some("padding: calc(5% + 2px)"));
+    let bad = cls("bad");
+    let b = compute(&parent, &rules, &el("div", &bad), &[], None);
+    if (s.pad - 32.0).abs() > 0.01 || b.maxw.is_some() || b.pad != 0.0 {
+        return Err("padding: calc(%) yoki noto'g'ri calc() xato qöllandi");
+    }
+    n += 3;
+    Ok(n)
 }

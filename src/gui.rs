@@ -8708,6 +8708,41 @@ lekin yangi qatorlar saqlanadi.</div>
 <div class="o" style="opacity:0.3">opacity: 0.3</div>
 </div>
 "##,
+        "zamin://ozgaruvchi" => r##"<title>CSS özgaruvçilar: var() va calc()</title>
+<style>
+:root{--accent:#2563eb;--accent2:#16a34a;--ink:#1a2233;--bg:#eef2f8;--card:#ffffff;--r:12px;--gap:20px;--pad:calc(var(--gap) - 6px)}
+body{background:var(--bg);color:var(--ink)}
+h1{color:var(--accent)}
+.btn{background:var(--accent);color:#ffffff;padding:var(--pad);border-radius:var(--r);font-weight:bold}
+.btn.ikki{--accent:var(--accent2)}
+.btn.qizil{--accent:#dc2626}
+.btn.zaxira{background:var(--yoq, #7c3aed)}
+.ustunlar{display:flex;gap:var(--gap)}
+.karta{width:calc(50% - 20px);background:var(--card);border:2px solid var(--accent);border-radius:var(--r);padding:var(--pad)}
+.karta h3{color:var(--accent)}
+.toq{--accent:#ea580c;--card:#fff7ed}
+.tor{max-width:calc(100% - 4em);margin-top:calc(var(--gap) / 2);background:var(--card);border-radius:calc(var(--r) * 2);padding:calc(1em + 4px)}
+.sikl{--a:var(--b);--b:var(--a);color:var(--a, #0891b2)}
+.xato{width:calc(50% - );color:var(--yoq)}
+</style>
+<h1>CSS özgaruvçilar va calc()</h1>
+<p><code>:root</code> da e'lon qilingan <code>--accent</code>, <code>--r</code>, <code>--gap</code> — barça tugma va kartalarga meros bo'ladi.</p>
+<div style="display:flex;gap:12px">
+<div class="btn">--accent</div>
+<div class="btn ikki">qayta belgilangan</div>
+<div class="btn qizil">--accent: qizil</div>
+<div class="btn zaxira">var(--yoq, zaxira)</div>
+</div>
+<h2>width: calc(50% - 20px) — ikki ustun</h2>
+<div class="ustunlar">
+<div class="karta"><h3>Birinçi ustun</h3><p>Çegara va sarlavha rangi — var(--accent).</p></div>
+<div class="karta toq"><h3>Ikkinçi ustun</h3><p>Bu karta --accent va --card ni öziga qayta belgilaydi.</p></div>
+</div>
+<div class="tor"><b>max-width: calc(100% - 4em)</b>, padding: calc(1em + 4px), border-radius: calc(var(--r) * 2).</div>
+<p class="sikl">Sikl (--a va --b) — panic yöq, zaxira rang işlatildi.</p>
+<p class="xato">Noto'g'ri calc() va zaxirasiz var() — xossa e'tiborsiz qoldirildi.</p>
+<p><a href="zamin://bosh">Bosh sahifa</a></p>
+"##,
         "zamin://bosh" => r##"<title>Bosh sahifa</title>
 <style>
 .hero{background:#1e3a8a;color:#ffffff;text-align:center}
@@ -8731,6 +8766,7 @@ lekin yangi qatorlar saqlanadi.</div>
 <li><a href="zamin://matn">text-align, dir=rtl, height, line-height va text-transform sinovi</a></li>
 <li><a href="zamin://bezak">CSS gradient va box-shadow sinovi</a></li>
 <li><a href="zamin://overflow">CSS overflow, white-space, ellipsis va opacity sinovi</a></li>
+<li><a href="zamin://ozgaruvchi">CSS özgaruvçilar var(--x) va calc() sinovi</a></li>
 <li><a href="zamin://tarix">Tarix</a> — körilgan sahifalar</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
 <li><a href="https://example.com/">example.com</a> (HTTPS, haqiqiy internet)</li>
@@ -9730,6 +9766,8 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
     let mut rf = (0usize, 0usize);
     // position: relative — siljitiladigan diapazonlar (items boşi, deco boşi, dx, dy) va quti fonlari
     let spx = |v: f32| (v * k) as isize;
+    // foizli kenglik + calc() px bölagi (calc(50% - 20px)) → piksel
+    let pcw = |base: usize, v: f32, add: f32| ((base * (v as usize).min(100) / 100) as isize + spx(add)).max(0) as usize;
     let mut shifts: Vec<(usize, usize, usize, usize, isize, isize)> = Vec::new();
     let mut box_shifts: Vec<(usize, isize, isize)> = Vec::new();
     let mut pend: Option<(usize, usize, isize, isize)> = None;
@@ -9791,7 +9829,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 let a = if b.okind == 4 { anc[0] } else { anc.iter().rev().find(|a| a.0 == b.pk && b.pk != 0).copied().unwrap_or(anc[0]) };
                 let (l, r) = (ins[3].map(spx), ins[1].map(spx));
                 let given = match b.ow {
-                    Some((v, true)) => Some(a.3 * (v as usize).min(100) / 100),
+                    Some((v, true)) => Some(pcw(a.3, v, b.owpx)),
                     Some((v, false)) => Some(lpx(v)),
                     None => None,
                 };
@@ -9836,7 +9874,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
             } else {
                 // float: çap yoki öng çetga, matn yonidan oqadi
                 let mut w = match b.ow {
-                    Some((v, true)) => full0 * (v as usize).min(100) / 100,
+                    Some((v, true)) => pcw(full0, v, b.owpx),
                     Some((v, false)) => lpx(v).min(full0),
                     None => {
                         let (mut ti, mut td, mut ta): (Vec<WItem>, Vec<Deco>, _) = (Vec::new(), Vec::new(), anc.clone());
@@ -9897,7 +9935,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 let fixed: Vec<Option<usize>> = row
                     .iter()
                     .map(|c| match c.1[0].fw {
-                        Some((v, true)) if b.fmode != 3 => Some(full * (v as usize).min(100) / 100),
+                        Some((v, true)) if b.fmode != 3 => Some(pcw(full, v, c.1[0].fwpx).min(avail)),
                         Some((v, false)) if b.fmode != 3 => Some(lpx(v).min(avail)),
                         _ => None,
                     })
@@ -9959,8 +9997,10 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
         let opened = chain.len() > keep;
         for c in &chain[keep..] {
             let (px, pw) = open_box.last().map(|o| (o.3, o.4)).unwrap_or((page_pad, full));
-            let cw = match c.maxw {
-                Some((v, true)) => pw * (v as usize).min(100) / 100,
+            // flex ustunining özi bölgan quti: eni ustun kengligida allaqaçon hisoblangan
+            let own = if c.ser == b.fcol && b.fmode == 1 && b.fw.is_some() { None } else { c.maxw };
+            let cw = match own {
+                Some((v, true)) => pcw(pw, v, c.wpx),
                 Some((v, false)) => lpx(v).min(pw),
                 None => pw,
             }

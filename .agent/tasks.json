@@ -221,7 +221,9 @@
       "id": "T28",
       "title": "CSS maxsus xossalar var(--x) va calc() (asosiy)",
       "detail": "css.rs da var( va calc( umuman yo'q. Zamonaviy saytlarning ko'pchiligi rang va o'lchamlarni :root{--accent:…} orqali beradi, shuning uchun bunday sahifalar hozir rangsiz va buzuq chiqadi. Fayllar: src/css.rs (deklaratsiyalarni o'qish: '--' bilan boshlanadigan xossalar elementda saqlanadi va bolalarga meros bo'ladi; qiymat ishlatilishidan oldin var(--nom[, zaxira]) almashtiriladi, ichma-ich var va zaxira qiymatlari ishlaydi, sikl bo'lsa (--a: var(--b); --b: var(--a)) panic qilmaydi, 8 darajada to'xtaydi). calc(): + - * / va qavslar, px/em/rem/% birliklari. % konteyner eniga nisbatan width/max-width/margin/padding da ishlaydi. Turli birliklar aralashsa (100% - 2em) kontekstda hisoblanadi. Noto'g'ri ifoda xossani e'tiborsiz qoldiradi. src/html.rs/src/gui.rs: % li calc qiymati maket bosqichida yechilishi kerak bo'lsa, (px, foiz) juftligi sifatida saqlanadi (maxw: Option<(f32,bool)> kabi). Yangi sinov sahifasi zamin://ozgaruvchi bosh sahifadagi havolalar ro'yxatiga qo'shiladi: :root o'zgaruvchilari bilan tugmalar va kartalar, width: calc(50% - 20px) li ikki ustun. Qabul mezoni: css::self_test_vars() main.rs ga ulanadi va '[ok]' chiqadi. Unda: var(--c) rangi to'g'ri o'qiladi; zaxira qiymat ishlaydi; bola ota o'zgaruvchisini meros oladi va qayta belgilay oladi; sikl panic bermaydi; calc(10px + 2em) 16px shriftda 42 ga teng; calc(50% - 20px) 600 enli konteynerda 280 ga teng. Skrinshot docs/web-vars.png olinadi. README brauzer bo'limiga band qo'shiladi. verify.sh full o'tadi.",
-      "batch": 4
+      "batch": 4,
+      "status": "done",
+      "done_at": "2026-11-23 18:21:17"
     },
     {
       "id": "T29",
