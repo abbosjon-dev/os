@@ -336,6 +336,11 @@ pub mod msg {
 
     // --- Disk va sozlamalar ---
     pub const DISK_FOUND: Text = ["[disk] virtio-blk: {} MiB", "[disk] virtio-blk: {} МиБ", "[disk] virtio-blk: {} MiB"];
+    pub const DISK_GPT: Text = [
+        "[disk] GPT: Zamin bölimi #{} (LBA {} dan) — tizim diski",
+        "[disk] GPT: раздел Zamin #{} (с LBA {}) — системный диск",
+        "[disk] GPT: Zamin partition #{} (from LBA {}) — system disk",
+    ];
     pub const DISK_NONE: Text = [
         "[disk] disk topilmadi — sozlamalar saqlanmaydi",
         "[disk] диск не найден — настройки не сохраняются",

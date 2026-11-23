@@ -269,7 +269,9 @@
       "id": "T34",
       "title": "VPS disk obrazi va o'rnatish skripti (Netcup)",
       "detail": "scripts/vps/obraz.sh: GPT raw obraz (masalan 2 GB) — ESP (FAT32, EFI/BOOT/BOOTAA64.EFI) + Zamin ma'lumot bo'limi; ZaminFS yadroda shu bo'limni topsin (GPT o'qish). scripts/vps/README.md (o'zbekcha): Netcup panelida obraz yuklash yoki Rescue tizimidan dd bilan yozish (tasdiq so'raydigan skript, faqat foydalanuvchi o'zi ishga tushiradi). Sinov: obraz QEMU+AAVMF+gic-version=3+virtio-pci da yuklanib, grafik ekran va tarmoq (DHCP) ishlaydi; skrinshot docs/vps-boot.png. Sinov muhiti (Netcup VPS 500 ARM G12.5 ga o'xshash): qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd (yoki /usr/share/AAVMF/AAVMF_CODE.fd pflash), virtio-*-pci qurilmalar. Eski yo'l (-kernel, GICv2, virtio-mmio) BUZILMASLIGI shart — verify.sh full o'tsin. Yangi sinovni scripts/agent/verify.sh ga qo'sh (vps rejimi).",
-      "batch": 5
+      "batch": 5,
+      "status": "done",
+      "done_at": "2026-11-23 20:10:04"
     },
     {
       "id": "T35",

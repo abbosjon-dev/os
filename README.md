@@ -706,6 +706,31 @@ virtio-*-pci qurilmalar. ECAM DTB dagi `pci-host-ecam-generic` dan öqiladi, BAR
 `ranges` dan tayinlanadi, disk INTx uzilişi, tarmoq, GPU, klaviatura/planşet va rng
 tekşiriladi. `verify.sh full` buni ham işlatadi.
 
+### VPS disk obrazi (GPT: ESP + Zamin bölimi)
+
+`scripts/vps/obraz.sh` bitta **GPT raw obraz** yasaydi (standart 2 GiB, siyrak fayl):
+1-bölim — **ESP** (FAT32, `EFI/BOOT/BOOTAA64.EFI`), 2-bölim — **Zamin maʼlumot bölimi**
+(tur GUID `7A616D69-6E00-4F53-9A4D-494E44534B31`). Yadro tizim diskini tanlaganda GPT ni
+öqiydi (`src/drivers/virtio_blk.rs`: sarlavha va jadval CRC32), Zamin bölimini topadi va
+sozlamalar, hisoblar va ZaminFS ni faqat şu bölim içida saqlaydi (barça sektor raqamlariga
+bölim boşi qöşiladi). Zamin bölimisiz begona GPT disklarga yozilmaydi; eski `ZAMINDSK`
+butun-disk yöli özgarmadi. Self-test: `[ok] GPT: …` (6 sinov: töğri jadval, begona GPT,
+buzilgan sarlavha/jadval CRC, böş disk, siğimdan çiqqan bölim).
+
+```bash
+scripts/vps/obraz.sh --release --xz           # → target/zamin-vps.img (+ .xz, .sha256)
+```
+
+Netcup ga örnatiş (Rescue tizimidan `yoz.sh` bilan `dd` — ikki marta tasdiq söraydi va
+bölimni butun diskka kengaytiradi; yoki panel orqali öz obrazini yuklaş) — batafsil:
+[`scripts/vps/README.md`](scripts/vps/README.md).
+
+Sinov: `scripts/agent/verify.sh obraz` — `virt,gic-version=3`, UEFI (QEMU_EFI.fd yoki AAVMF
+pflash), faqat virtio-*-pci; GPT bölimi, grafik ekran, DHCP, sozlaş ustasi → sozlamalar
+bölimga yoziladi (MBR, ikkala GPT sarlavhasi va ESP butun) → qayta yuklanişda öqiladi.
+
+![VPS obrazi: UEFI + GICv3 + virtio-pci](docs/vps-boot.png)
+
 ## Birinçi işga tuşiriş
 
 Tizim birinçi marta yoqilganda **birinçi sozlaş** boşlanadi:
@@ -1163,7 +1188,7 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [x] **9. Grafika** — virtio-gpu framebuffer, şrift, oynalar menejeri, grafik terminal, sichqoncha/klaviatura
 - [x] **9½. Media** — rasm (16+ format), audio (WAV/AIFF/FLAC/MP3/OGG-Vorbis + ADPCM/μ-law/A-law), video (MJPEG/AVI dekod; MP4/MOV/MKV/WebM taniş) — hammasi noldan, ffmpeg bilan tekşirilgan
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar (davom etmoqda)
-- [ ] **10½. VPS porti** — UEFI yuklaniş (BOOTAA64.EFI), GICv3, virtio-pci, ACPI zaxira yöli (davom etmoqda)
+- [ ] **10½. VPS porti** — UEFI yuklaniş (BOOTAA64.EFI), GICv3, virtio-pci, ACPI zaxira yöli, GPT disk obrazi va örnatiş skripti (davom etmoqda)
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
 
 ## Grafika

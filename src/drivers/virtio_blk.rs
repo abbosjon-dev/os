@@ -31,6 +31,8 @@ struct VirtioBlk {
     req: usize,
     /// Maʼlumot uçun DMA sahifasi
     data: usize,
+    /// Bölim boşi (GPT dagi Zamin bölimi; butun disk bölsa 0) — barça sektor raqamlariga qöşiladi
+    base: u64,
 }
 
 static DISK: Mutex<Option<VirtioBlk>> = Mutex::new(None);
@@ -40,47 +42,144 @@ static DISK_IRQ: AtomicU32 = AtomicU32::new(0);
 static CAPACITY: AtomicU64 = AtomicU64::new(0);
 /// Tizim diski qaysi indeksda (FAT diski boşqasini oladi)
 static SYS_INDEX: AtomicU32 = AtomicU32::new(0);
+/// GPT Zamin bölimi: (raqami 1.., boşlaniş LBA) — butun disk bölsa raqam 0
+static PART_NUM: AtomicU32 = AtomicU32::new(0);
+static PART_BASE: AtomicU64 = AtomicU64::new(0);
 /// Disk uzilişlari soni (tekşiruv uçun)
 static IRQ_COUNT: AtomicU64 = AtomicU64::new(0);
 /// `task::wait_event` kaliti
 const DISK_EVENT: usize = 0xd15c;
 
-/// Diskni qidiradi va işga tuşiradi. Natija: siğim (baytlarda).
-/// Blok qurilmasining birinçi sektorini öqiydi (sinflaş uçun, vaqtinça transport bilan).
-fn peek_sector0(t: &mut Transport, scratch: usize) -> [u8; SECTOR] {
+/// Blok qurilmasining bitta sektorini öqiydi (sinflaş uçun, vaqtinça transport bilan).
+fn peek_sector(t: &mut Transport, scratch: usize, lba: u64) -> [u8; SECTOR] {
     unsafe {
         write_volatile(scratch as *mut u32, 0); // REQ_IN
         write_volatile((scratch + 4) as *mut u32, 0);
-        write_volatile((scratch + 8) as *mut u64, 0u64);
+        write_volatile((scratch + 8) as *mut u64, lba);
         write_volatile((scratch + 16) as *mut u8, 0xff);
     }
     let dbuf = scratch + 512;
     t.submit(&[(scratch, 16, false), (dbuf, SECTOR, true), (scratch + 16, 1, true)]);
     let mut b = [0u8; SECTOR];
-    unsafe { core::ptr::copy_nonoverlapping(dbuf as *const u8, b.as_mut_ptr(), SECTOR) };
+    if unsafe { read_volatile((scratch + 16) as *const u8) } == 0 {
+        unsafe { core::ptr::copy_nonoverlapping(dbuf as *const u8, b.as_mut_ptr(), SECTOR) };
+    }
     b
 }
 
-/// Tizim diskini tanlaydi: "ZAMINDSK" belgili disk, bölmasa — eng katta disk.
-/// Tartibga tayanmaymiz (QEMU qurilmalarni teskari joylaştirişi mumkin), mazmunga qaraymiz.
+/// Zamin maʼlumot bölimining GPT tur GUID i: 7A616D69-6E00-4F53-9A4D-494E44534B31
+/// (diskda "aralaş endian" köriniş: birinçi uç maydon kiçik endian).
+pub const ZAMIN_PART_GUID: [u8; 16] = [
+    0x69, 0x6d, 0x61, 0x7a, 0x00, 0x6e, 0x53, 0x4f, 0x9a, 0x4d, 0x49, 0x4e, 0x44, 0x53, 0x4b, 0x31,
+];
+
+fn crc32_update(mut c: u32, data: &[u8]) -> u32 {
+    for &b in data {
+        c ^= b as u32;
+        for _ in 0..8 {
+            c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
+        }
+    }
+    c
+}
+
+fn le32(b: &[u8], o: usize) -> u32 {
+    u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
+}
+
+fn le64(b: &[u8], o: usize) -> u64 {
+    le32(b, o) as u64 | (le32(b, o + 4) as u64) << 32
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Gpt {
+    /// GPT yöq (sektor 1 da "EFI PART" yöq yoki nazorat summasi xato)
+    None,
+    /// GPT bor, lekin Zamin bölimi yöq (masalan, boşqa tizim diski) — tegmaymiz
+    Foreign,
+    /// Zamin bölimi: raqami (1..), birinçi LBA, sektorlar soni
+    Zamin(u32, u64, u64),
+}
+
+/// GPT sarlavhasini (sektor 1) va bölimlar jadvalini öqib, Zamin bölimini qidiradi.
+/// `read(lba)` — bitta sektor öqiydi. Sarlavha va jadval CRC32 lari tekşiriladi.
+pub fn parse_gpt(capacity: u64, mut read: impl FnMut(u64) -> [u8; SECTOR]) -> Gpt {
+    let h = read(1);
+    if &h[..8] != b"EFI PART" {
+        return Gpt::None;
+    }
+    let hsize = le32(&h, 12) as usize;
+    if !(92..=SECTOR).contains(&hsize) {
+        return Gpt::None;
+    }
+    let mut hc = h;
+    hc[16..20].fill(0);
+    if crc32_update(!0, &hc[..hsize]) ^ !0 != le32(&h, 16) {
+        return Gpt::None;
+    }
+    let (first_usable, last_usable) = (le64(&h, 40), le64(&h, 48));
+    let (entries_lba, count, esize) = (le64(&h, 72), le32(&h, 80) as usize, le32(&h, 84) as usize);
+    if esize < 128 || esize % 8 != 0 || SECTOR % esize != 0 || count == 0 || count * esize > 64 * SECTOR {
+        return Gpt::Foreign;
+    }
+    let per = SECTOR / esize;
+    let mut crc = !0u32;
+    let mut found = Gpt::Foreign;
+    let nsec = (count * esize).div_ceil(SECTOR);
+    for si in 0..nsec {
+        let s = read(entries_lba + si as u64);
+        let in_sec = per.min(count - si * per);
+        crc = crc32_update(crc, &s[..in_sec * esize]);
+        for k in 0..in_sec {
+            let e = &s[k * esize..(k + 1) * esize];
+            if e[..16] != ZAMIN_PART_GUID || found != Gpt::Foreign {
+                continue;
+            }
+            let (first, last) = (le64(e, 32), le64(e, 40));
+            if first >= first_usable && first <= last && last <= last_usable && last < capacity {
+                found = Gpt::Zamin((si * per + k + 1) as u32, first, last - first + 1);
+            }
+        }
+    }
+    if crc ^ !0 != le32(&h, 88) {
+        return Gpt::Foreign;
+    }
+    found
+}
+
+/// Tizim diskini tanlaydi. Tartibga tayanmaymiz (QEMU qurilmalarni teskari joylaştirişi
+/// mumkin), mazmunga qaraymiz:
+///   1) "ZAMINDSK" belgili butun disk (eski -kernel yöli);
+///   2) GPT dagi Zamin maʼlumot bölimi (VPS obrazi: ESP + Zamin bölimi bitta diskda);
+///   3) eng katta böş disk. Boşqa GPT disklarga (Zamin bölimisiz) heç qaçon yozilmaydi.
 pub fn init() -> Option<u64> {
     let scratch = frame::alloc_zeroed()?;
-    let mut best: Option<(usize, u64)> = None; // (indeks, siğim)
+    // (indeks, siğim, bölim boşi, ustuvorlik 0..2)
+    let mut best: Option<(usize, u64, u64, u32, u8)> = None;
     let mut n = 0;
     while let Some(mut t) = Transport::probe_nth(DEVICE_BLOCK, n) {
         let cap = t.config_u32(0) as u64 | (t.config_u32(4) as u64) << 32;
-        let s0 = peek_sector0(&mut t, scratch);
-        let is_zamin = &s0[..8] == b"ZAMINDSK";
-        let better = match best {
-            None => true,
-            Some((_, c)) => is_zamin || cap > c,
+        let s0 = peek_sector(&mut t, scratch, 0);
+        let cand = if &s0[..8] == b"ZAMINDSK" {
+            Some((n, cap, 0, 0, 2))
+        } else {
+            match parse_gpt(cap, |lba| peek_sector(&mut t, scratch, lba)) {
+                Gpt::Zamin(num, first, count) => Some((n, count, first, num, 1)),
+                Gpt::Foreign => None,
+                Gpt::None => Some((n, cap, 0, 0, 0)),
+            }
         };
-        if is_zamin {
-            best = Some((n, cap));
-            break; // aniq tizim diski
-        }
-        if better {
-            best = Some((n, cap));
+        if let Some(c) = cand {
+            let better = match best {
+                None => true,
+                Some(b) => c.4 > b.4 || (c.4 == b.4 && c.4 == 0 && c.1 > b.1),
+            };
+            if better {
+                best = Some(c);
+            }
+            if c.4 == 2 {
+                break; // aniq tizim diski
+            }
         }
         n += 1;
         if n >= 8 {
@@ -88,18 +187,28 @@ pub fn init() -> Option<u64> {
         }
     }
     frame::free(scratch);
-    let (idx, capacity) = best?;
+    let (idx, capacity, base, num, _) = best?;
     let t = Transport::probe_nth(DEVICE_BLOCK, idx)?;
     SYS_INDEX.store(idx as u32, Ordering::Release);
+    PART_NUM.store(num, Ordering::Release);
+    PART_BASE.store(base, Ordering::Release);
     let req = frame::alloc_zeroed()?;
     let data = frame::alloc_zeroed()?;
     DISK_BASE.store(t.ack_handle(), Ordering::Release);
     DISK_IRQ.store(t.irq(), Ordering::Release);
     t.enable_irq();
     crate::gic::enable(t.irq());
-    *DISK.lock() = Some(VirtioBlk { t, capacity, req, data });
+    *DISK.lock() = Some(VirtioBlk { t, capacity, req, data, base });
     CAPACITY.store(capacity, Ordering::Release);
     Some(capacity * SECTOR as u64)
+}
+
+/// Tizim GPT bölimida bölsa: (bölim raqami, boşlaniş LBA). Butun disk bölsa — None.
+pub fn partition() -> Option<(u32, u64)> {
+    match PART_NUM.load(Ordering::Acquire) {
+        0 => None,
+        n => Some((n, PART_BASE.load(Ordering::Acquire))),
+    }
 }
 
 pub fn present() -> bool {
@@ -210,7 +319,7 @@ impl VirtioBlk {
         unsafe {
             write_volatile(self.req as *mut u32, kind);
             write_volatile((self.req + 4) as *mut u32, 0);
-            write_volatile((self.req + 8) as *mut u64, sector);
+            write_volatile((self.req + 8) as *mut u64, self.base + sector);
             write_volatile((self.req + 16) as *mut u8, 0xff);
         }
         self.t.submit_async(&[(self.req, 16, false), (self.data, count * SECTOR, kind == REQ_IN), (self.req + 16, 1, true)]);
@@ -237,7 +346,7 @@ pub fn write_polled(sector: u64, data: &[u8]) -> bool {
         core::ptr::copy_nonoverlapping(data.as_ptr(), d.data as *mut u8, data.len());
         write_volatile(d.req as *mut u32, REQ_OUT);
         write_volatile((d.req + 4) as *mut u32, 0);
-        write_volatile((d.req + 8) as *mut u64, sector);
+        write_volatile((d.req + 8) as *mut u64, d.base + sector);
         write_volatile((d.req + 16) as *mut u8, 0xff);
     }
     d.t.submit(&[(d.req, 16, false), (d.data, SECTOR, false), (d.req + 16, 1, true)]);
@@ -267,4 +376,81 @@ pub fn write(sector: u64, buf: &[u8]) -> Result<(), DiskError> {
         d.request(REQ_OUT, sector + (i * MAX_SECTORS) as u64, chunk.len().div_ceil(SECTOR))?;
     }
     Ok(())
+}
+
+/// GPT tahlilçisi sinovi: xotirada yasalgan disk (ESP + Zamin bölimi), buzilgan sarlavha,
+/// buzilgan jadval, Zamin bölimisiz GPT. Natija: ötgan sinovlar soni.
+pub fn self_test_gpt() -> Result<usize, &'static str> {
+    use alloc::vec;
+    use alloc::vec::Vec;
+    const CAP: u64 = 4096;
+    fn build(with_zamin: bool) -> Vec<[u8; SECTOR]> {
+        let mut d = vec![[0u8; SECTOR]; 34];
+        let esp: [u8; 16] = [0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b];
+        let mut put = |i: usize, ty: &[u8; 16], first: u64, last: u64| {
+            let (s, o) = (2 + i * 128 / SECTOR, i * 128 % SECTOR);
+            d[s][o..o + 16].copy_from_slice(ty);
+            d[s][o + 16] = i as u8 + 1; // noyob GUID
+            d[s][o + 32..o + 40].copy_from_slice(&first.to_le_bytes());
+            d[s][o + 40..o + 48].copy_from_slice(&last.to_le_bytes());
+        };
+        put(0, &esp, 64, 1023);
+        if with_zamin {
+            put(1, &ZAMIN_PART_GUID, 1024, CAP - 34);
+        }
+        let mut crc = !0u32;
+        for s in &d[2..34] {
+            crc = crc32_update(crc, s);
+        }
+        let h = &mut d[1];
+        h[..8].copy_from_slice(b"EFI PART");
+        h[8..12].copy_from_slice(&0x0001_0000u32.to_le_bytes());
+        h[12..16].copy_from_slice(&92u32.to_le_bytes());
+        h[24..32].copy_from_slice(&1u64.to_le_bytes());
+        h[32..40].copy_from_slice(&(CAP - 1).to_le_bytes());
+        h[40..48].copy_from_slice(&34u64.to_le_bytes());
+        h[48..56].copy_from_slice(&(CAP - 34).to_le_bytes());
+        h[72..80].copy_from_slice(&2u64.to_le_bytes());
+        h[80..84].copy_from_slice(&128u32.to_le_bytes());
+        h[84..88].copy_from_slice(&128u32.to_le_bytes());
+        h[88..92].copy_from_slice(&(crc ^ !0).to_le_bytes());
+        let hc = crc32_update(!0, &h[..92]) ^ !0;
+        h[16..20].copy_from_slice(&hc.to_le_bytes());
+        d
+    }
+    let rd = |d: &Vec<[u8; SECTOR]>| {
+        let d = d.clone();
+        move |lba: u64| d.get(lba as usize).copied().unwrap_or([0; SECTOR])
+    };
+    let mut ok = 0;
+    let good = build(true);
+    if parse_gpt(CAP, rd(&good)) != Gpt::Zamin(2, 1024, CAP - 34 - 1024 + 1) {
+        return Err("Zamin bölimi topilmadi");
+    }
+    ok += 1;
+    if parse_gpt(CAP, rd(&build(false))) != Gpt::Foreign {
+        return Err("Zamin bölimisiz GPT Foreign emas");
+    }
+    ok += 1;
+    let mut bad_h = good.clone();
+    bad_h[1][40] ^= 1;
+    if parse_gpt(CAP, rd(&bad_h)) != Gpt::None {
+        return Err("sarlavha CRC xatosi aniqlanmadi");
+    }
+    ok += 1;
+    let mut bad_e = good.clone();
+    bad_e[2][128 + 33] ^= 1; // Zamin bölimi boşini özgartiramiz
+    if parse_gpt(CAP, rd(&bad_e)) != Gpt::Foreign {
+        return Err("jadval CRC xatosi aniqlanmadi");
+    }
+    ok += 1;
+    if parse_gpt(CAP, rd(&vec![[0u8; SECTOR]; 34])) != Gpt::None {
+        return Err("böş disk GPT deb topildi");
+    }
+    ok += 1;
+    // bölim disk siğimidan çiqsa — qabul qilinmaydi
+    if parse_gpt(CAP - 100, rd(&good)) != Gpt::Foreign {
+        return Err("siğimdan çiqqan bölim qabul qilindi");
+    }
+    Ok(ok + 1)
 }

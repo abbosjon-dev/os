@@ -215,6 +215,9 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
         Some(bytes) => tprintln!(msg::DISK_FOUND, bytes >> 20),
         None => tprintln!(msg::DISK_NONE),
     }
+    if let Some((num, lba)) = drivers::virtio_blk::partition() {
+        tprintln!(msg::DISK_GPT, num, lba);
+    }
     if let Some(p) = config::take_panic() {
         tprintln!(msg::PREV_PANIC, p);
     }
@@ -588,6 +591,12 @@ fn self_tests() {
     match image::self_test() {
         Ok(n) => tprintln!(msg::TEST_IMAGE, n),
         Err(fmt) => panic!("rasm dekoderi yiqildi: {}", fmt),
+    }
+
+    // GPT bölimlar jadvali (VPS disk obrazi)
+    match drivers::virtio_blk::self_test_gpt() {
+        Ok(n) => println!("  [ok] GPT: Zamin bölimi, CRC32 (sarlavha/jadval), begona GPT ga tegilmaydi ({} sinov)", n),
+        Err(e) => panic!("GPT tahlilçisi yiqildi: {}", e),
     }
 
     // JavaScript interpretatori va HTML/CSS tahlilçisi

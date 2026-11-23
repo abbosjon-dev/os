@@ -5,6 +5,7 @@
 #                     + brauzer sahifalari surati: yumaloq burçaklarda töq piksel yöq
 #                     + pci sinovi (DTB + virtio-pci, GICv2/GICv3)
 #                     + vps sinovi (UEFI firmware örnatilgan bölsa)
+#                     + obraz sinovi (scripts/vps/obraz.sh GPT obrazi, UEFI)
 #   verify.sh vps   — yiğiş + UEFI yuklaniş (Netcup ARM VPS ga öxşaş): BOOTAA64.EFI FAT32
 #                     diskda, virt,gic-version=3, QEMU_EFI.fd, virtio-*-pci qurilmalar —
 #                     til tanlaş ekranigaça, panic yöq, PCI disk uzilişi işlaydi; GICv3 da
@@ -12,6 +13,10 @@
 #                     virtio-gpu/keyboard/tablet-pci, virtio-net/rng-pci;
 #                     ACPI zaxira yöli (DTB yöq): RSDP/XSDT, MADT (GIC, CPU lar), GTDT (taymer),
 #                     SPCR (UART), MCFG (ECAM) — GICv3/4 CPU va GICv2/2 CPU; + acpi=off (UEFI + DTB)
+#   verify.sh obraz — yiğiş + scripts/vps/obraz.sh: bitta GPT disk (ESP + Zamin bölimi), UEFI
+#                     (QEMU_EFI.fd -bios yoki AAVMF pflash), GICv3, faqat virtio-*-pci: GPT bölimi
+#                     topiladi, grafik ekran (virtio-gpu), DHCP; sozlaş ustasi oxirigaça → sozlamalar
+#                     Zamin bölimiga yoziladi (MBR/GPT butun) → qayta yuklanişda diskdan öqiladi
 #   verify.sh pci   — yiğiş + -kernel (DTB ECAM) GICv2 va GICv3 da faqat virtio-*-pci qurilmalar
 # Çiqiş kodi 0 — ötdi. Natija qisqa matn sifatida stdout ga.
 set -uo pipefail
@@ -110,6 +115,109 @@ vps_all() {
     vps_test 2 2 || return 1
     vps_test 3 4 ",acpi=off" || return 1
 }
+# --- VPS disk obrazi (scripts/vps/obraz.sh): bitta GPT disk — ESP + Zamin bölimi ---
+#   Netcup VPS 500 ARM ga öxşaş: virt,gic-version=3, UEFI, virtio-*-pci. Ikki marta yuklanadi:
+#   1) toza obraz → GPT bölimi, grafika, DHCP, sozlaş ustasi (seriya port orqali) oxirigaça;
+#   2) obraz tuzilmasi tekşiriladi (MBR 0xEE, GPT sarlavhasi, bölim boşida ZAMINDSK) va
+#      qayta yuklanişda sozlamalar diskdan öqiladi.
+obraz_boot() { # obraz_boot IMG LOG FIFO — QEMU ni fonda işga tuşiradi, PID → QPID
+    local img=$1 log=$2 fifo=$3 fwargs
+    if [ -f /usr/share/qemu-efi-aarch64/QEMU_EFI.fd ]; then
+        fwargs=(-bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd)
+    else
+        cp /usr/share/AAVMF/AAVMF_VARS.fd "$img.vars"
+        fwargs=(-drive if=pflash,format=raw,readonly=on,file=/usr/share/AAVMF/AAVMF_CODE.fd
+                -drive "if=pflash,format=raw,file=$img.vars")
+    fi
+    : >"$log"
+    timeout 200 qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -m 1G -smp 2 -nographic "${fwargs[@]}" \
+        -drive "file=$img,if=none,format=raw,id=d" -device virtio-blk-pci,drive=d \
+        -nic user,model=virtio-net-pci -device virtio-gpu-pci -device virtio-keyboard-pci \
+        -device virtio-tablet-pci -device virtio-rng-pci <"$fifo" >"$log" 2>&1 &
+    QPID=$!
+}
+obraz_wait() { # obraz_wait LOG REGEX SEKUND — 0: topildi, 1: panic/qemu çiqdi/timeout
+    local i
+    for i in $(seq 1 "$3"); do
+        grep -qaiE 'panic|yiqildi' "$1" && return 1
+        grep -qaE "$2" "$1" && return 0
+        kill -0 "$QPID" 2>/dev/null || return 1
+        sleep 1
+    done
+    return 1
+}
+obraz_test() {
+    [ -f /usr/share/qemu-efi-aarch64/QEMU_EFI.fd ] || [ -f /usr/share/AAVMF/AAVMF_CODE.fd ] \
+        || { echo "SKIP obraz: UEFI firmware yöq"; return 2; }
+    local img log1=$LOG_DIR/verify-obraz-1.log log2=$LOG_DIR/verify-obraz-2.log fifo res="" holder
+    img=$(mktemp /tmp/zamin-obraz-XXXX.img)
+    if ! bash scripts/vps/obraz.sh --hajm 2G "$img" >"$LOG_DIR/verify-obraz-mk.log" 2>&1; then
+        echo "FAIL obraz: obraz.sh xato ($(tail -1 "$LOG_DIR/verify-obraz-mk.log"))"; rm -f "$img"*; return 1
+    fi
+    fifo=$(mktemp -u /tmp/zamin-obraz-in-XXXX); mkfifo "$fifo"
+    sleep 400 >"$fifo" & holder=$!
+    obraz_boot "$img" "$log1" "$fifo"
+    local fail="FAIL obraz (1-yuklaniş)"
+    if ! obraz_wait "$log1" 'Choose your language' 120; then res="$fail: til tanlaş ekrani çiqmadi ($(grep -aiE -m1 'panic|yiqildi' "$log1" | tr -d '\r' | cut -c1-200); qarang $log1)"
+    elif ! grep -qa 'UEFI: xotira xaritasi' "$log1"; then res="$fail: UEFI (BOOTAA64.EFI) yöli işlamadi"
+    elif ! grep -qaE 'GICv3' "$log1"; then res="$fail: GICv3 aniqlanmadi"
+    elif ! grep -qaE '\[disk\] GPT: .* #2 \(LBA 133120' "$log1"; then res="$fail: GPT dagi Zamin bölimi topilmadi"
+    elif ! grep -qaE '\[gpu \] virtio-gpu: [0-9]+x[0-9]+' "$log1"; then res="$fail: grafik ekran (virtio-gpu-pci) işlamadi"
+    elif ! obraz_wait "$log1" '\[net \] DHCP: IP 10\.0\.2\.15' 30; then res="$fail: DHCP (virtio-net-pci) işlamadi"
+    else
+        printf '3\r' >"$fifo"
+        if ! obraz_wait "$log1" 'full name' 30; then res="$fail: sozlaş ustasi ('3' qabul qilinmadi)"
+        else
+            printf 'Test User\r' >"$fifo"; obraz_wait "$log1" 'sername|Login:' 30
+            printf 'test\r' >"$fifo"; obraz_wait "$log1" 'Password:' 30
+            printf 'pass1234\r' >"$fifo"; obraz_wait "$log1" 'epeat' 30
+            printf 'pass1234\r' >"$fifo"
+            sleep 2
+            # sozlamalar diskka yozilgunça (bölim boşida ZAMINDSK) kutamiz
+            local k
+            for k in $(seq 1 60); do
+                python3 - "$img" <<'PY' && break
+import sys
+f = open(sys.argv[1], "rb"); f.seek(133120 * 512)
+sys.exit(0 if f.read(8) == b"ZAMINDSK" else 1)
+PY
+                sleep 1
+            done
+        fi
+    fi
+    kill $QPID 2>/dev/null; wait $QPID 2>/dev/null
+    if [ -z "$res" ]; then
+        if ! python3 - "$img" >"$LOG_DIR/verify-obraz-gpt.log" 2>&1 <<'PY'
+import struct, sys, zlib
+f = open(sys.argv[1], "rb"); d = lambda lba, n=1: (f.seek(lba * 512), f.read(512 * n))[1]
+mbr = d(0); assert mbr[450] == 0xEE and mbr[510:] == b"\x55\xaa", "himoya MBR buzilgan"
+total = f.seek(0, 2) // 512
+for lba in (1, total - 1):
+    h = d(lba); assert h[:8] == b"EFI PART", f"GPT sarlavhasi (LBA {lba}) buzilgan"
+    hc = bytearray(h[:92]); hc[16:20] = bytes(4)
+    assert zlib.crc32(hc) == struct.unpack_from("<I", h, 16)[0], f"GPT CRC (LBA {lba}) xato"
+    el = struct.unpack_from("<Q", h, 72)[0]
+    assert zlib.crc32(d(el, 32)) == struct.unpack_from("<I", h, 88)[0], "bölimlar jadvali buzilgan"
+assert d(2048)[82:90] == b"FAT32   ", "ESP (FAT32) buzilgan"
+assert d(133120)[:8] == b"ZAMINDSK", "sozlamalar Zamin bölimiga yozilmadi"
+print("ok")
+PY
+        then res="FAIL obraz: obraz tuzilmasi: $(tail -1 "$LOG_DIR/verify-obraz-gpt.log")"
+        else
+            obraz_boot "$img" "$log2" "$fifo"
+            if ! obraz_wait "$log2" '\[conf\] settings loaded from disk \(account: test\)' 120; then
+                res="FAIL obraz (2-yuklaniş): sozlamalar Zamin bölimidan öqilmadi (qarang $log2)"
+            else
+                res="OK obraz: GPT (ESP + Zamin bölimi) → UEFI → GICv3, virtio-pci: grafika, DHCP, sozlaş → bölimga yozildi (MBR/GPT/ESP butun) → qayta yuklanişda öqildi"
+            fi
+            kill $QPID 2>/dev/null; wait $QPID 2>/dev/null
+        fi
+    fi
+    kill $holder 2>/dev/null; wait $holder 2>/dev/null
+    rm -f "$img" "$img.vars" "$img.sha256" "$fifo"
+    echo "$res"
+    [[ "$res" == OK* ]]
+}
 # --- DTB yöli + virtio-pci: -kernel, GICv2 va GICv3, faqat PCI qurilmalar (ECAM DTB dagi
 #     pci-host-ecam-generic dan, uzilişlar INTx/interrupt-map orqali) ---
 pci_test() {
@@ -149,6 +257,9 @@ pci_test() {
 }
 if [ "$MODE" = "pci" ]; then
     pci_test; exit $?
+fi
+if [ "$MODE" = "obraz" ]; then
+    obraz_test; rc=$?; [ $rc -eq 2 ] && exit 0; exit $rc
 fi
 if [ "$MODE" = "vps" ]; then
     vps_all; rc=$?; [ $rc -eq 2 ] && exit 0; exit $rc
@@ -217,5 +328,9 @@ pci_test || exit 1
 
 # --- VPS (UEFI) yuklaniş ---
 vps_all; rc=$?
+[ $rc -eq 1 ] && exit 1
+
+# --- VPS disk obrazi (GPT, bitta disk) ---
+obraz_test; rc=$?
 [ $rc -eq 1 ] && exit 1
 exit 0
