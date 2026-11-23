@@ -188,6 +188,7 @@ struct Window {
     find_at: usize,     // Muharrir: joriy moslik indeksi
     sel: Option<(usize, usize)>, // Muharrir: tanlaş langari (qator, ustun); oxiri — kursor
     udlg: Option<Box<UserDlg>>, // Sozlamalar → Foydalanuvçilar: oçiq dialog (parol / yangi hisob)
+    nform: Option<Box<NetForm>>, // Sozlamalar → Tarmoq: DHCP / qölda (statik IPv4) formasi
 }
 
 impl Window {
@@ -374,6 +375,7 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         find_at: 0,
         sel: None,
         udlg: None,
+        nform: None,
     }
 }
 
@@ -480,6 +482,7 @@ fn new_window(kind: Kind, n: usize) -> Window {
             let (tw, th) = (192, 108);
             let pt = PHOTO_THUMB.lock().clone();
             win.thumbs = (0..wall_count()).map(|i| build_wallpaper(i, tw, th, &pt)).collect();
+            win.nform = Some(Box::new(NetForm::new()));
             win
         }
         Kind::Trash => {
@@ -2070,6 +2073,10 @@ fn desktop() {
                     editor_find_toggle(windows.last_mut().unwrap());
                     changed = true;
                 }
+                (input::EV_KEY, 1) if e.value == 1 && windows.last().is_some_and(|w| !w.hidden && w.tab == 3 && w.nform.as_ref().is_some_and(|f| f.focus.is_some())) => {
+                    windows.last_mut().unwrap().nform.as_mut().unwrap().focus = None; // Tarmoq maydonidan çiqiş
+                    changed = true;
+                }
                 (input::EV_KEY, 1) if e.value == 1 && windows.last().is_some_and(|w| !w.hidden && w.udlg.is_some()) => {
                     windows.last_mut().unwrap().udlg = None; // Sozlamalar dialogini yopiş
                     changed = true;
@@ -2194,7 +2201,14 @@ fn desktop() {
                         Some(Kind::Monitor) => monitor_key(windows.last_mut().unwrap(), code),
                         Some(Kind::Puzzle) => puzzle_key(windows.last_mut().unwrap(), code),
                         Some(Kind::Browser) => web_key(windows.last_mut().unwrap(), code, shift),
-                        Some(Kind::Settings) => udlg_key(windows.last_mut().unwrap(), code, shift),
+                        Some(Kind::Settings) => {
+                            let w = windows.last_mut().unwrap();
+                            if w.tab == 3 {
+                                net_key(w, code, shift);
+                            } else {
+                                udlg_key(w, code, shift);
+                            }
+                        }
                         Some(Kind::Trash) if code == 111 => {
                             let w = windows.last_mut().unwrap();
                             if let Some(name) = w.fsel.and_then(|s| w.rows.get(s)).map(|r| r.0.clone()) {
@@ -5598,20 +5612,7 @@ fn draw_settings_body(win: &Window) {
                 gfx::draw_text(x, y + u * 6, "QEMU: -device virtio-sound-device bilan övoz eşitiladi", 0x6f7f95, small() * 4 / 5);
             }
         }
-        3 => {
-            let up = crate::net::present();
-            let m = crate::net::our_mac();
-            let mac = alloc::format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", m[0], m[1], m[2], m[3], m[4], m[5]);
-            let cfg = crate::net::is_configured();
-            kv_table(x, y, rw, &[
-                ("Qurilma", String::from(if up { "virtio-net" } else { "Topilmadi" })),
-                ("Holat", String::from(if cfg { "Ulangan (DHCP)" } else if up { "Sozlanmagan" } else { "—" })),
-                ("IP manzil", if cfg { ip_str(crate::net::our_ip()) } else { String::from("—") }),
-                ("Şlyuz", if cfg { ip_str(crate::net::gateway()) } else { String::from("—") }),
-                ("DNS", if cfg { ip_str(crate::net::dns_server()) } else { String::from("—") }),
-                ("MAC", if up { mac } else { String::from("—") }),
-            ]);
-        }
+        3 => draw_net(win),
         4 => draw_users(win),
         5 => {
             let items = [
@@ -5652,6 +5653,261 @@ fn draw_settings_body(win: &Window) {
     }
 }
 
+
+// ---------------- Sozlamalar → Tarmoq: DHCP yoki qölda (statik IPv4) ----------------
+
+const NET_LABELS: [&str; 4] = ["IP manzil", "Niqob", "Şlyuz", "DNS"];
+const NET_HINTS: [&str; 4] = ["masalan 203.0.113.7 yoki …/24", "255.255.255.0 yoki /24", "masalan 203.0.113.1", "masalan 1.1.1.1"];
+const NET_APPLY: &str = "Qöllaş";
+
+/// Tarmoq bölimi formasi: tanlangan rejim, 4 ta maydon (IP, niqob, şlyuz, DNS), fokus va xabar.
+struct NetForm {
+    manual: bool,
+    fields: [String; 4],
+    focus: Option<usize>,
+    /// (matn, xatomi)
+    msg: Option<(String, bool)>,
+}
+
+impl NetForm {
+    fn new() -> NetForm {
+        let mut f = NetForm { manual: false, fields: Default::default(), focus: None, msg: None };
+        if let Some(c) = crate::net::static_cfg() {
+            f.manual = true;
+            f.fields = [ip_str(c.ip), ip_str(c.mask), ip_str(c.gw), ip_str(c.dns)];
+        }
+        f
+    }
+    /// Qölda rejimga ötilganda böş maydonlarni joriy (DHCP dan olingan) manzillar bilan töldiradi.
+    fn prefill(&mut self) {
+        if self.fields.iter().all(|f| f.is_empty()) && crate::net::is_configured() {
+            self.fields = [
+                ip_str(crate::net::our_ip()),
+                ip_str(crate::net::netmask()),
+                ip_str(crate::net::gateway()),
+                ip_str(crate::net::dns_server()),
+            ];
+        }
+    }
+}
+
+/// Rejim almaştirgiçi: 0 — "Avtomatik (DHCP)", 1 — "Qölda".
+fn net_mode_btn(win: &Window, k: usize) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (_, x, y0, _) = settings_geo(win);
+    let rw = (win.x + win.w).saturating_sub(x + u);
+    let bw = (rw.min(u * 18)) / 2;
+    (x + k * bw, y0 + u * 2, bw, u * 3 / 2)
+}
+
+/// k-maydon (2×2 tör): IP | Niqob, Şlyuz | DNS.
+fn net_field(win: &Window, k: usize) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (_, x, _, _) = settings_geo(win);
+    let rw = (win.x + win.w).saturating_sub(x + u);
+    let (_, my, _, mh) = net_mode_btn(win, 0);
+    let fw = rw.saturating_sub(u) / 2;
+    let rowh = small() * 4 / 5 + u / 4 + u * 3 / 2 + u / 2;
+    let fy = my + mh + u / 2 + (k / 2) * rowh + small() * 4 / 5 + u / 4;
+    (x + (k % 2) * (fw + u), fy, fw, u * 3 / 2)
+}
+
+fn net_apply_btn(win: &Window) -> (usize, usize, usize, usize) {
+    let u = body();
+    let (fx, fy, _, fh) = net_field(win, 2);
+    let bw = gfx::text_width(NET_APPLY, small() * 9 / 10) + u * 3;
+    (fx, fy + fh + u * 2 / 3, bw, u * 3 / 2)
+}
+
+fn draw_net(win: &Window) {
+    let Some(f) = win.nform.as_ref() else { return };
+    let u = body();
+    let (_, x, _, _) = settings_geo(win);
+    let rw = (win.x + win.w).saturating_sub(x + u);
+    let fpx = small() * 9 / 10;
+    // Rejim almaştirgiçi (segment)
+    let (mx, my, _, mh) = net_mode_btn(win, 0);
+    let (_, _, bw1, _) = net_mode_btn(win, 1);
+    fill_round_rect_a(mx, my, bw1 * 2, mh, mh / 2, 0xffffff, 18);
+    for (k, lbl) in ["Avtomatik (DHCP)", "Qölda"].iter().enumerate() {
+        let (bx, by, bw, bh) = net_mode_btn(win, k);
+        let on = f.manual == (k == 1);
+        if on {
+            gfx::fill_round_rect(bx + 2, by + 2, bw - 4, bh - 4, (bh - 4) / 2, accent());
+        }
+        let l = fit_text(lbl, bw.saturating_sub(u / 2), fpx);
+        gfx::draw_text_centered(bx + bw / 2, by + (bh - fpx) / 2, &l, if on { OQ } else { 0xaebccf }, fpx);
+    }
+    // Maydonlar: DHCP rejimida — joriy manzillar (faqat öqiş uçun)
+    let cfg = crate::net::is_configured();
+    let live = [
+        if cfg { ip_str(crate::net::our_ip()) } else { String::new() },
+        if cfg { ip_str(crate::net::netmask()) } else { String::new() },
+        if cfg { ip_str(crate::net::gateway()) } else { String::new() },
+        if cfg { ip_str(crate::net::dns_server()) } else { String::new() },
+    ];
+    for k in 0..4 {
+        let (fx, fy, fw, fh) = net_field(win, k);
+        gfx::draw_text(fx, fy - small() * 4 / 5 - u / 4, NET_LABELS[k], 0x9fb0c3, small() * 4 / 5);
+        gfx::fill_round_rect(fx, fy, fw, fh, u / 3, if f.manual { 0x0f141d } else { 0x161c28 });
+        let focused = f.manual && f.focus == Some(k);
+        gfx::round_outline(fx, fy, fw, fh, u / 3, if focused { 2 } else { 1 }, if focused { accent() } else { 0x3a4458 });
+        let ty = fy + (fh - fpx) / 2;
+        let (txt, col) = if f.manual {
+            if f.fields[k].is_empty() && !focused { (String::from(NET_HINTS[k]), 0x56637a) } else { (f.fields[k].clone(), OQ) }
+        } else if live[k].is_empty() {
+            (String::from("—"), 0x6f7f95)
+        } else {
+            (live[k].clone(), 0x8a9ab0)
+        };
+        let t = fit_text(&txt, fw.saturating_sub(u), fpx);
+        gfx::draw_text(fx + u / 2, ty, &t, col, fpx);
+        if focused {
+            let cxp = fx + u / 2 + gfx::text_width(&f.fields[k], fpx) + 1;
+            fill_rect(cxp.min(fx + fw - 3), ty, 2, fpx, accent());
+        }
+    }
+    // "Qöllaş" + xabar
+    let (bx, by, bw, bh) = net_apply_btn(win);
+    let pending = f.manual || crate::net::static_cfg().is_some();
+    if pending {
+        gfx::fill_round_rect(bx, by, bw, bh, bh / 2, accent());
+    } else {
+        fill_round_rect_a(bx, by, bw, bh, bh / 2, 0xffffff, 30);
+    }
+    gfx::draw_text_centered(bx + bw / 2, by + (bh - fpx) / 2, NET_APPLY, OQ, fpx);
+    let mpx = small() * 4 / 5;
+    let (mtxt, mcol) = match &f.msg {
+        Some((m, true)) => (m.clone(), 0xff6b60),
+        Some((m, false)) => (m.clone(), 0x30d158),
+        None if f.manual && f.focus.is_some() => (String::from("Tab — keyingi · Enter — qöllaş · Esc — çiqiş"), 0x6f7f95),
+        None => (String::new(), 0),
+    };
+    if !mtxt.is_empty() {
+        let mx0 = bx + bw + u * 2 / 3;
+        let t = fit_text(&mtxt, (x + rw).saturating_sub(mx0), mpx);
+        gfx::draw_text(mx0, by + (bh - mpx) / 2, &t, mcol, mpx);
+    }
+    // Joriy holat
+    let up = crate::net::present();
+    let m = crate::net::our_mac();
+    let mac = alloc::format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", m[0], m[1], m[2], m[3], m[4], m[5]);
+    let pfx = crate::net::ipcfg::mask_prefix(crate::net::netmask()).unwrap_or(32);
+    let state = if cfg {
+        if crate::net::is_static_active() { "Ulangan (statik)" } else { "Ulangan (DHCP)" }
+    } else if up {
+        "Sozlanmagan"
+    } else {
+        "—"
+    };
+    kv_table(x, by + bh + u * 2 / 3, rw, &[
+        ("Qurilma", if up { alloc::format!("virtio-net · {}", mac) } else { String::from("Topilmadi") }),
+        ("Holat", String::from(state)),
+        ("IP manzil", if cfg { alloc::format!("{}/{}", ip_str(crate::net::our_ip()), pfx) } else { String::from("—") }),
+        ("Şlyuz", if cfg { ip_str(crate::net::gateway()) } else { String::from("—") }),
+        ("DNS", if cfg { ip_str(crate::net::dns_server()) } else { String::from("—") }),
+    ]);
+}
+
+/// Tarmoq bölimiga bosiş. Bosildi — true.
+fn net_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    let modes = [net_mode_btn(win, 0), net_mode_btn(win, 1)];
+    let fields = [net_field(win, 0), net_field(win, 1), net_field(win, 2), net_field(win, 3)];
+    let apply = net_apply_btn(win);
+    let Some(f) = win.nform.as_mut() else { return false };
+    for (k, r) in modes.iter().enumerate() {
+        if in_rect(*r, cx, cy) {
+            f.manual = k == 1;
+            f.msg = None;
+            f.focus = if f.manual { f.prefill(); Some(0) } else { None };
+            return true;
+        }
+    }
+    for (k, r) in fields.iter().enumerate() {
+        if in_rect(*r, cx, cy) {
+            if !f.manual {
+                f.manual = true;
+                f.prefill();
+            }
+            f.focus = Some(k);
+            f.msg = None;
+            return true;
+        }
+    }
+    if in_rect(apply, cx, cy) {
+        net_apply(f);
+        return true;
+    }
+    f.focus.take().is_some()
+}
+
+/// Tarmoq maydoniga tugma: raqam, '.', '/', Backspace, Tab (Shift+Tab), Enter.
+/// Maydon fokusda bölmasa — klaviatura yutilmaydi.
+fn net_key(win: &mut Window, code: u16, shift: bool) {
+    let Some(f) = win.nform.as_mut() else { return };
+    let Some(k) = f.focus.filter(|_| f.manual) else { return };
+    match code {
+        15 => f.focus = Some(if shift { (k + 3) % 4 } else { (k + 1) % 4 }),
+        28 => {
+            if k < 3 {
+                f.focus = Some(k + 1);
+            } else {
+                net_apply(f);
+            }
+            return;
+        }
+        14 => {
+            f.fields[k].pop();
+        }
+        _ => {
+            let Some(ch) = keycode_char(code, shift).filter(|c| c.is_ascii_digit() || *c == '.' || *c == '/') else { return };
+            if f.fields[k].len() < 18 {
+                f.fields[k].push(ch);
+            }
+        }
+    }
+    f.msg = None;
+}
+
+/// "Qöllaş": tekşiradi, darhol qöllaydi va diskka saqlaydi.
+fn net_apply(f: &mut NetForm) {
+    if !f.manual {
+        let was_static = crate::net::static_cfg().is_some();
+        crate::net::set_static_pref(None);
+        let saved = crate::config::save_current();
+        if was_static && crate::net::present() {
+            let _ = crate::task::spawn_kernel("dhcp", crate::net::dhcp::rerun, 0);
+        }
+        f.focus = None;
+        f.msg = Some((String::from(if saved { "DHCP tanlandi va saqlandi" } else { "DHCP tanlandi (disk yöq — faqat şu seans)" }), false));
+        notify("Tarmoq", "Avtomatik (DHCP)", 0x34c759);
+        return;
+    }
+    match crate::net::ipcfg::from_fields(&f.fields[0], &f.fields[1], &f.fields[2], &f.fields[3]) {
+        Ok(c) => {
+            crate::net::set_static_pref(Some(c));
+            crate::net::apply_static(c);
+            let saved = crate::config::save_current();
+            if crate::net::present() {
+                let _ = crate::task::spawn_kernel("tarmoq-tekşiruv", net_check_worker, 0);
+            }
+            f.fields = [ip_str(c.ip), ip_str(c.mask), ip_str(c.gw), ip_str(c.dns)];
+            f.focus = None;
+            let pfx = crate::net::ipcfg::mask_prefix(c.mask).unwrap_or(32);
+            let what = alloc::format!("Statik {}/{} qöllandi{}", ip_str(c.ip), pfx, if saved { " va saqlandi" } else { " (disk yöq)" });
+            notify("Tarmoq", &what, 0x34c759);
+            f.msg = Some((what, false));
+        }
+        Err(e) => f.msg = Some((String::from(e), true)),
+    }
+}
+
+/// Fon: statik sozlama qöllangandan keyin ping/DNS tekşiruvi (jurnalga).
+extern "C" fn net_check_worker(_: usize) {
+    if let Some(c) = crate::net::static_cfg() {
+        crate::net::dhcp::report_static(c, false);
+    }
+}
 
 // ---------------- Sozlamalar → Foydalanuvçilar: parol va yangi hisob ----------------
 
@@ -6041,6 +6297,9 @@ fn settings_click(win: &mut Window, cx: usize, cy: usize) -> bool {
         if i < SETTINGS_TABS.len() {
             win.tab = i;
             win.udlg = None;
+            if let Some(f) = win.nform.as_mut() {
+                f.focus = None;
+            }
             return true;
         }
     }
@@ -6051,6 +6310,9 @@ fn settings_click(win: &mut Window, cx: usize, cy: usize) -> bool {
         win.udlg = None;
     }
     if win.tab == 4 && users_click(win, cx, cy) {
+        return true;
+    }
+    if win.tab == 3 && net_click(win, cx, cy) {
         return true;
     }
     if win.tab == 2 {

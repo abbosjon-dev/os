@@ -342,13 +342,15 @@ fn handle(num: u64, a: [u64; 6]) -> SysResult {
         SYS_DNS | SYS_PING | SYS_TCP_CONNECT if task::jail().is_some() => Err(ERR_DENIED),
         SYS_NET_INFO => {
             use crate::net;
-            let mut b = [0u8; 23];
+            let mut b = [0u8; 24];
             b[0..4].copy_from_slice(&net::our_ip());
             b[4..8].copy_from_slice(&net::gateway());
-            b[8..12].copy_from_slice(&[255, 255, 255, 0]);
+            b[8..12].copy_from_slice(&net::netmask());
             b[12..16].copy_from_slice(&net::dns_server());
             b[16..22].copy_from_slice(&net::our_mac());
             b[22] = net::is_configured() as u8;
+            // rejim: 0 — DHCP, 1 — statik (tanlangan), 2 — statik va qöllangan
+            b[23] = if net::is_static_active() { 2 } else { net::static_cfg().is_some() as u8 };
             copy_to_user(a[0], &b)?;
             Ok(0)
         }

@@ -7,6 +7,7 @@
 pub mod dhcp;
 pub mod dns;
 pub mod http;
+pub mod ipcfg;
 pub mod tcp;
 pub mod tls;
 pub mod udp;
@@ -58,6 +59,46 @@ pub fn present() -> bool {
     nic::present()
 }
 
+pub fn netmask() -> Ip {
+    *NETMASK.lock()
+}
+
+/// Foydalanuvçi tanlagan rejim: `Some` — statik (DHCP ötkazib yuboriladi), `None` — DHCP.
+static STATIC_CFG: SpinLock<Option<ipcfg::StaticCfg>> = SpinLock::new(None);
+/// Joriy manzillar qaysi yöl bilan olingan: 0 — hali yöq, 1 — DHCP, 2 — statik.
+static SOURCE: AtomicUsize = AtomicUsize::new(0);
+
+pub fn static_cfg() -> Option<ipcfg::StaticCfg> {
+    *STATIC_CFG.lock()
+}
+/// Rejimni (diskdan yoki Sozlamalardan) örnatadi; qöllamaydi.
+pub fn set_static_pref(c: Option<ipcfg::StaticCfg>) {
+    *STATIC_CFG.lock() = c;
+}
+/// Joriy manzillar statik rejimdanmi (yöq — DHCP yoki sozlanmagan).
+pub fn is_static_active() -> bool {
+    SOURCE.load(Ordering::Acquire) == 2
+}
+
+/// Statik sozlamani darhol qöllaydi (ARP keşi tozalanadi — eski şlyuz MAC i qolmasin).
+pub fn apply_static(c: ipcfg::StaticCfg) {
+    ARP_CACHE.lock().clear();
+    *DNS.lock() = c.dns;
+    set_config(c.ip, c.gw, c.mask, c.dns);
+    SOURCE.store(2, Ordering::Release);
+}
+
+/// DHCP dan kelgan javobni qöllaydi (statik rejim tanlangan bölsa — e'tiborsiz).
+pub(crate) fn apply_dhcp(ip: Ip, gw: Ip, mask: Ip, dns: Ip) -> bool {
+    if static_cfg().is_some() {
+        return false;
+    }
+    ARP_CACHE.lock().clear();
+    set_config(ip, gw, mask, dns);
+    SOURCE.store(1, Ordering::Release);
+    true
+}
+
 pub fn set_config(ip: Ip, gw: Ip, mask: Ip, dns: Ip) {
     *IP.lock() = ip;
     *GATEWAY.lock() = gw;
@@ -70,9 +111,8 @@ pub fn set_config(ip: Ip, gw: Ip, mask: Ip, dns: Ip) {
 
 /// Internetdagi (yoki mahalliy) manzil uçun keyingi qadam IP si (gateway yoki özi).
 fn next_hop(dst: Ip) -> Ip {
-    let (ip, mask, gw) = (our_ip(), *NETMASK.lock(), gateway());
-    let same = (0..4).all(|i| ip[i] & mask[i] == dst[i] & mask[i]);
-    if same { dst } else { gw }
+    // Şlyuz on-link bölmasa ham (niqob /32, VPS) — ARP to'g'ridan-to'g'ri şlyuzga
+    ipcfg::next_hop_for(our_ip(), *NETMASK.lock(), gateway(), dst)
 }
 
 // --- Checksum (IPv4/ICMP/TCP/UDP) ---

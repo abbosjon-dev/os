@@ -70,6 +70,9 @@ fn parse(p: &[u8], xid: u32) -> Option<(u8, Offer)> {
 
 /// Töliq DHCP almaşinuvi. Natija: muvaffaqiyatlimi.
 pub fn configure() -> bool {
+    if super::static_cfg().is_some() {
+        return super::is_configured(); // statik rejim: DHCP sörovi yuborilmaydi
+    }
     udp::bind(CLIENT_PORT);
     let xid = 0x5a_00_00_00 | (crate::timer::uptime_ms() as u32 & 0xffffff);
     let bcast = [255, 255, 255, 255];
@@ -87,9 +90,8 @@ pub fn configure() -> bool {
         while crate::timer::uptime_ms() < deadline {
             let Some((_, _, data)) = udp::recv_wait(CLIENT_PORT, 1000) else { break };
             if let Some((5, ack)) = parse(&data, xid) {
-                super::set_config(ack.ip, ack.gateway, ack.mask, ack.dns);
                 udp::unbind(CLIENT_PORT);
-                return true;
+                return super::apply_dhcp(ack.ip, ack.gateway, ack.mask, ack.dns);
             }
         }
     }
@@ -97,12 +99,36 @@ pub fn configure() -> bool {
     false
 }
 
-/// Fon oqimi: yuklanişda DHCP ni sinaydi.
+/// Fon oqimi: yuklanişda statik sozlamani qöllaydi yoki DHCP ni sinaydi.
 pub extern "C" fn worker(_: usize) {
     task::sleep_ms(100); // tarmoq oqimi tayyor bölsin
+    if let Some(c) = super::static_cfg() {
+        super::apply_static(c);
+        report_static(c, true);
+        return;
+    }
+    rerun(0);
+}
+
+/// Statik rejim: jurnalga yozadi va ulanişni tekşiradi (şlyuzga ping, DNS sörovi).
+pub fn report_static(c: super::ipcfg::StaticCfg, boot: bool) {
+    let pfx = super::ipcfg::mask_prefix(c.mask).unwrap_or(32);
+    let why = if boot { "diskdagi sozlama, DHCP sörovi yuborilmadi" } else { "Sozlamalardan qöllandi" };
+    crate::println!("[net ] tarmoq: statik {}/{}, şlyuz {}, DNS {} ({})", format_ip(c.ip), pfx, format_ip(c.gw), format_ip(c.dns), why);
+    match super::ping(c.gw, 1) {
+        Some(ms) => crate::println!("[net ] tarmoq: ping {} — javob {} ms", format_ip(c.gw), ms),
+        None => crate::println!("[net ] tarmoq: ping {} — javob yöq", format_ip(c.gw)),
+    }
+    match super::dns::resolve("zamin.app") {
+        Some(ip) => crate::println!("[net ] tarmoq: DNS zamin.app → {}", format_ip(ip)),
+        None => crate::println!("[net ] tarmoq: DNS {} javob bermadi", format_ip(c.dns)),
+    }
+}
+
+/// DHCP orqali manzil sörash (yuklanişda va Sozlamalardan DHCP ga qaytilganda — fon oqimi).
+pub extern "C" fn rerun(_: usize) {
     if configure() {
-        let ip = super::our_ip();
-        crate::tprintln!(crate::i18n::msg::NET_READY, format_ip(ip), format_ip(super::gateway()), format_ip(super::dns_server()));
+        crate::tprintln!(crate::i18n::msg::NET_READY, format_ip(super::our_ip()), format_ip(super::gateway()), format_ip(super::dns_server()));
     } else {
         crate::tprintln!(crate::i18n::msg::NET_NO_DHCP);
     }

@@ -708,6 +708,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] localStorage/cookie diskka saqlaş (~/.zamin): kodlaş ({} yozuv)", n),
         Err(e) => panic!("localStorage/cookie saqlaş tekşiruvi yiqildi: {}", e),
     }
+    match net::ipcfg::self_test() {
+        Ok(n) => println!("  [ok] tarmoq sozlamalari: parse_ipv4, niqob (/24 va nuqtali), validate_static (tarmoq/broadcast/0.0.0.0/uzluksiz bölmagan niqob rad), /32 va on-link bölmagan şlyuz, saqlaş → öqiş aylanişi ({} sinov)", n),
+        Err(e) => panic!("tarmoq sozlamalari tekşiruvi yiqildi: {}", e),
+    }
     match drivers::virtio_snd::self_test_volume() {
         Ok(n) => println!("  [ok] övoz balandligi: scale_samples 100%/50%/0%/övozsiz, i16 çegarasi ({} sinov)", n),
         Err(e) => panic!("övoz balandligi tekşiruvi yiqildi: {}", e),

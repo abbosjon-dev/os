@@ -3,7 +3,8 @@ import os,sys,pty,time,select,socket,json,subprocess
 #   --size WxH — virtio-gpu ekran ölçami (xres/yres; yadro GET_DISPLAY_INFO orqali oladi)
 #   --vps      — Netcup VPS yöli: UEFI (BOOTAA64.EFI) + ACPI + GICv3 + virtio-*-pci
 #   CLICKS dagi "@nom" (browser, max, addr, home, center, park) — zgeom.py dan, ekran ölçamiga qarab;
-#   "u,URL" — manzil satriga URL yozib öçiş.
+#   "u,URL" — manzil satriga URL yozib öçiş; "t,MATN" — yoziş; "bs,N" — N marta Backspace;
+#   "kp,tab" — bitta tugma (QEMU qcode).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import zgeom
 argv=[]; SW,SH=1280,800; VPS=False
@@ -138,7 +139,10 @@ for c in os.environ.get("CLICKS","").split(";"):
         elif a[0]=="2": raw_click(int(a[1]),int(a[2])); time.sleep(0.12); raw_click(int(a[1]),int(a[2])); time.sleep(1.5)
         elif a[0]=="c0": raw_click(int(a[1]),int(a[2]))
         elif a[0]=="snap": snap(a[1])
-        elif a[0]=="t": typetext(a[1])
+        elif a[0]=="t": typetext(",".join(a[1:]))
+        elif a[0]=="bs":
+            for _ in range(int(a[1])): key("backspace")
+            time.sleep(0.4)
         elif a[0]=="r":
             move(int(a[1]),int(a[2])); time.sleep(0.3)
             qcmd({"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":True,"button":"right"}}]}}); time.sleep(0.1)

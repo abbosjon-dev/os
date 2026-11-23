@@ -9,6 +9,7 @@ bu fayl ham yangilanadi.
 
 N_LAUNCHERS = 14
 BROWSER = 1  # LAUNCHERS dagi "Brauzer" indeksi
+SETTINGS = 12  # LAUNCHERS dagi "Sozlamalar" indeksi
 
 
 def body(h):
@@ -60,5 +61,26 @@ def metrics(w, h):
     # check_corners sohasi: sahifa ichi, öng tarafdagi aylantirish chizig'isiz
     g["area"] = (px0 + 1, ptop + 1, px0 + pw - 13, ptop + ph - 1)
     g["center"] = (px0 + pw // 2, ptop + ph // 2)
+    # Sozlamalar (dok: 12-ikona; new_window(n=0): u*34 x u*24) → Tarmoq bölimi (gui.rs
+    # settings_geo / net_mode_btn / net_field / net_apply_btn)
+    g["settings"] = icon_c(SETTINGS)
+    sw_, sh_ = u * 34, u * 24
+    sx = min(w // 8, max(w - sw_, 1))
+    sy = min(menubar_h + u * 2, max(max(h - (dock_h + sh_ + u), 0), menubar_h))
+    sbw, ih = u * 9, u * 7 // 4
+    cx, y0 = sx + sbw + u, sy + title_h + u * 2 // 3
+    g["set_tab3"] = (sx + sbw // 2, sy + title_h + u // 2 + 3 * ih + ih // 2)
+    rw = sx + sw_ - (cx + u)
+    bw = min(rw, u * 18) // 2
+    my, mh = y0 + u * 2, u * 3 // 2
+    g["net_dhcp"] = (cx + bw // 2, my + mh // 2)
+    g["net_manual"] = (cx + bw + bw // 2, my + mh // 2)
+    fw = (rw - u) // 2
+    rowh = small * 4 // 5 + u // 4 + u * 3 // 2 + u // 2
+    for k in range(4):
+        fy = my + mh + u // 2 + (k // 2) * rowh + small * 4 // 5 + u // 4
+        g["net_f%d" % k] = (cx + (k % 2) * (fw + u) + fw // 2, fy + u * 3 // 4)
+    fy2 = my + mh + u // 2 + rowh + small * 4 // 5 + u // 4
+    g["net_apply"] = (cx + u, fy2 + u * 3 // 2 + u * 2 // 3 + u * 3 // 4)
     g["park"] = (w - 5, h - 5)  # sichqonchani chetga (hover effektlari bo'lmasin)
     return g

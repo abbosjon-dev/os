@@ -65,11 +65,26 @@ OS içida protsedural chiziladi, istalgan ekran ölçamida) va 6 ta **asosiy ran
 (menyu, qidiruv, yon panellar, tanlovlar uçun). Tanlov darhol qöllanadi, **diskka
 saqlanadi** (`fon=`, `rang=`) va qayta yuklaşdan keyin ham — qulf ekranida ham — qoladi.
 
-Boşqa bölimlar haqiqiy tizim maʼlumotini körsatadi: **Tarmoq** (virtio-net, DHCP, IP,
+Boşqa bölimlar haqiqiy tizim maʼlumotini körsatadi: **Tarmoq** (rejim, IP/prefiks,
 şlyuz, DNS, MAC), **Övoz** (qurilma va dekoderlar), **Foydalanuvçilar**, **Xavfsizlik**
 (W^X, PAN, KASLR, disk şifrlaş…), **Umumiy** (versiya, xotira, ish vaqti).
 
 <img src="docs/settings-network.png" width="480">
+
+**Tarmoq: DHCP yoki statik IPv4.** Sozlamalar → **Tarmoq** bölimida almaştirgiç bor:
+**Avtomatik (DHCP)** yoki **Qölda**. Qölda rejimida 4 ta maydon — **IP manzil**, **Niqob**,
+**Şlyuz**, **DNS** (Tab — keyingi maydon, Shift+Tab — oldingi, Enter — keyingi/qöllaş,
+Esc — maydondan çiqiş; klaviatura faqat maydon fokusda bölganda yutiladi). Niqob
+`255.255.255.0`, `/24` yoki `24` körinişida; IP maydoniga `10.0.2.15/24` yozilsa va niqob
+böş bölsa — niqob prefiksdan olinadi. **Qöllaş** tugmasi manzillarni tekşiradi (notöğri
+oktet, uzluksiz bölmagan niqob, `0.0.0.0`, tarmoq/broadcast manzili — tuşunarli xato matni
+bilan rad etiladi), darhol qöllaydi (ARP keşi tozalanadi), **diskka saqlaydi**
+(`tarmoq=statik`, `tarmoq_ip=`, `tarmoq_niqob=`, `tarmoq_shlyuz=`, `tarmoq_dns=`) va fonda
+şlyuzga ping hamda DNS sörovi bilan ulanişni tekşiradi (natija jurnalda). Keyingi
+yuklanişda statik rejimda **DHCP sörovi umuman yuborilmaydi** — VPS da DHCP işlamasa ham
+(Netcup panelidagi IP va şlyuz bilan) tizim tarmoqqa ulanadi. Şlyuz IP bilan bir tarmoqda
+bölmasa ham (niqob `/32` yoki boşqa tarmoq) qabul qilinadi — ARP to'g'ridan-to'g'ri şlyuzga
+yuboriladi. **Avtomatik (DHCP)** ga qaytilsa — saqlanadi va DHCP darhol qayta söraladi.
 
 **Övoz balandligi va övozsiz rejim.** Sozlamalar → **Övoz** bölimida sudraladigan
 slayder (0–100 %, foiz körsatkiçi bilan) va **"Övozsiz"** tugmasi bor. Daraja global:
@@ -915,12 +930,22 @@ To'liq TCP/IP stegi — noldan yozilgan (QEMU SLIRP user-net bilan sinaldi):
 - **virtio-net** drayveri (eski v1 va modern v2); qabul uzilişlar orqali, jönatiş sinxron;
 - **Ethernet → ARP → IPv4**; **ICMP** (ping), **UDP**, **TCP** (mijoz: ulaniş, jönatiş, oliş, yopiş);
 - **DHCP** mijozi — yuklanişda avtomatik IP, gateway va DNS oladi;
+- **statik IPv4** — Sozlamalar → Tarmoq → "Qölda" (IP, niqob, şlyuz, DNS) diskka saqlanadi;
+  yuklanişda DHCP ötkazib yuboriladi, jurnalda `tarmoq: statik 10.0.2.15/24, …`, şlyuzga
+  ping va DNS natijasi; on-link bölmagan şlyuz (`/32`, VPS) ham işlaydi
+  (mantiq: `src/net/ipcfg.rs` — `parse_ipv4`, `validate_static`, self-test
+  `[ok] tarmoq sozlamalari`; sinov: `verify.sh tarmoq`);
 - **DNS** mijozi — domen nomidan IP;
-- dasturlar: `tarmoq` (holat), `ping`, `yukla` (HTTP sahifa).
+- dasturlar: `tarmoq` (holat: rejim DHCP/statik, IP/prefiks, niqob, şlyuz, DNS), `ping`, `yukla` (HTTP sahifa).
 
 ```
 abbosjon@zamin:~> tarmoq
-  IP: 10.0.2.15   Gateway: 10.0.2.2   DNS: 10.0.2.3
+  MAC:      52:54:00:12:34:56
+  Rejim:    statik (qölda)
+  IP:       10.0.2.15/24
+  Niqob:    255.255.255.0
+  Gateway:  10.0.2.2
+  DNS:      10.0.2.3
 abbosjon@zamin:~> ping 10.0.2.2
   10.0.2.2 seq=0 vaqt=9 ms ... 4/4 javob
 abbosjon@zamin:~> yukla example.com /          # DNS → TCP → HTTP

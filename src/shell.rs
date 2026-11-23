@@ -129,7 +129,7 @@ fn program_help(name: &str) -> Text {
             "random arguments to system calls (stability test)",
         ],
         "ping" => ["manzilga ping yuboradi", "ping до адреса", "ping an address"],
-        "tarmoq" => ["tarmoq holati (IP, gateway, DNS)", "состояние сети", "network status"],
+        "tarmoq" => ["tarmoq holati (rejim DHCP/statik, IP, niqob, gateway, DNS)", "состояние сети (режим DHCP/статический, IP, маска, шлюз, DNS)", "network status (DHCP/static mode, IP, mask, gateway, DNS)"],
         "yukla" => ["HTTP sahifani yuklaydi: yukla host /", "загрузка HTTP-страницы", "fetch an HTTP page"],
         "qafas" => [
             "qafasdan qoçişga urinadi (çeklangan qafas)",

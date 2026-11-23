@@ -309,7 +309,9 @@
       "id": "T39",
       "title": "Sozlamalar → Tarmoq: statik IPv4 (IP, niqob, shlyuz, DNS) yoki DHCP tanlash, diskka saqlash",
       "detail": "Hozir Tarmoq bo'limi (src/gui.rs ~5552) faqat DHCP dan olingan IP/shlyuz/DNS ni ko'rsatadi. VPS da DHCP ishlamasa yoki ataylab statik manzil kerak bo'lsa (Netcup panelida IP va shlyuz beriladi), tizimga ulanib bo'lmaydi. Fayllar: src/gui.rs (Settings Tarmoq tabi: 'Avtomatik (DHCP)' / 'Qo'lda' almashtirgich, 4 ta kiritish maydoni, 'Qo'llash' tugmasi, Tab/Enter, takes_keys faqat maydon fokusda bo'lganda; xatolar matn bilan), src/net/mod.rs (set_config allaqachon bor; on-link bo'lmagan shlyuz uchun next_hop ni tekshirish: niqob /32 yoki shlyuz boshqa tarmoqda bo'lsa ham ARP to'g'ridan-to'g'ri shlyuzga), src/net/dhcp.rs (statik rejimda DHCP o'tkazib yuboriladi), src/config.rs (tarmoq rejimi va manzillarni sozlamalar bilan diskka saqlash, yuklanishda qo'llash), src/shell.rs ('tarmoq' buyrug'i rejimni ham ko'rsatadi). Mantiq sof funksiyada: parse_ipv4(&str) -> Option<[u8;4]> va validate_static(ip, mask, gw) -> Result<(), &str> (noto'g'ri oktet, uzluksiz bo'lmagan niqob, 0.0.0.0, tarmoq/broadcast manzili rad etiladi; '/24' ko'rinishidagi prefiks ham qabul qilinadi). Qabul mezoni: self-test '[ok] tarmoq sozlamalari' (parse/validate holatlari, config saqlash→o'qish aylanishi) o'tadi. Yangi sinov: QEMU user tarmog'ida statik 10.0.2.15/24, shlyuz 10.0.2.2, DNS 10.0.2.3 diskka yoziladi, qayta yuklanishda DHCP so'rovisiz shu manzil qo'llanadi va jurnalda 'tarmoq: statik 10.0.2.15' hamda ping/DNS muvaffaqiyati chiqadi. Skrinshot docs/settings-network.png. README Sozlamalar va 'Tarmoq' bo'limlari yangilanadi. verify.sh full o'tadi.",
-      "batch": 6
+      "batch": 6,
+      "status": "done",
+      "done_at": "2026-11-23 23:03:35"
     },
     {
       "id": "T40",

@@ -21,6 +21,9 @@
 #                     (QEMU_EFI.fd -bios yoki AAVMF pflash), GICv3, faqat virtio-*-pci: GPT bölimi
 #                     topiladi, grafik ekran (virtio-gpu), DHCP; sozlaş ustasi oxirigaça → sozlamalar
 #                     Zamin bölimiga yoziladi (MBR/GPT butun) → qayta yuklanişda diskdan öqiladi
+#   verify.sh tarmoq — yiğiş + Sozlamalar → Tarmoq (GUI, QMP): "Qölda" → 10.0.2.15/24, şlyuz 10.0.2.2,
+#                     DNS 10.0.2.3 → "Qöllaş" (diskka saqlanadi) → qayta yuklanişda DHCP sörovisiz
+#                     statik manzil, ping şlyuz va DNS muvaffaqiyatli; surat docs/settings-network.png
 #   verify.sh pci   — yiğiş + -kernel (DTB ECAM) GICv2 va GICv3 da faqat virtio-*-pci qurilmalar
 # Çiqiş kodi 0 — ötdi. Natija qisqa matn sifatida stdout ga.
 set -uo pipefail
@@ -285,6 +288,37 @@ pci_test() {
     done
     echo "OK pci: -kernel + DTB ECAM, GICv2 va GICv3 — virtio-pci (blk+INTx, net, gpu, input, rng)"
 }
+# --- Statik IPv4: Sozlamalar → Tarmoq (GUI) → disk → qayta yuklaniş ---
+net_test() {
+    local kernel=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel
+    local d=$LOG_DIR/tarmoq; mkdir -p "$d" /tmp/claude-0; rm -f "$d"/*.png "$d"/*.log
+    local form="@settings;w,2;@set_tab3;w,1;@net_manual;bs,20;t,10.0.2.15/24;kp,tab;bs,20;kp,tab;bs,20;t,10.0.2.2;kp,tab;bs,20;t,10.0.2.3;@net_apply;w,4;m,@park"
+    CLICKS="w,2;$form" timeout 300 python3 scripts/agent/shot.py "$kernel" "$d/qollash.png" fresh >"$d/shot1.log" 2>&1
+    local l1=$d/qollash.png.log
+    [ -s "$d/qollash.png" ] || { echo "FAIL tarmoq: surat olinmadi (qarang $d/shot1.log)"; return 1; }
+    grep -qaiE 'panic|yiqildi' "$l1" && { echo "FAIL tarmoq: $(grep -aiE -m1 'panic|yiqildi' "$l1" | cut -c1-200)"; return 1; }
+    grep -qaE '\[net \] tarmoq: statik 10\.0\.2\.15/24.*Sozlamalardan' "$l1" || { echo "FAIL tarmoq: 'Qöllaş' statik manzilni qöllamadi (qarang $l1)"; return 1; }
+    python3 - /tmp/claude-0/shot-disk.img <<'PY' || { echo "FAIL tarmoq: sozlama diskka yozilmadi"; return 1; }
+import sys
+t = open(sys.argv[1], "rb").read(17 * 512)[512:].split(b"\0")[0].decode()
+need = ["tarmoq=statik", "tarmoq_ip=10.0.2.15", "tarmoq_niqob=255.255.255.0", "tarmoq_shlyuz=10.0.2.2", "tarmoq_dns=10.0.2.3"]
+sys.exit(0 if all(n in t.splitlines() for n in need) else 1)
+PY
+    # 2-yuklaniş: şu disk bilan (GUI kirişi + Tarmoq bölimi surati)
+    CLICKS="t,pass1234;kp,ret;w,4;@settings;w,2;@set_tab3;w,2;m,@park" timeout 300 python3 scripts/agent/shot.py "$kernel" "$d/qayta.png" >"$d/shot2.log" 2>&1
+    local l2=$d/qayta.png.log
+    [ -s "$d/qayta.png" ] || { echo "FAIL tarmoq: 2-yuklaniş surati olinmadi (qarang $d/shot2.log)"; return 1; }
+    grep -qaiE 'panic|yiqildi' "$l2" && { echo "FAIL tarmoq (2): $(grep -aiE -m1 'panic|yiqildi' "$l2" | cut -c1-200)"; return 1; }
+    grep -qaE '\[net \] tarmoq: statik 10\.0\.2\.15/24, şlyuz 10\.0\.2\.2, DNS 10\.0\.2\.3 \(diskdagi' "$l2" || { echo "FAIL tarmoq: qayta yuklanişda statik manzil qöllanmadi (qarang $l2)"; return 1; }
+    grep -qaE '\[net \] DHCP' "$l2" && { echo "FAIL tarmoq: statik rejimda DHCP sörovi yuborildi"; return 1; }
+    grep -qaE 'tarmoq: ping 10\.0\.2\.2 — javob [0-9]+ ms' "$l2" || { echo "FAIL tarmoq: şlyuzga ping ötmadi"; return 1; }
+    grep -qaE 'tarmoq: DNS zamin\.app → [0-9.]+' "$l2" || echo "  (ogohlantiriş: DNS javobi yöq — xostda internet yöqmi?)"
+    cp "$d/qollash.png" docs/settings-network.png
+    echo "OK tarmoq: GUI → statik 10.0.2.15/24 → diskka → qayta yuklanişda DHCP siz qöllandi, ping şlyuz$(grep -qaE 'tarmoq: DNS zamin' "$l2" && echo ' + DNS')"
+}
+if [ "$MODE" = "tarmoq" ]; then
+    net_test; exit $?
+fi
 if [ "$MODE" = "pci" ]; then
     pci_test; exit $?
 fi
@@ -376,6 +410,9 @@ PY
     [ $st -eq 1 ] || { echo "FAIL burçaklar: qora pikselli surat ($(basename "$src")) tekşiruvdan ötib ketdi (kod $st, check_corners.py buzilgan)"; exit 1; }
 done
 echo "[ok] burchaklar: ${#SHOTS[@]} surat toza (1280x800, 1024x768, 1920x1080$([ -n "$VPS_FW" ] && echo ", VPS UEFI+ACPI+GICv3 1920x1080"))"
+
+# --- Statik IPv4 (Sozlamalar → Tarmoq) ---
+net_test || exit 1
 
 # --- DTB + virtio-pci (GICv2/GICv3) ---
 pci_test || exit 1

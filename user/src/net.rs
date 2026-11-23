@@ -8,20 +8,25 @@ pub type Ip = [u8; 4];
 pub struct Info {
     pub ip: Ip,
     pub gateway: Ip,
+    pub mask: Ip,
     pub dns: Ip,
     pub mac: [u8; 6],
     pub configured: bool,
+    /// Statik (qölda) rejim tanlanganmi (yöq — DHCP).
+    pub static_mode: bool,
 }
 
 pub fn info() -> Info {
-    let mut b = [0u8; 23];
+    let mut b = [0u8; 24];
     let _ = unsafe { syscall(SYS_NET_INFO, b.as_mut_ptr() as u64, 0, 0, 0) };
     Info {
         ip: b[0..4].try_into().unwrap(),
         gateway: b[4..8].try_into().unwrap(),
+        mask: b[8..12].try_into().unwrap(),
         dns: b[12..16].try_into().unwrap(),
         mac: b[16..22].try_into().unwrap(),
         configured: b[22] != 0,
+        static_mode: b[23] != 0,
     }
 }
 

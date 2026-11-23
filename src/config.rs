@@ -3,7 +3,8 @@
 //! Disk tuzilişi:
 //!   sektor 0      — sarlavha: "ZAMINDSK", versiya, sozlamalar uzunligi
 //!   sektor 1..16  — sozlamalar matni ("kalit=qiymat" qatorlari): til, login, ism,
-//!                   PBKDF2 tuzi va takrorlar soni, örangan asosiy kalit
+//!                   PBKDF2 tuzi va takrorlar soni, örangan asosiy kalit, tarmoq rejimi
+//!                   (tarmoq=dhcp|statik, tarmoq_ip/niqob/shlyuz/dns)
 //!   sektor 64..   — ZaminFS (şifrlangan fayl tizimi), ikki nusxa (A/B)
 //!
 //! Disk bölmasa, sozlamalar faqat xotirada turadi (keyingi yuklanişda yöqoladi).
@@ -110,6 +111,8 @@ pub fn load() -> Option<Settings> {
             crate::drivers::virtio_snd::set_volume(v.parse().unwrap_or(100));
         } else if k == "ovozsiz" && !in_section {
             crate::drivers::virtio_snd::set_muted(v == "ha");
+        } else if k.starts_with("tarmoq") && !in_section {
+            // tarmoq rejimi va manzillari — pastda ipcfg::from_text bilan
         } else if k == "mintaqa" && !in_section {
             if let Ok(m) = v.parse::<i32>() {
                 crate::time::set_tz_minutes(m);
@@ -119,6 +122,7 @@ pub fn load() -> Option<Settings> {
         }
     }
     flush(&mut cur, &mut accounts, !in_section);
+    crate::net::set_static_pref(crate::net::ipcfg::from_text(text));
     Some(Settings { lang, accounts })
 }
 
@@ -137,6 +141,7 @@ pub fn save(s: &Settings) -> bool {
         crate::drivers::virtio_snd::volume(),
         if crate::drivers::virtio_snd::muted() { "ha" } else { "yöq" }
     );
+    text += &crate::net::ipcfg::to_text(crate::net::static_cfg().as_ref());
     for a in &s.accounts {
         text += &format!(
             "[hisob]\nlogin={}\nism={}\nuid={}\nadmin={}\nkdf=pbkdf2-sha256\ntakror={}\ntuz={}\nkalit={}\n",
