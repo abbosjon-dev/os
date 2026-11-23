@@ -1216,7 +1216,7 @@ API kalit / apiKeyHelper / boşqa BASE_URL → rad etiladi, 3 ketma-ket tekşiru
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.29**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.30**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -1298,5 +1298,11 @@ bosqiç (etap) yakunlanganda kötariladi.
   ovoz balandligi slayderi va ovozsiz rejim; yumaloq burçaklar qayta tekşirildi; CSS overflow:
   hidden/auto, white-space: nowrap/pre/pre-line, text-overflow: ellipsis va opacity.
   Skrinşotlar: `docs/ish-muhiti-0.0.29.png`, `docs/ish-muhiti-fayllar-0.0.29.png`.
+- 0.0.30 — **Barqarorlik va boşqaruv**: yumaloq burçaklar tekşiruvi (`check_corners.py`) endi
+  `verify.sh full` da regressiya sinovi; içma-iç blok konteynerlari (ota blok foni, çegarasi va
+  padding'i bola bloklarni örab oladi); grafik terminalda Ctrl tugmasi (Ctrl+C — dasturni töxtatiş,
+  Ctrl+L, Ctrl+U, Ctrl+D); Sozlamalar → Foydalanuvçilar: parolni özgartiriş va yangi hisob qöşiş
+  (admin); Fayllar menejerida nom böyiça tezkor filtr va bosiladigan yöl bölaklari; CSS maxsus
+  xossalar `var(--x)` va `calc()`. Skrinşot: `docs/barqarorlik-0.0.30.png`.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
