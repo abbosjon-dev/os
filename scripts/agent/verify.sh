@@ -3,6 +3,10 @@
 #   verify.sh quick — yiğiş: xato va ogohlantirish yöq
 #   verify.sh full  — + QEMU da (grafikasiz) yuklaniş: barça self-test [ok], panic yöq;
 #                     + brauzer sahifalari surati: yumaloq burçaklarda töq piksel yöq
+#                     + vps sinovi (UEFI firmware örnatilgan bölsa)
+#   verify.sh vps   — yiğiş + UEFI yuklaniş (Netcup ARM VPS ga öxşaş): BOOTAA64.EFI FAT32
+#                     diskda, virt,gic-version=3, QEMU_EFI.fd, virtio-*-pci qurilmalar —
+#                     til tanlaş ekranigaça, panic yöq, PCI disk uzilişi işlaydi
 # Çiqiş kodi 0 — ötdi. Natija qisqa matn sifatida stdout ga.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -18,6 +22,49 @@ if [ "$WARN" -gt 0 ]; then
     echo "FAIL warnings=$WARN: $(grep -m3 -A2 -E '^warning' "$BUILD_LOG" | tr '\n' ' ' | cut -c1-400)"; exit 1
 fi
 [ "$MODE" = "quick" ] && { echo "OK build (0 warnings)"; exit 0; }
+
+# --- VPS (UEFI) sinovi: ESP disk (EFI/BOOT/BOOTAA64.EFI) + tizim diski, faqat PCI qurilmalar ---
+vps_test() {
+    local kernel=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel
+    local fw="" f
+    for f in /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/AAVMF/AAVMF_CODE.fd; do
+        [ -f "$f" ] && { fw=$f; break; }
+    done
+    [ -n "$fw" ] || { echo "SKIP vps: UEFI firmware yöq (qemu-efi-aarch64)"; return 2; }
+    local esp sys log=$LOG_DIR/verify-vps.log
+    esp=$(mktemp /tmp/zamin-esp-XXXX.img); sys=$(mktemp /tmp/zamin-vps-XXXX.img)
+    if ! sh scripts/efi/mkesp.sh "$kernel" "$esp" >"$LOG_DIR/verify-mkesp.log" 2>&1; then
+        echo "FAIL vps: ESP yasalmadi ($(tail -1 "$LOG_DIR/verify-mkesp.log"))"; rm -f "$esp" "$sys"; return 1
+    fi
+    truncate -s 128M "$sys"; : >"$log"
+    timeout 150 qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -m 1G -smp 4 -nographic \
+        -bios "$fw" \
+        -drive "file=$esp,if=none,format=raw,id=esp" -device virtio-blk-pci,drive=esp,bootindex=0 \
+        -drive "file=$sys,if=none,format=raw,id=sys" -device virtio-blk-pci,drive=sys \
+        -device virtio-rng-pci -nic user,model=virtio-net-pci </dev/null >"$log" 2>&1 &
+    local qpid=$! res="FAIL vps: timeout (til tanlaş ekrani çiqmadi, qarang $log)"
+    for _ in $(seq 1 140); do
+        sleep 1
+        if grep -qaiE 'panic|yiqildi' "$log"; then
+            res="FAIL vps: $(grep -aiE -m2 'panic|yiqildi' "$log" | tr -d '\r' | tr '\n' ' ' | cut -c1-300)"; break
+        fi
+        if grep -qaE 'Choose your language' "$log"; then
+            if ! grep -qa 'UEFI: xotira xaritasi' "$log"; then res="FAIL vps: EFI yöli işlamadi (yadro boşqa yöl bilan yuklandi?)"
+            elif ! grep -qaE 'GICv3' "$log"; then res="FAIL vps: GICv3 aniqlanmadi"
+            elif ! grep -qaE '\[disk\] virtio-blk' "$log"; then res="FAIL vps: virtio-blk-pci disk topilmadi"
+            elif ! grep -qaE 'uziliş orqali tugadi' "$log"; then res="FAIL vps: PCI disk uzilişi sinovi ötmadi"
+            else res="OK vps: UEFI (BOOTAA64.EFI) → GICv3, virtio-pci, til tanlaş ekrani ($(grep -acE '\[ok\]|— OK' "$log") self-test)"; fi
+            break
+        fi
+        kill -0 $qpid 2>/dev/null || { res="FAIL vps: qemu erta çiqdi"; break; }
+    done
+    kill $qpid 2>/dev/null; wait $qpid 2>/dev/null; rm -f "$esp" "$sys"
+    echo "$res"
+    [[ "$res" == OK* ]]
+}
+if [ "$MODE" = "vps" ]; then
+    vps_test; rc=$?; [ $rc -eq 2 ] && exit 0; exit $rc
+fi
 
 # --- Yuklaniş sinovi: toza disk, faqat seriya port ---
 KERNEL=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel
@@ -76,3 +123,8 @@ if python3 scripts/agent/check_corners.py "$CDIR/selftest.png" >"$CDIR/selftest.
     echo "FAIL burçaklar: qora pikselli surat tekşiruvdan ötib ketdi (check_corners.py buzilgan)"; exit 1
 fi
 echo "[ok] burchaklar: ${#SHOTS[@]} surat toza"
+
+# --- VPS (UEFI) yuklaniş ---
+vps_test; rc=$?
+[ $rc -eq 1 ] && exit 1
+exit 0

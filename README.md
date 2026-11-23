@@ -637,6 +637,48 @@ unda tizim sozlamalari saqlanadi.
 Işga tuşgaç **Zamin terminali** oçiladi (`zamin>`). `yordam` buyruqlar röyxatini
 körsatadi, `öçir` (yoki `ochir`) tizimni öçiradi. Majburan çiqiş: `Ctrl+A`, keyin `X`.
 
+## UEFI yuklaniş (VPS: BOOTAA64.EFI)
+
+Yadro tasvirining özi UEFI ilovasi böla oladi — Netcup ARM VPS kabi UEFI firmware'li
+maşinalar uçun. `scripts/efi/mkesp.sh` ELF yadrodan **PE32+/COFF** fayl (`BOOTAA64.EFI`)
+va uni `EFI/BOOT/` ga joylagan **FAT32** disk obrazini yasaydi (faqat Python standart
+kutubxonasi — mtools/mkfs kerak emas):
+
+```bash
+cargo build && scripts/efi/mkesp.sh          # → target/BOOTAA64.EFI, target/zamin-esp.img
+truncate -s 256M target/vps-disk.img
+qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -m 1G -smp 4 -nographic \
+    -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+    -drive file=target/zamin-esp.img,if=none,format=raw,id=esp -device virtio-blk-pci,drive=esp \
+    -drive file=target/vps-disk.img,if=none,format=raw,id=d -device virtio-blk-pci,drive=d \
+    -device virtio-rng-pci -nic user,model=virtio-net-pci
+```
+
+Qanday işlaydi:
+
+- **EFI stub** (`src/efi.rs`): PE sarlavhasi tasvir bazasini yadro bağlangan manzildan
+  64 KiB oldinga qöyadi va relokatsiyalarni "olib taşlangan" deb belgilaydi — firmware
+  yadroni aynan `0x4020_0000` ga yuklaydi, kod özgarişsiz işlaydi.
+- `efi_main`: EFI konfiguratsiya jadvalidan **DTB** ni oladi; DTB bölmasa (EDK2 ACPI
+  rejimida uni bermaydi) — **ACPI** jadvallaridan (MADT → GIC, SPCR → UART, MCFG → PCIe,
+  FADT → PSCI usuli) kiçik DTB yasaydi. Keyin **xotira xaritasi** öqiladi (runtime, ACPI,
+  band hududlar frame allokatoriga "band" deb uzatiladi), `ExitBootServices`, keş
+  tozalanadi, MMU öçiriladi va odatiy `_start` ga ötiladi (x0 = DTB).
+- Qattiq yozilgan manzillar endi **DTB dan**: UART (`arm,pl011`), GIC (v2 yoki v3), RAM
+  boşi/hajmi, PCIe ECAM.
+- **GICv3** (`src/gic.rs`): distributor + har yadroning redistributori, `ICC_*` tizim
+  registrlari, SGI (`ICC_SGI1R_EL1`). GICv2 ham işlaydi — versiya DTB dan tanlanadi.
+- **PCIe / virtio-pci** (`src/drivers/pci.rs`, `virtio.rs`): ECAM orqali sanaş, zamonaviy
+  virtio-pci (common/notify/isr/device capability lari), INTx uzilişlari. Birinçi 1 GiB dan
+  taşqaridagi qurilmalar (ECAM `0x40_1000_0000`, 64-bit BAR lar) `mmu::ioremap` bilan
+  yadro VA oynasiga xaritalanadi. Firmware bölmasa (`-kernel`), BAR lar DTB `ranges` dan
+  tayinlanadi. PCI orqali: **disk, tarmoq, GPU, rng**; klaviatura/siçqonça va övoz hozirça
+  faqat virtio-mmio.
+- Eski yöl (`-kernel`, GICv2, virtio-mmio) özgarmadi.
+
+Sinov: `scripts/agent/verify.sh vps` (ESP yasaydi, QEMU_EFI.fd bilan yuklaydi, til tanlaş
+ekranigaça, GICv3 va PCI disk uzilişi tekşiriladi); `verify.sh full` ham uni işlatadi.
+
 ## Birinçi işga tuşiriş
 
 Tizim birinçi marta yoqilganda **birinçi sozlaş** boşlanadi:
@@ -1018,11 +1060,13 @@ src/uart.rs          PL011 UART drayveri, print!/println!
 src/exceptions.rs    Istisnolarni qayta işlaş (ESR/ELR/FAR)
 src/power.rs         PSCI: öçiriş / qayta yuklaş
 src/sync.rs          SpinLock
-src/dtb.rs           Device Tree öquvçisi (RAM hajmi, til, PSCI usuli)
+src/dtb.rs           Device Tree öquvçisi (RAM, UART, GIC, PCIe, til, PSCI usuli)
 src/memory/frame.rs  Fizik sahifa allokatori (bitmap)
 src/memory/mmu.rs    MMU, sahifa jadvallari, map/unmap/translate
 src/memory/heap.rs   Kernel heap (free list) — Box/Vec/String işlaydi
-src/gic.rs           GICv2 uzilişlar boşqaruvçisi
+src/gic.rs           GICv2/GICv3 uzilişlar boşqaruvçisi (versiya DTB dan)
+src/efi.rs           UEFI kiriş nuqtasi: DTB/ACPI, xotira xaritasi, ExitBootServices
+src/drivers/pci.rs   PCIe ECAM: sanaş, BAR lar, virtio-pci qurilmalari
 src/timer.rs         ARM taymeri (100 Hz)
 src/irq.rs           Uzilişlarni drayverlarga tarqatiş
 src/task/mod.rs      Jarayonlar va rejalaştiruvçi (round-robin, 10 ms)
@@ -1091,6 +1135,7 @@ user/src/bin/terminal.rs  Zamin terminali (foydalanuvçi rejimida)
 - [x] **9. Grafika** — virtio-gpu framebuffer, şrift, oynalar menejeri, grafik terminal, sichqoncha/klaviatura
 - [x] **9½. Media** — rasm (16+ format), audio (WAV/AIFF/FLAC/MP3/OGG-Vorbis + ADPCM/μ-law/A-law), video (MJPEG/AVI dekod; MP4/MOV/MKV/WebM taniş) — hammasi noldan, ffmpeg bilan tekşirilgan
 - [ ] **10. Foydalanuvçi muhiti** — Zamin terminali, Zamin paneli, ilovalar (davom etmoqda)
+- [ ] **10½. VPS porti** — UEFI yuklaniş (BOOTAA64.EFI), GICv3, virtio-pci, ACPI zaxira yöli (davom etmoqda)
 - [ ] **11. Haqiqiy apparat** — Raspberry Pi 4/5 porti
 
 ## Grafika

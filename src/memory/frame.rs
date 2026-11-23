@@ -99,6 +99,23 @@ pub fn init(ram_start: usize, ram_size: usize, reserved_end: usize) {
     *FRAMES.lock() = Some(fa);
 }
 
+/// [start, end) dagi sahifalarni band deb belgilaydi (masalan, EFI runtime / ACPI hududlari).
+pub fn reserve(start: usize, end: usize) {
+    with(|fa| {
+        let lo = start.max(fa.base);
+        let hi = end.min(fa.base + fa.pages * PAGE_SIZE);
+        let mut pa = lo & !(PAGE_SIZE - 1);
+        while pa < hi {
+            let i = (pa - fa.base) / PAGE_SIZE;
+            if !fa.is_used(i) {
+                fa.set(i, true);
+                fa.free -= 1;
+            }
+            pa += PAGE_SIZE;
+        }
+    })
+}
+
 fn with<R>(f: impl FnOnce(&mut FrameAllocator) -> R) -> R {
     f(FRAMES.lock().as_mut().expect("frame allokatori işga tuşirilmagan"))
 }

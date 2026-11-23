@@ -93,8 +93,9 @@ pub fn init() -> Option<u64> {
     SYS_INDEX.store(idx as u32, Ordering::Release);
     let req = frame::alloc_zeroed()?;
     let data = frame::alloc_zeroed()?;
-    DISK_BASE.store(t.base(), Ordering::Release);
+    DISK_BASE.store(t.ack_handle(), Ordering::Release);
     DISK_IRQ.store(t.irq(), Ordering::Release);
+    t.enable_irq();
     crate::gic::enable(t.irq());
     *DISK.lock() = Some(VirtioBlk { t, capacity, req, data });
     CAPACITY.store(capacity, Ordering::Release);

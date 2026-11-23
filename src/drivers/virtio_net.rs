@@ -92,7 +92,10 @@ impl Queue {
 }
 
 struct Net {
+    /// virtio-mmio registrlari boşi (PCI da 0)
     base: usize,
+    /// virtio-pci: (rx notify, tx notify, ISR | 1)
+    pci: Option<(usize, usize, usize)>,
     mac: [u8; 6],
     hdr: usize,
     rx: Queue,
@@ -155,7 +158,18 @@ impl Net {
         unsafe { write_volatile(self.rx.avail().add(1), QSIZE as u16) };
         self.rx.avail_idx = QSIZE as u16;
         barrier();
-        self.wr(QUEUE_NOTIFY, 0);
+        self.notify(0);
+    }
+
+    fn notify(&self, q: u32) {
+        match self.pci {
+            Some((rx, tx, _)) => super::virtio::pci_notify(if q == 0 { rx } else { tx }, q as u16),
+            None => self.wr(QUEUE_NOTIFY, q),
+        }
+    }
+
+    fn ack_handle(&self) -> usize {
+        self.pci.map_or(self.base, |p| p.2)
     }
 
     /// Kelgan kadrlarni INBOX ga köçiradi va buferlarni qayta navbatga qöyadi.
@@ -188,7 +202,7 @@ impl Net {
         barrier();
         unsafe { write_volatile(self.rx.avail().add(1), self.rx.avail_idx) };
         barrier();
-        self.wr(QUEUE_NOTIFY, 0);
+        self.notify(0);
         out
     }
 
@@ -214,7 +228,7 @@ impl Net {
             write_volatile(a.add(1), idx.wrapping_add(1));
         }
         barrier();
-        self.wr(QUEUE_NOTIFY, 1);
+        self.notify(1);
         // Jönatilgunça kutamiz
         let used = self.tx.used();
         while unsafe { read_volatile((used + 2) as *const u16) } == self.tx.last_used {
@@ -226,10 +240,12 @@ impl Net {
 
 /// Qurilmani topadi va işga tuşiradi. Natija: MAC manzil.
 pub fn init() -> Option<[u8; 6]> {
-    let base = (0..MMIO_SLOTS).map(|i| MMIO_BASE + i * MMIO_STRIDE).find(|&b| unsafe {
+    let Some(base) = (0..MMIO_SLOTS).map(|i| MMIO_BASE + i * MMIO_STRIDE).find(|&b| unsafe {
         read_volatile(b as *const u32) == 0x7472_6976 && read_volatile((b + DEVICE_ID) as *const u32) == DEVICE_NET
-    })?;
-    let mut net = Net { base, mac: [0; 6], hdr: 12, rx: Queue::new()?, tx: Queue::new()? };
+    }) else {
+        return init_pci();
+    };
+    let mut net = Net { base, pci: None, mac: [0; 6], hdr: 12, rx: Queue::new()?, tx: Queue::new()? };
     let version = net.rd(0x004);
     net.hdr = if version >= 2 { 12 } else { 10 };
 
@@ -265,6 +281,29 @@ pub fn init() -> Option<[u8; 6]> {
     Some(mac)
 }
 
+/// virtio-net-pci (zamonaviy interfeys, sarlavha 12 bayt).
+fn init_pci() -> Option<[u8; 6]> {
+    let c = super::virtio::PciCaps::find(DEVICE_NET, 0)?;
+    c.begin(VIRTIO_NET_F_MAC)?;
+    let (rx, tx) = (Queue::new()?, Queue::new()?);
+    let rxn = c.setup_queue(0, QSIZE, rx.mem, rx.avail() as usize, rx.used())?;
+    let txn = c.setup_queue(1, QSIZE, tx.mem, tx.avail() as usize, tx.used())?;
+    let mut net = Net { base: 0, pci: Some((rxn, txn, c.isr | 1)), mac: [0; 6], hdr: 12, rx, tx };
+    if c.device != 0 {
+        for i in 0..6 {
+            net.mac[i] = unsafe { read_volatile((c.device + i) as *const u8) };
+        }
+    }
+    c.driver_ok();
+    net.fill_rx();
+    let mac = net.mac;
+    IRQ.store(c.irq, core::sync::atomic::Ordering::Release);
+    super::pci::set_intx(c.cfg, true);
+    crate::gic::enable(c.irq);
+    *NET.lock() = Some(net);
+    Some(mac)
+}
+
 pub fn present() -> bool {
     NET.lock().is_some()
 }
@@ -282,7 +321,7 @@ pub fn handle_irq() {
     let frames = {
         let mut g = NET.lock();
         let Some(n) = g.as_mut() else { return };
-        super::virtio::ack_interrupt(n.base);
+        super::virtio::ack_interrupt(n.ack_handle());
         n.drain_rx()
     };
     if !frames.is_empty() {

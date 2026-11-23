@@ -63,8 +63,8 @@ impl Fdt {
     }
 
     /// Daraxtdagi har bir xususiyat (property) uçun `f(çuqurlik, tugun_nomi, xususiyat, qiymat)`.
-    pub fn for_each_prop(&self, mut f: impl FnMut(usize, &str, &str, &'static [u8])) {
-        let mut names: [&str; MAX_DEPTH] = [""; MAX_DEPTH];
+    pub fn for_each_prop(&self, mut f: impl FnMut(usize, &'static str, &str, &'static [u8])) {
+        let mut names: [&'static str; MAX_DEPTH] = [""; MAX_DEPTH];
         let mut depth = 0usize;
         let mut p = unsafe { self.base.add(self.struct_off) };
         let end = unsafe { p.add(self.struct_size) };
@@ -129,6 +129,76 @@ impl Fdt {
                 found = Some(val);
             }
         });
+        found
+    }
+}
+
+/// `compatible` böyiça topilgan qurilma tuguni.
+#[derive(Clone, Copy, Default)]
+pub struct Node {
+    /// `reg` juftliklari (manzil, hajm) — ota tugunning #address-cells/#size-cells böyiça.
+    pub reg: [(u64, u64); 4],
+    pub nreg: usize,
+    /// `interrupts` ning birinçi uçligi (tur, raqam, bayroqlar) — bölsa.
+    pub irq: Option<(u32, u32)>,
+    /// `ranges` (PCI host uçun xom baytlar).
+    pub ranges: &'static [u8],
+    /// `interrupt-map` (PCI host uçun xom baytlar).
+    pub irq_map: &'static [u8],
+}
+
+impl Fdt {
+    /// `compatible` ro'yxatida `compat` bölgan, `status` "okay" (yoki yöq) bölgan birinçi tugun.
+    /// Faqat yuqori darajadagi (ildiz bolalari) tugunlar va ildiz #address/#size-cells.
+    pub fn find_compatible(&self, compat: &str) -> Option<Node> {
+        let (mut ac, mut sc) = (2usize, 1usize);
+        let mut found: Option<Node> = None;
+        let mut cur_node: &'static str = "";
+        let mut cur = Node::default();
+        let (mut cur_match, mut cur_disabled, mut cur_reg): (bool, bool, &'static [u8]) = (false, false, &[]);
+        let finish = |name: &str, m: bool, dis: bool, reg: &'static [u8], n: &mut Node, found: &mut Option<Node>, ac: usize, sc: usize| {
+            if !m || dis || found.is_some() || name.is_empty() {
+                return;
+            }
+            let step = (ac + sc) * 4;
+            let mut k = 0;
+            while k < 4 && (k + 1) * step <= reg.len() {
+                let e = &reg[k * step..];
+                n.reg[k] = (be_cells(e, ac), be_cells(&e[ac * 4..], sc));
+                k += 1;
+            }
+            n.nreg = k;
+            *found = Some(*n);
+        };
+        self.for_each_prop(|depth, node, prop, val| {
+            if depth == 1 {
+                if prop == "#address-cells" {
+                    ac = be_cells(val, 1) as usize;
+                } else if prop == "#size-cells" {
+                    sc = be_cells(val, 1) as usize;
+                }
+                return;
+            }
+            if depth != 2 {
+                return;
+            }
+            if !core::ptr::eq(node, cur_node) {
+                finish(cur_node, cur_match, cur_disabled, cur_reg, &mut cur, &mut found, ac, sc);
+                cur_node = node;
+                cur = Node::default();
+                (cur_match, cur_disabled, cur_reg) = (false, false, &[]);
+            }
+            match prop {
+                "compatible" => cur_match = val.split(|&b| b == 0).any(|s| s == compat.as_bytes()),
+                "status" => cur_disabled = !(val.starts_with(b"okay") || val.starts_with(b"ok")),
+                "reg" => cur_reg = val,
+                "ranges" => cur.ranges = val,
+                "interrupt-map" => cur.irq_map = val,
+                "interrupts" if val.len() >= 12 => cur.irq = Some((be_cells(val, 1) as u32, be_cells(&val[4..], 1) as u32)),
+                _ => {}
+            }
+        });
+        finish(cur_node, cur_match, cur_disabled, cur_reg, &mut cur, &mut found, ac, sc);
         found
     }
 }

@@ -128,7 +128,7 @@ pub fn init(ram_start: usize, ram_size: usize) {
         write_volatile(l1, VALID | AF | Kind::Device.bits());
         // RAM: 1 GiB bloklar; yadro joylaşgan GiB — mayda sahifalarga bölinadi.
         let first = ram_start / GIB;
-        let last = ((ram_start + ram_size - 1) / GIB).min(USER_L1_FIRST - 1);
+        let last = ((ram_start + ram_size - 1) / GIB).min(IOREMAP_FIRST - 1);
         for i in first..=last {
             if i != kernel_gib {
                 write_volatile(l1.add(i), (i * GIB) as u64 | data_block);
@@ -166,7 +166,68 @@ pub fn init(ram_start: usize, ram_size: usize) {
         write_volatile(l1.add(KSTACK_BASE / GIB), kl2 as u64 | VALID | TABLE_OR_PAGE);
 
     }
+    invalidate_kernel_dcache();
     enable_this_cpu();
+}
+
+/// Birinçi 1 GiB dan taşqaridagi qurilma hududlari (PCIe ECAM 0x40_1000_0000, 64-bit BAR lar
+/// 0x80_0000_0000…) uçun yadro yarmidagi VA oynasi: L1 indeks 128..192 (har biri 1 GiB blok).
+/// Bu manzillar foydalanuvçi yarmiga yoki 39-bit VA dan taşqariga tuşadi — identity bölmaydi.
+const IOREMAP_FIRST: usize = 128;
+const IOREMAP_LAST: usize = KSTACK_BASE / GIB; // 192 (kiritilmaydi)
+static IOREMAP: crate::sync::SpinLock<[usize; IOREMAP_LAST - IOREMAP_FIRST]> =
+    crate::sync::SpinLock::new([usize::MAX; IOREMAP_LAST - IOREMAP_FIRST]);
+
+/// Qurilma registrlari hududini [pa, pa+size) yadro VA ga xaritalaydi (Device-nGnRnE).
+/// Birinçi 1 GiB — identity. Jarayonlar yaratilişidan OLDIN çaqiriliși kerak (ular yadro
+/// yarmining nusxasini oladi). Natija: `pa` ga mos VA (joy tugasa — None).
+pub fn ioremap(pa: usize, size: usize) -> Option<usize> {
+    if pa + size <= GIB {
+        return Some(pa);
+    }
+    let first_gib = pa / GIB;
+    let last_gib = (pa + size.max(1) - 1) / GIB;
+    let n = last_gib - first_gib + 1;
+    let mut slots = IOREMAP.lock();
+    // allaqaçon xaritalanganmi (ketma-ket)
+    for s in 0..slots.len() {
+        if slots[s] == first_gib && (0..n).all(|k| s + k < slots.len() && slots[s + k] == first_gib + k) {
+            return Some((IOREMAP_FIRST + s) * GIB + pa % GIB);
+        }
+    }
+    let start = (0..slots.len()).find(|&s| (0..n).all(|k| s + k < slots.len() && slots[s + k] == usize::MAX))?;
+    let l1 = kernel_root();
+    for k in 0..n {
+        slots[start + k] = first_gib + k;
+        let idx = IOREMAP_FIRST + start + k;
+        unsafe {
+            assert!(read_volatile(l1.add(idx)) == 0, "ioremap: L1 {} band", idx);
+            write_volatile(l1.add(idx), ((first_gib + k) * GIB) as u64 | VALID | AF | Kind::Device.bits());
+        }
+    }
+    unsafe { asm!("dsb ishst", "isb") };
+    Some((IOREMAP_FIRST + start) * GIB + pa % GIB)
+}
+
+/// Keş yoqilişidan oldin: yadro tasviri (.bss, steklar, sahifa jadvallari — MMU öçiq holda
+/// töğridan-töğri xotiraga yozilgan) uçun keşdagi eski qatorlarni bekor qiladi. UEFI dan
+/// kelganda (u keşni yoqib işlagan) spekulyativ öqilgan eski qatorlar qolişi mumkin —
+/// aks holda MMU yoqilgaç jadvallar/maʼlumotlar eski qiymat bilan körinadi (KVM da).
+fn invalidate_kernel_dcache() {
+    unsafe extern "C" {
+        static __kernel_start: u8;
+        static __kernel_end: u8;
+    }
+    let (mut a, end) = (&raw const __kernel_start as usize, &raw const __kernel_end as usize);
+    let ctr: u64;
+    unsafe { asm!("mrs {}, ctr_el0", out(reg) ctr) };
+    let line = 4usize << ((ctr >> 16) & 0xf);
+    a &= !(line - 1);
+    while a < end {
+        unsafe { asm!("dc ivac, {}", in(reg) a) };
+        a += line;
+    }
+    unsafe { asm!("dsb sy", "isb") };
 }
 
 /// MMU, keşlar va WXN ni joriy yadroda yoqadi (birinçi va ikkilamçi yadrolar uçun).

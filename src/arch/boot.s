@@ -10,6 +10,7 @@
 .section .text.boot
 .global _start
 _start:
+    mov     x20, x0                 // DTB manzili (EFI yuklovçidan; -kernel da 0)
     mrs     x1, mpidr_el1
     and     x1, x1, #0xff
     cbnz    x1, park
@@ -32,6 +33,13 @@ common_entry:
     mov     x0, #3                  // EL1 ga fizik taymer va hisoblagiçni ruxsat
     msr     cnthctl_el2, x0
     msr     cntvoff_el2, xzr
+    mrs     x0, id_aa64pfr0_el1     // GICv3 tizim registrlari bormi?
+    ubfx    x0, x0, #24, #4
+    cbz     x0, no_gicv3
+    mov     x0, #0xf                // ICC_SRE_EL2: SRE + EL1 ga ruxsat
+    msr     S3_4_C12_C9_5, x0
+    isb
+no_gicv3:
     mov     x0, #0x0800
     movk    x0, #0x30d0, lsl #16    // SCTLR_EL1: MMU öçiq, RES1 bitlar
     msr     sctlr_el1, x0
@@ -61,7 +69,8 @@ el1_entry:
     b.hs    2f
     str     xzr, [x0], #8
     b       1b
-2:  bl      kernel_main
+2:  mov     x0, x20
+    bl      kernel_main
 
 3:  mov     x0, x19
     bl      secondary_main
@@ -69,3 +78,50 @@ el1_entry:
 park:
     wfe
     b       park
+
+// UEFI kiriş nuqtasi (PE AddressOfEntryPoint, qarang: scripts/efi/mkefi.py):
+// x0 = ImageHandle, x1 = SystemTable — töğridan-töğri Rust `efi_main` ga.
+.global efi_entry
+efi_entry:
+    b       efi_main
+
+// EFI yuklovçidan ötiş: x0 = DTB, [x1, x2) — keşdan xotiraga tozalanadigan soha (yadro tasviri).
+// Uzilişlar öçiriladi, maʼlumot keşi tozalanadi, MMU va keşlar öçiriladi, keyin `_start`.
+.section .text
+.global efi_handoff
+efi_handoff:
+    msr     daifset, #0xf
+    mrs     x3, ctr_el0
+    ubfx    x3, x3, #16, #4         // DminLine: log2(söz soni)
+    mov     x4, #4
+    lsl     x4, x4, x3              // keş qatori (bayt)
+    sub     x5, x4, #1
+    bic     x1, x1, x5
+1:  dc      civac, x1
+    add     x1, x1, x4
+    cmp     x1, x2
+    b.lo    1b
+    dsb     sy
+    mrs     x3, CurrentEL
+    cmp     x3, #8
+    b.eq    2f
+    mrs     x3, sctlr_el1
+    bic     x3, x3, #1              // M
+    bic     x3, x3, #(1 << 2)       // C
+    bic     x3, x3, #(1 << 12)      // I
+    msr     sctlr_el1, x3
+    isb
+    ic      iallu
+    tlbi    vmalle1
+    b       3f
+2:  mrs     x3, sctlr_el2
+    bic     x3, x3, #1
+    bic     x3, x3, #(1 << 2)
+    bic     x3, x3, #(1 << 12)
+    msr     sctlr_el2, x3
+    isb
+    ic      iallu
+    tlbi    alle2
+3:  dsb     sy
+    isb
+    b       _start

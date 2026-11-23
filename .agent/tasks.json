@@ -237,7 +237,9 @@
       "id": "T30",
       "title": "UEFI yuklanish: yadroni EFI ilovasi (BOOTAA64.EFI) qilib yuklash",
       "detail": "Yadro tasviriga PE/COFF (EFI stub) sarlavha qo'sh yoki alohida kichik EFI yuklovchi yoz (faqat core, tashqi crate yo'q). EFI dan xotira xaritasi va DTB (EFI configuration table, DTB GUID) ol, ExitBootServices, keyin mavjud kirish nuqtasiga o't. Xotira manzillari qattiq yozilgan joylarni (RAM boshi, UART 0x0900_0000) DTB dan o'qiladigan qil. Sinov: FAT disk (mtools yoki o'z skripting bilan) EFI/BOOT/BOOTAA64.EFI, til tanlash ekranigacha yetadi. Sinov muhiti (Netcup VPS 500 ARM G12.5 ga o'xshash): qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd (yoki /usr/share/AAVMF/AAVMF_CODE.fd pflash), virtio-*-pci qurilmalar. Eski yo'l (-kernel, GICv2, virtio-mmio) BUZILMASLIGI shart — verify.sh full o'tsin. Yangi sinovni scripts/agent/verify.sh ga qo'sh (vps rejimi).",
-      "batch": 5
+      "batch": 5,
+      "status": "done",
+      "done_at": "2026-11-23 19:07:08"
     },
     {
       "id": "T31",

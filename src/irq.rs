@@ -30,10 +30,17 @@ pub fn handle() {
         }
         match id {
             timer::IRQ => timer::handle_irq(),
-            uart::IRQ => uart::handle_irq(),
+            id if id == uart::irq() => uart::handle_irq(),
             SGI_RESCHEDULE => {} // pastda preempt() — yangi vazifani olamiz
-            id if id == crate::drivers::virtio_blk::irq() => crate::drivers::virtio_blk::handle_irq(),
-            id if id == crate::drivers::virtio_net::irq() && id != 0 => crate::drivers::virtio_net::handle_irq(),
+            // virtio-pci INTx liniyalari umumiy bölişi mumkin — ikkala drayver ham tekşiriladi
+            id if id == crate::drivers::virtio_blk::irq() || (id == crate::drivers::virtio_net::irq() && id != 0) => {
+                if id == crate::drivers::virtio_blk::irq() {
+                    crate::drivers::virtio_blk::handle_irq();
+                }
+                if id == crate::drivers::virtio_net::irq() {
+                    crate::drivers::virtio_net::handle_irq();
+                }
+            }
             _ => crate::tprintln!(crate::i18n::msg::IRQ_UNKNOWN, id),
         }
         gic::end_of_interrupt(iar);

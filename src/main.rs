@@ -15,6 +15,7 @@ mod crypto;
 mod drivers;
 mod dtb;
 mod edit;
+mod efi;
 mod exceptions;
 mod fs;
 mod gfx;
@@ -86,12 +87,24 @@ fn current_el() -> u64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kernel_main() -> ! {
+pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
+    // 1) Device Tree: EFI yuklovçi manzilini x0 da beradi; `-kernel` da QEMU uni RAM boşiga qöyadi.
+    //    Undan: UART va GIC manzillari, RAM hajmi, til (bootargs: `til=ru`), PSCI usuli.
+    //    x0 faqat RAM dagi tekislangan manzil bölsa işlatiladi (aks holda — QEMU standarti).
+    let dtb_ok = dtb_addr % 8 == 0 && (RAM_START..1 << 48).contains(&dtb_addr);
+    let fdt = unsafe { dtb::Fdt::from_addr(if dtb_ok { dtb_addr } else { RAM_START }) }
+        .or_else(|| unsafe { dtb::Fdt::from_addr(RAM_START) });
+    if let Some(u) = fdt.as_ref().and_then(|f| f.find_compatible("arm,pl011")) {
+        if u.nreg > 0 {
+            uart::configure(u.reg[0].0 as usize, u.irq.filter(|i| i.0 == 0).map(|i| i.1 + 32));
+        }
+    }
+    if let Some(f) = fdt.as_ref() {
+        gic::configure(f);
+    }
     uart::console().init();
     exceptions::init();
-
-    // 1) Device Tree: RAM hajmi, til (bootargs: `til=ru`), PSCI usuli
-    let fdt = unsafe { dtb::Fdt::from_addr(RAM_START) };
+    let efi = efi::boot_info();
     if let Some(lang) = fdt.as_ref().and_then(boot_lang) {
         i18n::set(lang);
     }
@@ -104,7 +117,18 @@ pub extern "C" fn kernel_main() -> ! {
     tprintln!(msg::BOOT_LANG, i18n::pick(&msg::LANG_NAME));
     tprintln!(msg::BOOT_EL, current_el());
 
-    let (ram_start, ram_size) = match fdt.and_then(|f| f.memory()) {
+    if let Some(e) = efi {
+        println!(
+            "  UEFI: xotira xaritasi {} hudud, oddiy RAM {:#x}..{:#x}, band {} hudud; GICv{}",
+            e.efi_regions, e.ram_lo, e.ram_hi, e.reserved_count, gic::version()
+        );
+    }
+    let efi_ram = efi.filter(|e| e.ram_hi > e.ram_lo).map(|e| {
+        // Yadro joylaşgan 1 GiB dan boşlab (yadro bağlangan manzil RAM boşiga bağliq)
+        let lo = (e.ram_lo as usize).min(RAM_START);
+        (lo, e.ram_hi as usize - lo)
+    });
+    let (ram_start, ram_size) = match fdt.and_then(|f| f.memory()).or(efi_ram) {
         Some(m) => m,
         None => {
             tprintln!(msg::DTB_MISSING);
@@ -137,12 +161,34 @@ pub extern "C" fn kernel_main() -> ! {
 
     // 3) Fizik sahifa allokatori
     frame::init(ram_start, ram_size, kend);
+    if let Some(e) = efi {
+        for &[a, b] in &e.reserved[..e.reserved_count as usize] {
+            frame::reserve(a as usize, b as usize);
+        }
+    }
     let (free, total) = frame::stats();
     tprintln!(msg::MEM_FRAMES, free, total);
 
     // 4) Kernel heap
     heap::init();
     tprintln!(msg::HEAP_READY, heap::stats().1 >> 20);
+
+    // PCIe (bölsa): virtio-pci qurilmalari — MMU dan keyin, jarayonlardan oldin (ECAM/BAR xaritasi)
+    if drivers::pci::init(fdt.as_ref()) > 0 {
+        let names: Vec<&str> = drivers::pci::virtio_types()
+            .iter()
+            .map(|t| match t {
+                1 => "net",
+                2 => "blk",
+                4 => "rng",
+                16 => "gpu",
+                18 => "input",
+                25 => "sound",
+                _ => "?",
+            })
+            .collect();
+        println!("  PCIe: virtio-pci qurilmalari: {}", names.join(", "));
+    }
 
     // 5) Uzilişlar va taymer
     irq::init();

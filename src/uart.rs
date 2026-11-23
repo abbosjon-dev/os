@@ -2,9 +2,12 @@
 //! Heç qanday taşqi crate yöq — töğridan-töğri registrlar bilan işlaymiz.
 
 use core::fmt;
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use core::ptr::{read_volatile, write_volatile};
 
-const UART0_BASE: usize = 0x0900_0000;
+/// Standart manzil (QEMU virt); DTB dagi `arm,pl011` tuguni bölsa — `configure` almaştiradi.
+static UART0_BASE: AtomicUsize = AtomicUsize::new(0x0900_0000);
+static UART_IRQ: AtomicU32 = AtomicU32::new(33);
 
 // Registr offsetlari
 const DR: usize = 0x00; // Data
@@ -16,8 +19,18 @@ const CR: usize = 0x30;
 const IMSC: usize = 0x38;
 const ICR: usize = 0x44;
 
-/// PL011 uzilişi: SPI 1 -> INTID 33.
-pub const IRQ: u32 = 33;
+/// DTB dan PL011 manzili va uzilişi (SPI n → INTID 32+n). `init` dan oldin çaqiriladi.
+pub fn configure(base: usize, irq: Option<u32>) {
+    UART0_BASE.store(base, Ordering::Relaxed);
+    if let Some(i) = irq {
+        UART_IRQ.store(i, Ordering::Relaxed);
+    }
+}
+
+/// PL011 uzilişi (QEMU virt: SPI 1 → INTID 33).
+pub fn irq() -> u32 {
+    UART_IRQ.load(Ordering::Relaxed)
+}
 const INT_RX: u32 = 1 << 4;
 const INT_RT: u32 = 1 << 6; // qabul qiliş taym-auti
 
@@ -117,7 +130,7 @@ mod rx {
 pub fn enable_rx_irq() {
     let u = console();
     unsafe { write_volatile(u.reg(IMSC), INT_RX | INT_RT) };
-    crate::gic::enable(IRQ);
+    crate::gic::enable(irq());
 }
 
 pub fn handle_irq() {
@@ -175,7 +188,7 @@ pub fn has_input() -> bool {
 /// Global konsol. Hozirça bitta yadro işlaydi, şuning uçun qulf kerak emas;
 /// SMP qöşilganda bu yerga özimizning spinlockʼimizni qöyamiz.
 pub fn console() -> Uart {
-    Uart::new(UART0_BASE)
+    Uart::new(UART0_BASE.load(Ordering::Relaxed))
 }
 
 #[doc(hidden)]

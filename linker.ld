@@ -44,6 +44,14 @@ SECTIONS
     __emergency_stacks = .;
     . += 4 * 0x10000;
 
+    /* EFI yuklovçi maʼlumotlari (qarang: efi.rs): .bss dan taşqarida — `_start` nollamaydi. */
+    . = ALIGN(0x1000);
+    __bootinfo = .;
+    . += 0x2000;
+    __boot_dtb = .;
+    . += 0x200000;
+    __boot_dtb_end = .;
+
     __kernel_end = .;
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
