@@ -721,6 +721,22 @@ Qanday işlaydi:
   Ular virtio-input bilan **bir navbatda** (`input::poll`) keladi, GUI farqni bilmaydi.
   Jurnalda: `xHCI: 8 port, usb-kbd, usb-tablet`; self-test `[ok] USB HID: …`
   (modifikatorlar, 6 tugmali rollover, böşatiş, planşet şkalasi).
+- **GOP zaxira ekrani** (`src/drivers/fb.rs`): VPS virtio-gpu bermasa (masalan `ramfb`
+  yoki firmware GOP ni boşqa displey bilan bergan bölsa) ekran endi qora qolmaydi.
+  `efi_main` ExitBootServices dan **oldin** `LocateProtocol(EFI_GRAPHICS_OUTPUT_PROTOCOL)`
+  çaqiradi, 1920x1200 gaça eng katta chiziqli rejimni tanlaydi (`SetMode`) va
+  `FrameBufferBase/Size`, `HorizontalResolution`, `VerticalResolution`, `PixelsPerScanLine`,
+  `PixelFormat` (RGBX/BGRX, 32 bpp bitmask ham) ni bootinfo ga yozadi; framebuffer RAM içida
+  bölsa — frame allokatori uçun band qilinadi. Ekran tanlaş (`gfx::init`): **avval
+  virtio-gpu, bölmasa GOP**. Interfeys bir xil: çiziş ichki buferga, `flush` uni qator
+  qadami (stride) va kanal tartibi böyiça framebufferga köçiradi (RAM dagi framebuffer —
+  keş `dc cvac` bilan tozalanadi; RAM dan taşqaridagi — `mmu::ioremap`, Device). Jurnalda:
+  `GOP: 1024x768, format BGRX, …` va `[gpu ] UEFI GOP: 1024x768 ish stoli çizildi`.
+- **CPU mosligi** (`src/cpuid.rs`): yadro faqat ARMv8.0 asosiga tayanadi — PAN, RNDR va GICv3
+  tizim registrlari ID registrlari böyiça tekşirilib yoqiladi, atomiklar LDXR/STXR (LSE şart
+  emas). Yuklanişda `ID_AA64*` hisoboti: `CPU: MIDR 0x414fd0c1 (Neoverse-N1), ID_AA64: PAN ha,
+  LSE ha, RNDR yöq, PAuth yöq, BTI yöq, MTE yöq, …` — Netcup ARM xostlari (Ampere Altra,
+  Neoverse-N1) va QEMU `-cpu max` da bir xil kod işlaydi.
 - **Birinçi sozlaş VNC dan**: sozlaş ustasi seriya konsolda işlaydi; grafik ekranda endi
   konsolning oxirgi qatorlari körinadi va grafik klaviatura (virtio-input yoki USB)
   bosişlari seriya kirişiga uzatiladi — VNC orqali ham sozlaşni tugatiş mumkin.
@@ -738,8 +754,16 @@ virtio-keyboard/tablet-pci örniga `-device qemu-xhci -device usb-kbd -device us
 til tanlaş ekraniga QMP `send-key` ("3", Enter) va `input-send-event` (abs X/Y + çap
 tugma) yuboriladi — "First-time setup" çiqişi va siçqonça bosişi (koordinata ekranga
 töğri şkalalangan) tekşiriladi, surat `docs/vps-usb.png`. `verify.sh full` ham uni işlatadi.
+Beşinçi — **`-cpu neoverse-n1`** (ACPI + GICv3, 4 CPU): til tanlaş ekranigaça yetadi,
+self-testlar `[ok]`, `ID_AA64*` hisobotida Neoverse-N1 va RNDR/PAuth/BTI/MTE yöqligi
+tekşiriladi. Oltinçi — **GOP zaxira ekran** (`scripts/agent/vps_gop.py`): UEFI + ACPI + GICv3,
+**virtio-gpu yöq**, `-device ramfb` + USB klaviatura/planşet; jurnalda `GOP: WxH, format …`,
+QMP `screendump` ölçami GOP ga teng va bir rangli emas (piksellar xilma-xilligi
+tekşiriladi), USB dan "3" + Enter sozlaşni özgartiradi; surat `docs/vps-gop.png`.
 
 ![VPS: USB klaviatura/planşet orqali birinçi sozlaş](docs/vps-usb.png)
+
+![VPS: virtio-gpu siz — UEFI GOP (ramfb) framebufferida til tanlaş ekrani](docs/vps-gop.png)
 
 `scripts/agent/verify.sh pci` — UEFI siz yöl: `-kernel` bilan GICv2 va GICv3 da faqat
 virtio-*-pci qurilmalar. ECAM DTB dagi `pci-host-ecam-generic` dan öqiladi, BAR lar
@@ -774,8 +798,10 @@ bölimga yoziladi (MBR, ikkala GPT sarlavhasi va ESP butun) → qayta yuklanişd
 ## VPS ga örnatiş
 
 Zamin OS ARM64 VPS da (masalan, **Netcup VPS ARM G12**) öz yadrosi bilan, Linux siz
-işlaydi. Talablar: **AArch64**, **UEFI** firmware (EDK2/AAVMF), **virtio** disk va tarmoq
-(PCI orqali), GICv2 yoki GICv3; DTB yoki ACPI. Avval VPS ni tekşirib olish mumkin (faqat
+işlaydi. Talablar: **AArch64** (ARMv8.0 dan; Neoverse-N1/Ampere sinovdan ötgan), **UEFI**
+firmware (EDK2/AAVMF), **virtio** disk va tarmoq (PCI orqali), GICv2 yoki GICv3; DTB yoki
+ACPI. Ekran: **virtio-gpu**, u bölmasa — firmware bergan **UEFI GOP** chiziqli framebufferi
+(masalan `ramfb`; 32 bpp RGBX/BGRX); ikkalasi ham bölmasa — faqat seriya konsol. Avval VPS ni tekşirib olish mumkin (faqat
 öqiydi): `bash scripts/vps/tekshir.sh`.
 
 1. **Obrazni yasang** (öz kompyuteringizda):

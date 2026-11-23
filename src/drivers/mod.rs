@@ -1,5 +1,6 @@
 //! Qurilma drayverlari.
 
+pub mod fb;
 pub mod pci;
 pub mod virtio;
 pub mod virtio_blk;

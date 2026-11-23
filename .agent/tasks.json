@@ -301,7 +301,9 @@
       "id": "T38",
       "title": "VPS: virtio-gpu bo'lmasa UEFI GOP framebuffer zaxira ekrani va -cpu neoverse-n1 mosligi",
       "detail": "src/ da GRAPHICS_OUTPUT_PROTOCOL yo'q. Agar VPS virtio-gpu bermasa (ramfb, yoki firmware GOP ni boshqa displey bilan bergan bo'lsa), tizim faqat seriya rejimiga tushadi va VNC da ekran qora qoladi. Fayllar: src/efi.rs (ExitBootServices dan oldin LocateProtocol(EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID) → Mode->FrameBufferBase/Size, HorizontalResolution, VerticalResolution, PixelsPerScanLine, PixelFormat (RGBX/BGRX). Natija yadroga uzatiladi, masalan yasalgan DTB dagi /chosen/framebuffer (simple-framebuffer) tuguni yoki statik struktura orqali), src/drivers/virtio_gpu.rs yoki yangi src/drivers/fb.rs (bir xil ekran interfeysi: ichki buferdan chiziqli framebufferga nusxa ko'chirib flush qilish, PixelFormat bo'yicha kanal tartibi, framebuffer manzilini mmu::ioremap bilan Normal-NC/Device sifatida xaritalash), src/gui.rs (GPU tanlash: avval virtio-gpu, bo'lmasa GOP fb). Qo'shimcha: verify.sh vps ga -cpu neoverse-n1 konfiguratsiyasi qo'shiladi ('max' dagi PAN/RNDR/LSE kabi imkoniyatlarga yashirin tayanish bo'lmasin; ID_AA64* registrlari bo'yicha tekshiruv). Netcup ARM xostlari Ampere (Neoverse-N1) asosida. Qabul mezoni: verify.sh vps ga yangi konfiguratsiya qo'shiladi: UEFI + ACPI + GICv3, virtio-gpu YO'Q, -device ramfb. Jurnalda 'GOP: WxH, format …' chiqadi, QMP screendump da login/til ekrani ko'rinadi (bir rangli emas: piksellar xilma-xilligi tekshiriladi), skrinshot docs/vps-gop.png. neoverse-n1 konfiguratsiyasi ham til tanlash ekranigacha yetadi va self-testlar '[ok]'. virtio-gpu bor yo'llar o'zgarmaydi. README 'UEFI yuklanish' va 'VPS ga o'rnatish' talablari yangilanadi. verify.sh full o'tadi.",
-      "batch": 6
+      "batch": 6,
+      "status": "done",
+      "done_at": "2026-11-23 22:23:23"
     },
     {
       "id": "T39",

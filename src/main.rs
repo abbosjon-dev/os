@@ -12,6 +12,7 @@ mod accounts;
 mod acpi;
 mod audio;
 mod config;
+mod cpuid;
 mod crypto;
 mod drivers;
 mod dtb;
@@ -118,12 +119,20 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
     println!();
     tprintln!(msg::BOOT_LANG, i18n::pick(&msg::LANG_NAME));
     tprintln!(msg::BOOT_EL, current_el());
+    cpuid::report();
 
     if let Some(e) = efi {
         println!(
             "  UEFI: xotira xaritasi {} hudud, oddiy RAM {:#x}..{:#x}, band {} hudud; GICv{}",
             e.efi_regions, e.ram_lo, e.ram_hi, e.reserved_count, gic::version()
         );
+        if let Some(g) = e.gop() {
+            println!(
+                "  GOP: {}x{}, format {}, qator {} piksel, framebuffer {:#x} ({} KiB), rejim {}/{}",
+                g.width, g.height, if g.format == efi::GOP_RGBX { "RGBX" } else { "BGRX" },
+                g.stride, g.base, g.size / 1024, g.mode, g.max_mode
+            );
+        }
         if let Some(a) = e.acpi() {
             acpi::report(a, |l| println!("{}", l));
             println!("  ACPI → DTB: taymer INTID {}, PSCI CPU_ON uçun {} ta MPIDR", timer::irq(), fdt.map_or(0, |f| f.cpus().1));
@@ -299,7 +308,7 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
     // 12) Grafika: virtio-gpu (bölsa) — ekranga iş stolini çizamiz
     if gfx::init(1024, 768) {
         let (w, h) = gfx::size();
-        tprintln!(msg::GPU_READY, w, h);
+        tprintln!(msg::GPU_READY, gfx::backend(), w, h);
         let inputs = drivers::virtio_input::init();
         println!("  kiriş: {} ta virtio-input qurilma (klaviatura/planşet)", inputs);
         // USB (xHCI): Netcup kabi VPS larda VNC kirişi qemu-xhci + usb-kbd/usb-tablet orqali

@@ -14,6 +14,9 @@
 #                     ACPI zaxira yöli (DTB yöq): RSDP/XSDT, MADT (GIC, CPU lar), GTDT (taymer),
 #                     SPCR (UART), MCFG (ECAM) — GICv3/4 CPU va GICv2/2 CPU; + acpi=off (UEFI + DTB);
 #                     + USB kiriş: qemu-xhci + usb-kbd + usb-tablet (QMP send-key / input-send-event)
+#                     + -cpu neoverse-n1 (Netcup Ampere: RNDR/PAuth/BTI/MTE yöq, ID_AA64* hisoboti)
+#                     + GOP zaxira ekran: virtio-gpu yöq, -device ramfb → UEFI GOP framebuffer
+#                       (jurnalda 'GOP: WxH, format …', screendump bir rangli emas, docs/vps-gop.png)
 #   verify.sh obraz — yiğiş + scripts/vps/obraz.sh: bitta GPT disk (ESP + Zamin bölimi), UEFI
 #                     (QEMU_EFI.fd -bios yoki AAVMF pflash), GICv3, faqat virtio-*-pci: GPT bölimi
 #                     topiladi, grafik ekran (virtio-gpu), DHCP; sozlaş ustasi oxirigaça → sozlamalar
@@ -39,9 +42,12 @@ fi
 #   vps_test [GIC] [SMP] [MACHINE_QÖŞIMÇA] — standart: 3 4 "" (ACPI rejimi: EDK2 ACPI berganda
 #   DTB yaşiriladi → yadro RSDP/XSDT, MADT, GTDT, SPCR, MCFG dan qurilma tavsifini yasaydi).
 #   MACHINE_QÖŞIMÇA=",acpi=off" — firmware ACPI bermaydi, DTB beradi (UEFI + DTB yöli).
+#   4-parametr CPU (standart max): neoverse-n1 — Netcup ARM (Ampere Altra) ga öxşaş, v8.2:
+#   RNDR/PAuth/BTI/MTE yöq — yadro 'max' imkoniyatlariga yaşirin tayanmasligi tekşiriladi.
 vps_test() {
-    local g=${1:-3} smp=${2:-4} mx=${3:-}
+    local g=${1:-3} smp=${2:-4} mx=${3:-} cpu=${4:-max}
     local tag="GICv$g, $smp CPU${mx:+, ${mx#,}}"
+    [ "$cpu" = max ] || tag="$tag, -cpu $cpu"
     local kernel=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel
     local fw="" f
     for f in /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/AAVMF/AAVMF_CODE.fd; do
@@ -49,7 +55,7 @@ vps_test() {
     done
     [ -n "$fw" ] || { echo "SKIP vps: UEFI firmware yöq (qemu-efi-aarch64)"; return 2; }
     local esp sys log=$LOG_DIR/verify-vps.log
-    [ "$g$smp$mx" = 34 ] || log=$LOG_DIR/verify-vps-gic$g-smp$smp${mx//[^a-z]/}.log
+    [ "$g$smp$mx$cpu" = 34max ] || log=$LOG_DIR/verify-vps-gic$g-smp$smp${mx//[^a-z]/}${cpu/#max/}.log
     esp=$(mktemp /tmp/zamin-esp-XXXX.img); sys=$(mktemp /tmp/zamin-vps-XXXX.img)
     if ! sh scripts/efi/mkesp.sh "$kernel" "$esp" >"$LOG_DIR/verify-mkesp.log" 2>&1; then
         echo "FAIL vps ($tag): ESP yasalmadi ($(tail -1 "$LOG_DIR/verify-mkesp.log"))"; rm -f "$esp" "$sys"; return 1
@@ -59,7 +65,7 @@ vps_test() {
     local fifo; fifo=$(mktemp -u /tmp/zamin-vps-in-XXXX); mkfifo "$fifo"
     sleep 200 >"$fifo" &
     local holder=$!
-    timeout 150 qemu-system-aarch64 -machine virt,gic-version=$g$mx -cpu max -m 1G -smp $smp -nographic \
+    timeout 150 qemu-system-aarch64 -machine virt,gic-version=$g$mx -cpu "$cpu" -m 1G -smp $smp -nographic \
         -bios "$fw" \
         -drive "file=$esp,if=none,format=raw,id=esp" -device virtio-blk-pci,drive=esp,bootindex=0 \
         -drive "file=$sys,if=none,format=raw,id=sys" -device virtio-blk-pci,drive=sys \
@@ -97,6 +103,9 @@ vps_test() {
             elif ! grep -qaE '\[net \] virtio-net' "$log"; then res="FAIL vps ($tag): virtio-net-pci topilmadi"
             elif ! grep -qaE '\[gpu \] virtio-gpu' "$log"; then res="FAIL vps ($tag): virtio-gpu-pci topilmadi"
             elif ! grep -qaE 'manbalar: virtio-rng' "$log"; then res="FAIL vps ($tag): virtio-rng-pci topilmadi"
+            elif ! grep -qaE '  CPU: MIDR 0x[0-9a-f]+ .*ID_AA64: PAN' "$log"; then res="FAIL vps ($tag): ID_AA64* hisoboti yöq"
+            elif [ "$cpu" = neoverse-n1 ] && ! grep -qaE 'CPU: MIDR 0x414fd0c[0-9a-f] \(Neoverse-N1\).*RNDR yöq, PAuth yöq, BTI yöq, MTE yöq' "$log"; then res="FAIL vps ($tag): Neoverse-N1 ID_AA64* imkoniyatlari kutilganidek emas"
+            elif [ "$cpu" = neoverse-n1 ] && ! grep -qaE '\[ok\]' "$log"; then res="FAIL vps ($tag): self-test [ok] yöq"
             else res="OK vps ($tag): UEFI (BOOTAA64.EFI) → $(if [ -z "$mx" ]; then echo "ACPI (MADT, GTDT, SPCR, MCFG)"; else echo DTB; fi) → GICv$g (taymer, SGI, seriya klaviatura), virtio-pci (blk, net, gpu, input), sozlaş ekrani ($(grep -acE '\[ok\]|— OK' "$log") self-test)"; fi
             break
         fi
@@ -115,7 +124,17 @@ vps_all() {
     [ $rc -ne 0 ] && return $rc
     vps_test 2 2 || return 1
     vps_test 3 4 ",acpi=off" || return 1
+    vps_test 3 4 "" neoverse-n1 || return 1
     vps_usb_test || return 1
+    vps_gop_test || return 1
+}
+# GOP zaxira ekran: virtio-gpu YÖQ, -device ramfb (EDK2 GOP) — surat docs/vps-gop.png
+vps_gop_test() {
+    local kernel=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel res rc
+    res=$(timeout 220 python3 scripts/agent/vps_gop.py "$kernel" "$LOG_DIR/verify-vps-gop.log" docs/vps-gop.png 2>&1); rc=$?
+    echo "${res:-FAIL vps-gop: timeout (qarang $LOG_DIR/verify-vps-gop.log)}"
+    [ $rc -eq 2 ] && return 0
+    [ $rc -eq 0 ]
 }
 # USB kiriş (Netcup VNC): virtio-keyboard/tablet-pci ÖRNIGA qemu-xhci + usb-kbd + usb-tablet;
 # til tanlaş ekraniga QMP send-key va input-send-event (abs) — surat docs/vps-usb.png

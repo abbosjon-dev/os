@@ -41,12 +41,41 @@ pub struct BootInfo {
     /// 1 — DTB yöq edi, qurilma tavsifi ACPI dan yasaldi (`acpi` toʻldirilgan).
     pub acpi_used: u64,
     pub acpi: AcpiInfo,
+    /// UEFI GOP chiziqli framebufferi (ExitBootServices dan oldin öqilgan); `gop_magic`
+    /// [`GOP_MAGIC`] bölmasa — GOP yöq (yoki faqat Blt rejimi).
+    pub gop_magic: u64,
+    pub gop: GopInfo,
+}
+
+pub const GOP_MAGIC: u64 = 0x5a41_4d49_4e47_4f50; // "ZAMINGOP"
+
+/// GOP piksel formati (UEFI EFI_GRAPHICS_PIXEL_FORMAT böyiça, bitmask normallaştirilgan).
+pub const GOP_RGBX: u32 = 0; // bayt tartibi R,G,B,X
+pub const GOP_BGRX: u32 = 1; // bayt tartibi B,G,R,X (u32 = 0x00RRGGBB)
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GopInfo {
+    pub base: u64,
+    pub size: u64,
+    pub width: u32,
+    pub height: u32,
+    /// Qatordagi piksellar soni (stride / 4).
+    pub stride: u32,
+    pub format: u32,
+    /// Firmware bergan rejim raqami va jami rejimlar soni.
+    pub mode: u32,
+    pub max_mode: u32,
 }
 
 impl BootInfo {
     /// ACPI zaxira yöli işlatilgan bölsa — öqilgan jadvallar.
     pub fn acpi(&self) -> Option<&AcpiInfo> {
         (self.acpi_used == 1).then_some(&self.acpi)
+    }
+    /// UEFI GOP framebufferi (bölsa).
+    pub fn gop(&self) -> Option<&GopInfo> {
+        (self.gop_magic == GOP_MAGIC).then_some(&self.gop)
     }
 }
 
@@ -84,12 +113,112 @@ struct TextOutput {
 
 type GetMemoryMap = extern "efiapi" fn(*mut usize, *mut u8, *mut usize, *mut usize, *mut u32) -> usize;
 type ExitBootServices = extern "efiapi" fn(usize, usize) -> usize;
+type LocateProtocol = extern "efiapi" fn(*const [u8; 16], usize, *mut *const Gop) -> usize;
 
 #[repr(C)]
 struct BootServices {
     hdr: TableHeader,
-    /// RaiseTPL … ExitBootServices (26 ta) — bizga faqat 4 (GetMemoryMap) va 26 kerak.
-    fns: [usize; 27],
+    /// RaiseTPL … LocateProtocol (38 ta) — bizga faqat 4 (GetMemoryMap), 26 (ExitBootServices)
+    /// va 37 (LocateProtocol) kerak.
+    fns: [usize; 38],
+}
+
+/// EFI_GRAPHICS_OUTPUT_PROTOCOL
+#[repr(C)]
+struct Gop {
+    query_mode: extern "efiapi" fn(*const Gop, u32, *mut usize, *mut *const GopModeInfo) -> usize,
+    set_mode: extern "efiapi" fn(*const Gop, u32) -> usize,
+    blt: usize,
+    mode: *const GopMode,
+}
+
+#[repr(C)]
+struct GopMode {
+    max_mode: u32,
+    mode: u32,
+    info: *const GopModeInfo,
+    size_of_info: usize,
+    fb_base: u64,
+    fb_size: usize,
+}
+
+#[repr(C)]
+struct GopModeInfo {
+    version: u32,
+    hres: u32,
+    vres: u32,
+    /// 0 — RGBX 8bpc, 1 — BGRX 8bpc, 2 — bitmask, 3 — faqat Blt (framebuffer yöq)
+    pixel_format: u32,
+    /// bitmask: qizil, yaşil, kök, zaxira
+    masks: [u32; 4],
+    pixels_per_scan_line: u32,
+}
+
+/// EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID 9042a9de-23dc-4a38-96fb-7aded080516a.
+const GOP_GUID: [u8; 16] = [
+    0xde, 0xa9, 0x42, 0x90, 0xdc, 0x23, 0x38, 0x4a, 0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a,
+];
+
+/// GOP rejimi formatini bizning ikki formatga keltiradi (32 bpp chiziqli bölmasa — None).
+fn gop_format(i: &GopModeInfo) -> Option<u32> {
+    match i.pixel_format {
+        0 => Some(GOP_RGBX),
+        1 => Some(GOP_BGRX),
+        2 if i.masks[..3] == [0xff, 0xff00, 0xff_0000] => Some(GOP_RGBX),
+        2 if i.masks[..3] == [0xff_0000, 0xff00, 0xff] => Some(GOP_BGRX),
+        _ => None,
+    }
+}
+
+/// GOP ni topadi; imkon bölsa 1920x1200 gaça eng katta chiziqli rejimni tanlaydi.
+fn probe_gop(bs: &BootServices) -> Option<GopInfo> {
+    let locate: LocateProtocol = unsafe { core::mem::transmute(bs.fns[37]) };
+    let mut gop: *const Gop = core::ptr::null();
+    if locate(&GOP_GUID, 0, &mut gop) != EFI_SUCCESS || gop.is_null() {
+        return None;
+    }
+    let g = unsafe { &*gop };
+    if g.mode.is_null() {
+        return None;
+    }
+    let (cur, max) = unsafe { ((*g.mode).mode, (*g.mode).max_mode) };
+    let mut best: Option<(u32, u64)> = None;
+    for m in 0..max.min(64) {
+        let (mut sz, mut info) = (0usize, core::ptr::null());
+        if (g.query_mode)(gop, m, &mut sz, &mut info) != EFI_SUCCESS || info.is_null() {
+            continue;
+        }
+        let i = unsafe { &*info };
+        if gop_format(i).is_none() || i.hres > 1920 || i.vres > 1200 || i.hres < 640 {
+            continue;
+        }
+        let area = i.hres as u64 * i.vres as u64;
+        if best.is_none_or(|(_, a)| area > a) {
+            best = Some((m, area));
+        }
+    }
+    if let Some((m, _)) = best
+        && m != cur
+    {
+        let _ = (g.set_mode)(gop, m); // muvaffaqiyatsiz bölsa — joriy rejim qoladi
+    }
+    let md = unsafe { &*g.mode };
+    if md.info.is_null() || md.fb_base == 0 {
+        return None;
+    }
+    let i = unsafe { &*md.info };
+    let format = gop_format(i)?;
+    let gi = GopInfo {
+        base: md.fb_base,
+        size: md.fb_size as u64,
+        width: i.hres,
+        height: i.vres,
+        stride: i.pixels_per_scan_line,
+        format,
+        mode: md.mode,
+        max_mode: md.max_mode,
+    };
+    (gi.stride >= gi.width && gi.size >= gi.stride as u64 * gi.height as u64 * 4).then_some(gi)
 }
 
 #[repr(C)]
@@ -192,6 +321,11 @@ extern "efiapi" fn efi_main(image: usize, st: *const SystemTable) -> usize {
     let bs = unsafe { &*st.boot_services };
     let get_map: GetMemoryMap = unsafe { core::mem::transmute(bs.fns[4]) };
     let exit_bs: ExitBootServices = unsafe { core::mem::transmute(bs.fns[26]) };
+    // GOP (virtio-gpu bölmagan VPS lar uçun zaxira ekran) — ExitBootServices dan oldin
+    let gop = probe_gop(bs);
+    if gop.is_some() {
+        say(st, "Zamin OS: GOP framebuffer topildi\n");
+    }
     say(st, "Zamin OS: ExitBootServices...\n");
     let map = &raw mut MAP as *mut u8;
     let (mut size, mut key, mut dsize, mut dver) = (0usize, 0usize, 0usize, 0u32);
@@ -218,6 +352,11 @@ extern "efiapi" fn efi_main(image: usize, st: *const SystemTable) -> usize {
     info.ram_hi = 0;
     info.reserved_count = 0;
     info.acpi_used = 0;
+    info.gop_magic = 0;
+    if let Some(g) = gop {
+        info.gop = g;
+        info.gop_magic = GOP_MAGIC;
+    }
     let n = if dsize > 0 { size / dsize } else { 0 };
     info.efi_regions = n as u64;
     for i in 0..n {
@@ -239,6 +378,21 @@ extern "efiapi" fn efi_main(image: usize, st: *const SystemTable) -> usize {
                 info.reserved_count += 1;
             } else {
                 info.reserved[c - 1][1] = info.reserved[c - 1][1].max(end);
+            }
+        }
+    }
+    // GOP framebufferi RAM içida bölsa (ramfb: firmware uni boot-services xotirasidan olgan
+    // bölişi mumkin) — frame allokatori unga tegmasligi uçun band ro'yxatiga qöşamiz
+    if let Some(g) = gop {
+        let (s0, e0) = (g.base & !0xfff, (g.base + g.size + 0xfff) & !0xfff);
+        let c = info.reserved_count as usize;
+        if e0 > info.ram_lo && s0 < info.ram_hi {
+            if c < MAX_RESERVED {
+                info.reserved[c] = [s0, e0];
+                info.reserved_count += 1;
+            } else {
+                // joy yöq — GOP ni işlatmaymiz (xavfsizroq)
+                info.gop_magic = 0;
             }
         }
     }

@@ -80,8 +80,13 @@ fn in_clip(x: usize, y: usize) -> bool {
         && y < CLIP_Y1.load(Ordering::Relaxed)
 }
 
+/// Ekran qurilmasi: avval virtio-gpu, bölmasa — UEFI GOP chiziqli framebufferi.
 pub fn init(width: u32, height: u32) -> bool {
-    match gpu::init(width, height) {
+    let dev = gpu::init(width, height).or_else(|| {
+        let e = crate::efi::boot_info()?;
+        crate::drivers::fb::init(e.gop()?, (e.ram_lo as usize, e.ram_hi as usize))
+    });
+    match dev {
         Some((w, h, fb)) => {
             *FB.lock() = Some(Fb { ptr: fb, w: w as usize, h: h as usize, noclip: false });
             reset_clip();
@@ -1274,4 +1279,10 @@ pub fn line_height(px: usize, font: Font) -> usize {
 
 pub fn flush() {
     gpu::flush();
+    crate::drivers::fb::flush();
+}
+
+/// Ekran qurilmasi nomi (jurnal uçun): "virtio-gpu" yoki "UEFI GOP".
+pub fn backend() -> &'static str {
+    if gpu::present() { "virtio-gpu" } else if crate::drivers::fb::present() { "UEFI GOP" } else { "-" }
 }
