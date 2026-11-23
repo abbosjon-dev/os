@@ -121,6 +121,21 @@ impl Fdt {
         result
     }
 
+    /// `/cpus/cpu@…` tugunlaridagi MPIDR lar (`reg`, `/cpus` ning #address-cells böyiça).
+    /// Natija: (MPIDR lar, soni) — 8 tadan köpi tasdiqlanmaydi.
+    pub fn cpus(&self) -> ([u64; 8], usize) {
+        let (mut out, mut n, mut ac) = ([0u64; 8], 0usize, 1usize);
+        self.for_each_prop(|depth, node, prop, val| {
+            if depth == 2 && node == "cpus" && prop == "#address-cells" && val.len() >= 4 {
+                ac = (be_cells(val, 1) as usize).clamp(1, 2);
+            } else if depth == 3 && node.starts_with("cpu@") && prop == "reg" && val.len() >= ac * 4 && n < 8 {
+                out[n] = be_cells(val, ac);
+                n += 1;
+            }
+        });
+        (out, n)
+    }
+
     /// Yuqori darajadagi (`/nom...`) tugunning xususiyati.
     pub fn top_level_prop(&self, node_prefix: &str, prop: &str) -> Option<&'static [u8]> {
         let mut found = None;
@@ -145,6 +160,16 @@ pub struct Node {
     pub ranges: &'static [u8],
     /// `interrupt-map` (PCI host uçun xom baytlar).
     pub irq_map: &'static [u8],
+    /// `interrupts` — barça uçliklar (xom baytlar; masalan taymerning 4 ta PPI si).
+    pub irqs: &'static [u8],
+}
+
+impl Node {
+    /// `interrupts` dagi `i`-uçlik (tur, raqam, bayroqlar).
+    pub fn irq_at(&self, i: usize) -> Option<(u32, u32, u32)> {
+        let c = self.irqs.get(i * 12..i * 12 + 12)?;
+        Some((be_cells(c, 1) as u32, be_cells(&c[4..], 1) as u32, be_cells(&c[8..], 1) as u32))
+    }
 }
 
 impl Fdt {
@@ -194,7 +219,10 @@ impl Fdt {
                 "reg" => cur_reg = val,
                 "ranges" => cur.ranges = val,
                 "interrupt-map" => cur.irq_map = val,
-                "interrupts" if val.len() >= 12 => cur.irq = Some((be_cells(val, 1) as u32, be_cells(&val[4..], 1) as u32)),
+                "interrupts" if val.len() >= 12 => {
+                    cur.irq = Some((be_cells(val, 1) as u32, be_cells(&val[4..], 1) as u32));
+                    cur.irqs = val;
+                }
                 _ => {}
             }
         });

@@ -2,9 +2,27 @@
 //! Har 10 ms da uziliş beradi (100 Hz) — kelajakda rejalaştiruvçi şu "tick"da işlaydi.
 
 use core::arch::asm;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-pub const IRQ: u32 = 30;
+/// Standart: NS EL1 fizik taymer, PPI 14 → INTID 30. DTB `/timer` (yoki ACPI GTDT dan
+/// yasalgan) boşqaça desa — `configure` özgartiradi.
+pub const DEFAULT_IRQ: u32 = 30;
+static IRQ: AtomicU32 = AtomicU32::new(DEFAULT_IRQ);
+
+/// Taymer uzilişi (INTID).
+pub fn irq() -> u32 {
+    IRQ.load(Ordering::Relaxed)
+}
+
+/// DTB dagi `arm,armv8-timer` tugunining 2-uçligi (NS EL1 fizik taymer PPI si).
+pub fn configure(fdt: &crate::dtb::Fdt) {
+    let n = fdt.find_compatible("arm,armv8-timer").or_else(|| fdt.find_compatible("arm,armv7-timer"));
+    if let Some((1, ppi, _)) = n.and_then(|n| n.irq_at(1)) {
+        if ppi < 16 {
+            IRQ.store(ppi + 16, Ordering::Relaxed);
+        }
+    }
+}
 pub const HZ: u64 = 100;
 
 static TICKS: AtomicU64 = AtomicU64::new(0);
@@ -31,7 +49,7 @@ fn arm() {
 
 pub fn init() {
     arm();
-    crate::gic::enable(IRQ);
+    crate::gic::enable(irq());
 }
 
 pub fn handle_irq() {

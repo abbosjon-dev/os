@@ -12,6 +12,7 @@
 //!   3) ExitBootServices, keyin MMU/keşni öçirib (`efi_handoff`) odatiy `_start` ga ötadi
 //!      (x0 = DTB manzili) — xuddi `-kernel` bilan yuklangandek.
 
+use crate::acpi::{self, AcpiInfo};
 use core::ptr::{copy, read_unaligned};
 
 unsafe extern "C" {
@@ -37,6 +38,16 @@ pub struct BootInfo {
     pub reserved_count: u64,
     /// (boşlaniş, oxir) — işlatib bölmaydigan hududlar.
     pub reserved: [[u64; 2]; MAX_RESERVED],
+    /// 1 — DTB yöq edi, qurilma tavsifi ACPI dan yasaldi (`acpi` toʻldirilgan).
+    pub acpi_used: u64,
+    pub acpi: AcpiInfo,
+}
+
+impl BootInfo {
+    /// ACPI zaxira yöli işlatilgan bölsa — öqilgan jadvallar.
+    pub fn acpi(&self) -> Option<&AcpiInfo> {
+        (self.acpi_used == 1).then_some(&self.acpi)
+    }
 }
 
 #[repr(C)]
@@ -160,9 +171,9 @@ extern "efiapi" fn efi_main(image: usize, st: *const SystemTable) -> usize {
     if dtb == 0 || be32(dtb as *const u8) != 0xd00d_feed {
         dtb = 0;
         // ACPI rejimi (EDK2 ACPI bölganda DTB bermaydi): kerakli qismlarni ACPI dan olamiz
-        match (rsdp != 0).then(|| acpi_scan(rsdp)).flatten() {
+        match acpi::scan(rsdp) {
             Some(a) => {
-                say(st, "Zamin OS: DTB yo'q - ACPI jadvallaridan (MADT, SPCR, MCFG, FADT) qurilma tavsifi yasaladi\n");
+                say(st, "Zamin OS: DTB yo'q - ACPI jadvallaridan (MADT, GTDT, SPCR, MCFG, FADT) qurilma tavsifi yasaladi\n");
                 acpi = Some(a);
             }
             None => {
@@ -206,6 +217,7 @@ extern "efiapi" fn efi_main(image: usize, st: *const SystemTable) -> usize {
     info.ram_lo = u64::MAX;
     info.ram_hi = 0;
     info.reserved_count = 0;
+    info.acpi_used = 0;
     let n = if dsize > 0 { size / dsize } else { 0 };
     info.efi_regions = n as u64;
     for i in 0..n {
@@ -234,6 +246,8 @@ extern "efiapi" fn efi_main(image: usize, st: *const SystemTable) -> usize {
 
     // DTB ni yadro içiga (manba firmware xotirasida edi — u endi böş hisoblanadi)
     if let Some(a) = acpi {
+        info.acpi = a;
+        info.acpi_used = 1;
         let buf = unsafe { core::slice::from_raw_parts_mut(dst, room) };
         build_dtb(buf, &a, info.ram_lo, info.ram_hi);
     } else {
@@ -250,99 +264,6 @@ extern "efiapi" fn efi_main(image: usize, st: *const SystemTable) -> usize {
 pub fn boot_info() -> Option<&'static BootInfo> {
     let info = unsafe { &*(&raw const __bootinfo) };
     (info.magic == BOOTINFO_MAGIC).then_some(info)
-}
-
-/// ACPI dan olingan, yadroga kerakli qurilma maʼlumotlari.
-#[derive(Clone, Copy, Default)]
-struct AcpiInfo {
-    gic_version: u8,
-    gicd: u64,
-    /// v3: redistributorlar hududi; v2: CPU interfeysi.
-    gicr_or_gicc: u64,
-    gicr_len: u64,
-    uart: u64,
-    uart_gsiv: u32,
-    ecam: u64,
-    ecam_end_bus: u8,
-    psci_hvc: bool,
-}
-
-fn rd_u8(a: usize) -> u8 {
-    unsafe { (a as *const u8).read() }
-}
-fn rd_u32(a: usize) -> u32 {
-    unsafe { read_unaligned(a as *const u32) }
-}
-fn rd_u64(a: usize) -> u64 {
-    unsafe { read_unaligned(a as *const u64) }
-}
-
-/// RSDP → XSDT → MADT (GIC), SPCR (UART), MCFG (PCIe ECAM), FADT (PSCI usuli).
-fn acpi_scan(rsdp: usize) -> Option<AcpiInfo> {
-    if unsafe { core::slice::from_raw_parts(rsdp as *const u8, 8) } != b"RSD PTR " || rd_u8(rsdp + 15) < 2 {
-        return None;
-    }
-    let xsdt = rd_u64(rsdp + 24) as usize;
-    let n = (rd_u32(xsdt + 4) as usize).saturating_sub(36) / 8;
-    let mut a = AcpiInfo::default();
-    for i in 0..n {
-        let t = rd_u64(xsdt + 36 + i * 8) as usize;
-        let sig = unsafe { core::slice::from_raw_parts(t as *const u8, 4) };
-        let len = rd_u32(t + 4) as usize;
-        match sig {
-            b"APIC" => {
-                let mut p = t + 44;
-                while p + 2 <= t + len {
-                    let (ty, l) = (rd_u8(p), rd_u8(p + 1) as usize);
-                    if l == 0 {
-                        break;
-                    }
-                    match ty {
-                        0x0b if a.gicr_or_gicc == 0 && l >= 76 => {
-                            let gicc = rd_u64(p + 32);
-                            let gicr = rd_u64(p + 60);
-                            if a.gic_version != 3 && gicc != 0 {
-                                a.gicr_or_gicc = gicc;
-                            } else if gicr != 0 {
-                                a.gicr_or_gicc = gicr;
-                                a.gicr_len = 0x20000 * 8;
-                            }
-                        }
-                        0x0c => {
-                            a.gicd = rd_u64(p + 8);
-                            a.gic_version = rd_u8(p + 20);
-                        }
-                        0x0e => {
-                            a.gicr_or_gicc = rd_u64(p + 4);
-                            a.gicr_len = rd_u32(p + 12) as u64;
-                        }
-                        _ => {}
-                    }
-                    p += l;
-                }
-            }
-            b"SPCR" if len >= 58 => {
-                a.uart = rd_u64(t + 44);
-                a.uart_gsiv = rd_u32(t + 54);
-            }
-            b"MCFG" if len >= 60 => {
-                a.ecam = rd_u64(t + 44);
-                a.ecam_end_bus = rd_u8(t + 55);
-            }
-            b"FACP" if len >= 131 => {
-                a.psci_hvc = rd_u8(t + 129) & 2 != 0;
-            }
-            _ => {}
-        }
-    }
-    // MADT dagi GICD da versiya 0 bölişi mumkin ("aniqlanmagan"): GICR bölsa — v3
-    if a.gic_version == 0 {
-        a.gic_version = if a.gicr_len != 0 { 3 } else { 2 };
-    }
-    if a.gic_version >= 3 && a.gicr_len == 0 {
-        a.gicr_len = 0x20000 * 8;
-    }
-    (a.gicd != 0).then_some(a)
 }
 
 /// Kiçik FDT yozuvçisi (heap yöq, berilgan buferga).
@@ -458,7 +379,7 @@ impl FdtWriter<'_> {
     }
 }
 
-/// ACPI maʼlumotlaridan minimal DTB: memory, chosen, psci, pl011, GIC, PCIe ECAM.
+/// ACPI maʼlumotlaridan minimal DTB: memory, chosen, cpus, timer, psci, pl011, GIC, PCIe ECAM.
 fn build_dtb(buf: &mut [u8], a: &AcpiInfo, ram_lo: u64, ram_hi: u64) {
     let mut w = FdtWriter { buf, sp: FdtWriter::STRUCT, strings: [0; 512], slen: 0 };
     w.begin(b"");
@@ -476,12 +397,45 @@ fn build_dtb(buf: &mut [u8], a: &AcpiInfo, ram_lo: u64, ram_hi: u64) {
     w.prop_regs("reg", &[(ram_lo, ram_hi - ram_lo)]);
     w.end();
 
-    w.begin(b"psci");
-    w.prop("compatible", b"arm,psci-1.0\0arm,psci-0.2\0");
-    w.prop("method", if a.psci_hvc { b"hvc\0" } else { b"smc\0" });
+    // /cpus — MADT GICC yozuvlaridagi MPIDR lar (PSCI CPU_ON şu manzillar bilan)
+    w.begin(b"cpus");
+    w.prop_u32s("#address-cells", &[2]);
+    w.prop_u32s("#size-cells", &[0]);
+    for &m in &a.mpidr[..(a.ncpu as usize).min(acpi::MAX_CPUS)] {
+        w.begin_at(b"cpu", m);
+        w.prop("device_type", b"cpu\0");
+        w.prop("compatible", b"arm,armv8\0");
+        w.prop("enable-method", b"psci\0");
+        w.prop_u32s("reg", &[(m >> 32) as u32, m as u32]);
+        w.end();
+    }
     w.end();
 
-    if a.uart != 0 {
+    // /timer — GTDT dagi PPI lar (GSIV 16..31 → PPI raqami GSIV-16); GTDT yöq bölsa — standart
+    let mut t = [0u32; 12];
+    for k in 0..4 {
+        let (g, f) = (a.timer_gsiv[k], a.timer_flags[k]);
+        let ppi = if (16..32).contains(&g) { g - 16 } else { [13, 14, 11, 10][k] };
+        // bayroqlar: bit0 — front (1) / daraja (0), bit1 — past faol → DT IRQ_TYPE
+        let ty = match (f & 1, f & 2) {
+            (1, 0) => 1,
+            (1, _) => 2,
+            (_, 0) => 4,
+            _ => 8,
+        };
+        t[k * 3..k * 3 + 3].copy_from_slice(&[1, ppi, ty]);
+    }
+    w.begin(b"timer");
+    w.prop("compatible", b"arm,armv8-timer\0");
+    w.prop_u32s("interrupts", &t);
+    w.end();
+
+    w.begin(b"psci");
+    w.prop("compatible", b"arm,psci-1.0\0arm,psci-0.2\0");
+    w.prop("method", if a.psci_hvc != 0 { b"hvc\0" } else { b"smc\0" });
+    w.end();
+
+    if a.uart != 0 && matches!(a.uart_type, 3 | 0x0d | 0x0e) {
         w.begin_at(b"pl011", a.uart);
         w.prop("compatible", b"arm,pl011\0arm,primecell\0");
         w.prop_regs("reg", &[(a.uart, 0x1000)]);
@@ -505,8 +459,10 @@ fn build_dtb(buf: &mut [u8], a: &AcpiInfo, ram_lo: u64, ram_hi: u64) {
         w.begin_at(b"pcie", a.ecam);
         w.prop("compatible", b"pci-host-ecam-generic\0");
         w.prop("device_type", b"pci\0");
-        w.prop_regs("reg", &[(a.ecam, (a.ecam_end_bus as u64 + 1) << 20)]);
-        w.prop_u32s("bus-range", &[0, a.ecam_end_bus as u32]);
+        // MCFG manzili 0-şinaga mos keladi; reg — boşlanğiç şinadan
+        let (b0, b1) = (a.ecam_start_bus as u64, (a.ecam_end_bus as u64).max(a.ecam_start_bus as u64));
+        w.prop_regs("reg", &[(a.ecam + (b0 << 20), (b1 - b0 + 1) << 20)]);
+        w.prop_u32s("bus-range", &[b0 as u32, b1 as u32]);
         w.end();
     }
 

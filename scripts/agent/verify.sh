@@ -9,7 +9,9 @@
 #                     diskda, virt,gic-version=3, QEMU_EFI.fd, virtio-*-pci qurilmalar —
 #                     til tanlaş ekranigaça, panic yöq, PCI disk uzilişi işlaydi; GICv3 da
 #                     SGI (barça yadrolar), seriya klaviatura uzilişi ("3" → English sozlaş),
-#                     virtio-gpu/keyboard/tablet-pci, virtio-net/rng-pci
+#                     virtio-gpu/keyboard/tablet-pci, virtio-net/rng-pci;
+#                     ACPI zaxira yöli (DTB yöq): RSDP/XSDT, MADT (GIC, CPU lar), GTDT (taymer),
+#                     SPCR (UART), MCFG (ECAM) — GICv3/4 CPU va GICv2/2 CPU; + acpi=off (UEFI + DTB)
 #   verify.sh pci   — yiğiş + -kernel (DTB ECAM) GICv2 va GICv3 da faqat virtio-*-pci qurilmalar
 # Çiqiş kodi 0 — ötdi. Natija qisqa matn sifatida stdout ga.
 set -uo pipefail
@@ -28,7 +30,12 @@ fi
 [ "$MODE" = "quick" ] && { echo "OK build (0 warnings)"; exit 0; }
 
 # --- VPS (UEFI) sinovi: ESP disk (EFI/BOOT/BOOTAA64.EFI) + tizim diski, faqat PCI qurilmalar ---
+#   vps_test [GIC] [SMP] [MACHINE_QÖŞIMÇA] — standart: 3 4 "" (ACPI rejimi: EDK2 ACPI berganda
+#   DTB yaşiriladi → yadro RSDP/XSDT, MADT, GTDT, SPCR, MCFG dan qurilma tavsifini yasaydi).
+#   MACHINE_QÖŞIMÇA=",acpi=off" — firmware ACPI bermaydi, DTB beradi (UEFI + DTB yöli).
 vps_test() {
+    local g=${1:-3} smp=${2:-4} mx=${3:-}
+    local tag="GICv$g, $smp CPU${mx:+, ${mx#,}}"
     local kernel=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel
     local fw="" f
     for f in /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/AAVMF/AAVMF_CODE.fd; do
@@ -36,55 +43,72 @@ vps_test() {
     done
     [ -n "$fw" ] || { echo "SKIP vps: UEFI firmware yöq (qemu-efi-aarch64)"; return 2; }
     local esp sys log=$LOG_DIR/verify-vps.log
+    [ "$g$smp$mx" = 34 ] || log=$LOG_DIR/verify-vps-gic$g-smp$smp${mx//[^a-z]/}.log
     esp=$(mktemp /tmp/zamin-esp-XXXX.img); sys=$(mktemp /tmp/zamin-vps-XXXX.img)
     if ! sh scripts/efi/mkesp.sh "$kernel" "$esp" >"$LOG_DIR/verify-mkesp.log" 2>&1; then
-        echo "FAIL vps: ESP yasalmadi ($(tail -1 "$LOG_DIR/verify-mkesp.log"))"; rm -f "$esp" "$sys"; return 1
+        echo "FAIL vps ($tag): ESP yasalmadi ($(tail -1 "$LOG_DIR/verify-mkesp.log"))"; rm -f "$esp" "$sys"; return 1
     fi
     truncate -s 128M "$sys"; : >"$log"
     # stdin — FIFO: til tanlaş ekranida "3" yuboriladi (PL011 uzilişi GICv3 orqali)
     local fifo; fifo=$(mktemp -u /tmp/zamin-vps-in-XXXX); mkfifo "$fifo"
     sleep 200 >"$fifo" &
     local holder=$!
-    timeout 150 qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -m 1G -smp 4 -nographic \
+    timeout 150 qemu-system-aarch64 -machine virt,gic-version=$g$mx -cpu max -m 1G -smp $smp -nographic \
         -bios "$fw" \
         -drive "file=$esp,if=none,format=raw,id=esp" -device virtio-blk-pci,drive=esp,bootindex=0 \
         -drive "file=$sys,if=none,format=raw,id=sys" -device virtio-blk-pci,drive=sys \
         -device virtio-rng-pci -nic user,model=virtio-net-pci \
         -device virtio-gpu-pci -device virtio-keyboard-pci -device virtio-tablet-pci <"$fifo" >"$log" 2>&1 &
-    local qpid=$! res="FAIL vps: timeout (til tanlaş ekrani çiqmadi, qarang $log)" sent=0
+    local qpid=$! res="FAIL vps ($tag): timeout (til tanlaş ekrani çiqmadi, qarang $log)" sent=0
     for _ in $(seq 1 140); do
         sleep 1
         if grep -qaiE 'panic|yiqildi' "$log"; then
-            res="FAIL vps: $(grep -aiE -m2 'panic|yiqildi' "$log" | tr -d '\r' | tr '\n' ' ' | cut -c1-300)"; break
+            res="FAIL vps ($tag): $(grep -aiE -m2 'panic|yiqildi' "$log" | tr -d '\r' | tr '\n' ' ' | cut -c1-300)"; break
         fi
         if [ $sent -eq 0 ] && grep -qaE 'Choose your language' "$log"; then
             printf '3\r' >"$fifo"; sent=1; continue
         fi
         if [ $sent -ge 1 ] && ! grep -qaE 'First-time setup' "$log"; then
             sent=$((sent + 1))
-            [ $sent -gt 15 ] && { res="FAIL vps: seriya klaviatura uzilişi (GICv3) işlamadi — '3' qabul qilinmadi"; break; }
+            [ $sent -gt 15 ] && { res="FAIL vps ($tag): seriya klaviatura uzilişi (GICv3) işlamadi — '3' qabul qilinmadi"; break; }
             continue
         fi
         if [ $sent -ge 1 ]; then
-            if ! grep -qa 'UEFI: xotira xaritasi' "$log"; then res="FAIL vps: EFI yöli işlamadi (yadro boşqa yöl bilan yuklandi?)"
-            elif ! grep -qaE 'GICv3' "$log"; then res="FAIL vps: GICv3 aniqlanmadi"
-            elif ! grep -qaE '\[disk\] virtio-blk' "$log"; then res="FAIL vps: virtio-blk-pci disk topilmadi"
-            elif ! grep -qaE 'uziliş orqali tugadi' "$log"; then res="FAIL vps: PCI disk uzilişi sinovi ötmadi"
-            elif ! grep -qaE 'SGI: .*\(GICv3\) — OK' "$log"; then res="FAIL vps: GICv3 SGI sinovi ötmadi"
-            elif ! grep -qaE 'taymer: .* — OK' "$log"; then res="FAIL vps: taymer uzilişi sinovi ötmadi"
-            elif ! grep -qaE 'kiriş: 2 ta virtio-input' "$log"; then res="FAIL vps: virtio-input-pci (klaviatura/planşet) topilmadi"
-            elif ! grep -qaE '\[net \] virtio-net' "$log"; then res="FAIL vps: virtio-net-pci topilmadi"
-            elif ! grep -qaE '\[gpu \] virtio-gpu' "$log"; then res="FAIL vps: virtio-gpu-pci topilmadi"
-            elif ! grep -qaE 'manbalar: virtio-rng' "$log"; then res="FAIL vps: virtio-rng-pci topilmadi"
-            else res="OK vps: UEFI (BOOTAA64.EFI) → GICv3 (taymer, SGI, seriya klaviatura), virtio-pci (blk, net, gpu, input), sozlaş ekrani ($(grep -acE '\[ok\]|— OK' "$log") self-test)"; fi
+            if ! grep -qa 'UEFI: xotira xaritasi' "$log"; then res="FAIL vps ($tag): EFI yöli işlamadi (yadro boşqa yöl bilan yuklandi?)"
+            elif ! grep -qaE "GICv$g" "$log"; then res="FAIL vps ($tag): GICv$g aniqlanmadi"
+            elif [ -z "$mx" ] && ! grep -qaE "ACPI: RSDP v[0-9]+ → (XSDT|RSDT): .*checksum xatosi: 0" "$log"; then res="FAIL vps ($tag): ACPI RSDP/XSDT öqilmadi"
+            elif [ -z "$mx" ] && ! grep -qaE "ACPI MADT: GICv$g, GICD 0x[0-9a-f]+, GIC[RC] 0x[0-9a-f]+ .* $smp ta CPU" "$log"; then res="FAIL vps ($tag): ACPI MADT (GIC, $smp CPU) notoʻgʻri"
+            elif [ -z "$mx" ] && ! grep -qaE "ACPI GTDT: .*NS EL1 30" "$log"; then res="FAIL vps ($tag): ACPI GTDT taymer uzilişi öqilmadi"
+            elif [ -z "$mx" ] && ! grep -qaE "ACPI SPCR: PL011 0x9000000, GSIV 33; MCFG: ECAM 0x[0-9a-f]+ " "$log"; then res="FAIL vps ($tag): ACPI SPCR/MCFG öqilmadi"
+            elif [ -z "$mx" ] && ! grep -qaE "ACPI → DTB: taymer INTID 30, PSCI CPU_ON uçun $smp ta MPIDR" "$log"; then res="FAIL vps ($tag): ACPI dan yasalgan DTB (timer/cpus) notoʻgʻri"
+            elif [ -n "$mx" ] && grep -qaE "DTB yo'q" "$log"; then res="FAIL vps ($tag): acpi=off da DTB topilmadi"
+            elif ! grep -qaE "\[smp \] $smp ta" "$log"; then res="FAIL vps ($tag): $smp ta yadro işga tuşmadi"
+            elif ! grep -qaE '\[disk\] virtio-blk' "$log"; then res="FAIL vps ($tag): virtio-blk-pci disk topilmadi"
+            elif ! grep -qaE 'uziliş orqali tugadi' "$log"; then res="FAIL vps ($tag): PCI disk uzilişi sinovi ötmadi"
+            elif ! grep -qaE "SGI: .*\\(GICv$g\\) — OK" "$log"; then res="FAIL vps ($tag): GICv$g SGI sinovi ötmadi"
+            elif ! grep -qaE 'taymer: .* — OK' "$log"; then res="FAIL vps ($tag): taymer uzilişi sinovi ötmadi"
+            elif ! grep -qaE 'kiriş: 2 ta virtio-input' "$log"; then res="FAIL vps ($tag): virtio-input-pci (klaviatura/planşet) topilmadi"
+            elif ! grep -qaE '\[net \] virtio-net' "$log"; then res="FAIL vps ($tag): virtio-net-pci topilmadi"
+            elif ! grep -qaE '\[gpu \] virtio-gpu' "$log"; then res="FAIL vps ($tag): virtio-gpu-pci topilmadi"
+            elif ! grep -qaE 'manbalar: virtio-rng' "$log"; then res="FAIL vps ($tag): virtio-rng-pci topilmadi"
+            else res="OK vps ($tag): UEFI (BOOTAA64.EFI) → $(if [ -z "$mx" ]; then echo "ACPI (MADT, GTDT, SPCR, MCFG)"; else echo DTB; fi) → GICv$g (taymer, SGI, seriya klaviatura), virtio-pci (blk, net, gpu, input), sozlaş ekrani ($(grep -acE '\[ok\]|— OK' "$log") self-test)"; fi
             break
         fi
-        kill -0 $qpid 2>/dev/null || { res="FAIL vps: qemu erta çiqdi"; break; }
+        kill -0 $qpid 2>/dev/null || { res="FAIL vps ($tag): qemu erta çiqdi"; break; }
     done
     kill $qpid 2>/dev/null; wait $qpid 2>/dev/null; kill $holder 2>/dev/null; wait $holder 2>/dev/null
     rm -f "$esp" "$sys" "$fifo"
     echo "$res"
     [[ "$res" == OK* ]]
+}
+# Uç xil VPS sinovi: ACPI + GICv3 (Netcup ga öxşaş), ACPI + GICv2 (MADT GICC yöli, 2 CPU),
+# UEFI + DTB (acpi=off). Çiqiş: 0 — ötdi, 1 — xato, 2 — firmware yöq (ötkazib yuborildi).
+vps_all() {
+    local rc=0
+    vps_test 3 4 || rc=$?
+    [ $rc -ne 0 ] && return $rc
+    vps_test 2 2 || return 1
+    vps_test 3 4 ",acpi=off" || return 1
 }
 # --- DTB yöli + virtio-pci: -kernel, GICv2 va GICv3, faqat PCI qurilmalar (ECAM DTB dagi
 #     pci-host-ecam-generic dan, uzilişlar INTx/interrupt-map orqali) ---
@@ -127,7 +151,7 @@ if [ "$MODE" = "pci" ]; then
     pci_test; exit $?
 fi
 if [ "$MODE" = "vps" ]; then
-    vps_test; rc=$?; [ $rc -eq 2 ] && exit 0; exit $rc
+    vps_all; rc=$?; [ $rc -eq 2 ] && exit 0; exit $rc
 fi
 
 # --- Yuklaniş sinovi: toza disk, faqat seriya port ---
@@ -192,6 +216,6 @@ echo "[ok] burchaklar: ${#SHOTS[@]} surat toza"
 pci_test || exit 1
 
 # --- VPS (UEFI) yuklaniş ---
-vps_test; rc=$?
+vps_all; rc=$?
 [ $rc -eq 1 ] && exit 1
 exit 0

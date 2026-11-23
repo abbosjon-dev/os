@@ -261,7 +261,9 @@
       "id": "T33",
       "title": "ACPI zaxira yo'li: DTB bo'lmasa RSDP/XSDT, MADT, MCFG, SPCR, GTDT ni o'qish",
       "detail": "Ba'zi VPS UEFI faqat ACPI beradi. EFI config table dan RSDP ol; MADT dan GIC manzillari va CPU lar, MCFG dan PCI ECAM, SPCR dan UART, GTDT dan taymer uzilishi. Sinov: QEMU da -no-acpi yo'qligida va DTB ni yashirib (yoki acpi=force rejim). Sinov muhiti (Netcup VPS 500 ARM G12.5 ga o'xshash): qemu-system-aarch64 -machine virt,gic-version=3 -cpu max -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd (yoki /usr/share/AAVMF/AAVMF_CODE.fd pflash), virtio-*-pci qurilmalar. Eski yo'l (-kernel, GICv2, virtio-mmio) BUZILMASLIGI shart — verify.sh full o'tsin. Yangi sinovni scripts/agent/verify.sh ga qo'sh (vps rejimi).",
-      "batch": 5
+      "batch": 5,
+      "status": "done",
+      "done_at": "2026-11-23 19:46:17"
     },
     {
       "id": "T34",

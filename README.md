@@ -664,6 +664,19 @@ Qanday işlaydi:
   FADT → PSCI usuli) kiçik DTB yasaydi. Keyin **xotira xaritasi** öqiladi (runtime, ACPI,
   band hududlar frame allokatoriga "band" deb uzatiladi), `ExitBootServices`, keş
   tozalanadi, MMU öçiriladi va odatiy `_start` ga ötiladi (x0 = DTB).
+- **ACPI zaxira yöli** (`src/acpi.rs`): ba'zi VPS UEFI lari faqat ACPI beradi. RSDP (EFI
+  config table, `ACPI_20_TABLE_GUID`) → **XSDT** (yoki eski RSDT), har jadval checksum
+  bilan tekşiriladi:
+  - **MADT** — GICD, GICR (yoki har GICC dagi redistributor manzillaridan), GICv2 uçun GICC,
+    yoqilgan **CPU lar va ularning MPIDR lari**;
+  - **GTDT** — generic timer uzilişlari (xavfsiz/NS EL1, virtual, EL2 GSIV + bayroqlar);
+  - **SPCR** — seriya port (PL011/SBSA UART manzili va GSIV);
+  - **MCFG** — PCIe ECAM manzili va şinalar oraliği; **FADT** — PSCI usuli (HVC/SMC).
+
+  Ulardan yasalgan DTB da `/cpus/cpu@MPIDR` va `/timer` (`arm,armv8-timer`) tugunlari ham bor:
+  yadro taymer INTID ni `/timer` dan, PSCI `CPU_ON` maqsadlarini `/cpus` dan oladi (ikkalasi
+  `-kernel` DTB sida ham işlaydi). Jurnalda qisqa hisobot: `ACPI: RSDP v2 → XSDT: …`,
+  `ACPI MADT: …`, `ACPI GTDT: …`, `ACPI SPCR: …; MCFG: …`.
 - Qattiq yozilgan manzillar endi **DTB dan**: UART (`arm,pl011`), GIC (v2 yoki v3), RAM
   boşi/hajmi, PCIe ECAM.
 - **GICv3** (`src/gic.rs`): distributor + har yadroning redistributori, `ICC_*` tizim
@@ -683,7 +696,10 @@ Sinov: `scripts/agent/verify.sh vps` (ESP yasaydi, `virt,gic-version=3` + QEMU_E
 bilan yuklaydi; virtio-blk/net/rng/gpu/keyboard/tablet-pci). Til tanlaş ekranida seriya
 port orqali "3" yuboriladi — "First-time setup" çiqişi GICv3 da klaviatura uzilişi
 işlaşini isbotlaydi; GICv3, taymer, SGI, PCI disk uzilişi va 2 ta virtio-input qurilma
-tekşiriladi (virtio-net/gpu/rng-pci ham). `verify.sh full` ham uni işlatadi.
+tekşiriladi (virtio-net/gpu/rng-pci ham). Uç xil konfiguratsiya: **ACPI + GICv3, 4 CPU**
+(EDK2 ACPI berganda DTB ni yaşiradi — Netcup ga öxşaş), **ACPI + GICv2, 2 CPU** (MADT GICC
+yöli) va **`acpi=off`** (UEFI + DTB). ACPI rejimida MADT/GTDT/SPCR/MCFG hisobot qatorlari va
+CPU soni tekşiriladi. `verify.sh full` ham uni işlatadi.
 
 `scripts/agent/verify.sh pci` — UEFI siz yöl: `-kernel` bilan GICv2 va GICv3 da faqat
 virtio-*-pci qurilmalar. ECAM DTB dagi `pci-host-ecam-generic` dan öqiladi, BAR lar
@@ -1077,6 +1093,7 @@ src/memory/mmu.rs    MMU, sahifa jadvallari, map/unmap/translate
 src/memory/heap.rs   Kernel heap (free list) — Box/Vec/String işlaydi
 src/gic.rs           GICv2/GICv3 uzilişlar boşqaruvçisi (versiya DTB dan)
 src/efi.rs           UEFI kiriş nuqtasi: DTB/ACPI, xotira xaritasi, ExitBootServices
+src/acpi.rs          ACPI öquvçisi: RSDP/XSDT, MADT, GTDT, SPCR, MCFG, FADT
 src/drivers/pci.rs   PCIe ECAM: sanaş, BAR lar, virtio-pci qurilmalari
 src/timer.rs         ARM taymeri (100 Hz)
 src/irq.rs           Uzilişlarni drayverlarga tarqatiş

@@ -9,6 +9,7 @@ extern crate alloc;
 #[allow(dead_code)] // ayrim doimiylar faqat foydalanuvçi kutubxonasida kerak
 mod abi;
 mod accounts;
+mod acpi;
 mod audio;
 mod config;
 mod crypto;
@@ -101,6 +102,7 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
     }
     if let Some(f) = fdt.as_ref() {
         gic::configure(f);
+        timer::configure(f);
     }
     uart::console().init();
     exceptions::init();
@@ -122,6 +124,10 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
             "  UEFI: xotira xaritasi {} hudud, oddiy RAM {:#x}..{:#x}, band {} hudud; GICv{}",
             e.efi_regions, e.ram_lo, e.ram_hi, e.reserved_count, gic::version()
         );
+        if let Some(a) = e.acpi() {
+            acpi::report(a, |l| println!("{}", l));
+            println!("  ACPI → DTB: taymer INTID {}, PSCI CPU_ON uçun {} ta MPIDR", timer::irq(), fdt.map_or(0, |f| f.cpus().1));
+        }
     }
     let efi_ram = efi.filter(|e| e.ram_hi > e.ram_lo).map(|e| {
         // Yadro joylaşgan 1 GiB dan boşlab (yadro bağlangan manzil RAM boşiga bağliq)
@@ -240,11 +246,25 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
     unsafe extern "C" {
         fn secondary_entry();
     }
-    for cpu in 1..task::MAX_CPUS {
-        power::cpu_on(cpu as u64, secondary_entry as *const () as usize, cpu as u64);
+    // CPU lar ro'yxati DTB `/cpus` dan (ACPI rejimida — MADT GICC MPIDR laridan yasalgan);
+    // ro'yxat bölmasa — QEMU virt odati: MPIDR = 0..MAX_CPUS. Yadro raqami — MPIDR.Aff0.
+    let (list, n) = fdt.map_or(([0; 8], 0), |f| f.cpus());
+    let me = { let m: u64; unsafe { asm!("mrs {}, mpidr_el1", out(reg) m) }; m & 0xff_00ff_ffff };
+    let mut want = 1;
+    let mut seen = 1u64 << (me & 0xff).min(63);
+    let targets: Vec<u64> = if n > 0 { list[..n].to_vec() } else { (0..task::MAX_CPUS as u64).collect() };
+    for &m in &targets {
+        let id = (m & 0xff) as usize;
+        if m == me || id >= task::MAX_CPUS || seen & (1 << id) != 0 {
+            continue;
+        }
+        seen |= 1 << id;
+        if power::cpu_on(m, secondary_entry as *const () as usize, id as u64) {
+            want += 1;
+        }
     }
     let t0 = timer::uptime_ms();
-    while task::cpus_online() < task::MAX_CPUS && timer::uptime_ms() - t0 < 500 {
+    while task::cpus_online() < want && timer::uptime_ms() - t0 < 500 {
         core::hint::spin_loop();
     }
     tprintln!(msg::SMP_READY, task::cpus_online());

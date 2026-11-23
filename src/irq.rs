@@ -37,7 +37,7 @@ pub fn handle() {
             break;
         }
         match id {
-            timer::IRQ => timer::handle_irq(),
+            id if id == timer::irq() => timer::handle_irq(),
             id if id == uart::irq() => uart::handle_irq(),
             SGI_RESCHEDULE => {
                 // pastda preempt() — yangi vazifani olamiz
