@@ -210,9 +210,12 @@ pub fn poll() -> Vec<Event> {
     for d in devs.iter_mut() {
         d.drain(&mut out);
     }
+    drop(devs);
+    // USB HID (xHCI) hodisalari — şu navbatning özida (bir xil Linux kodlari)
+    super::xhci::poll(&mut out);
     out
 }
 
 pub fn present() -> bool {
-    !DEVICES.lock().is_empty()
+    !DEVICES.lock().is_empty() || super::xhci::present()
 }

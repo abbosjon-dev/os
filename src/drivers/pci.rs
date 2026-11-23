@@ -28,6 +28,19 @@ pub struct VirtioPci {
 
 static DEVICES: SpinLock<Vec<VirtioPci>> = SpinLock::new(Vec::new());
 
+/// PCI sinf kodi (sinf, kiçik sinf, interfeys): xHCI USB kontrolleri.
+pub const CLASS_XHCI: u32 = 0x0c_03_30;
+
+/// Topilgan xHCI (USB 3) kontrolleri: konfiguratsiya maydoni va BAR0 (MMIO) VA si.
+#[derive(Clone, Copy)]
+pub struct XhciPci {
+    pub bar0: usize,
+    pub vendor: u16,
+    pub device: u16,
+}
+
+static XHCI: SpinLock<Vec<XhciPci>> = SpinLock::new(Vec::new());
+
 pub fn cfg_rd32(cfg: usize, off: usize) -> u32 {
     unsafe { read_volatile((cfg + off) as *const u32) }
 }
@@ -75,6 +88,7 @@ pub fn init(fdt: Option<&crate::dtb::Fdt>) -> usize {
     // BAR tayinlaş oynasi (faqat DTB da `ranges` bölsa); firmware tayinlaganlarini tegmaymiz
     let mut window = mem32_window(node.ranges);
     let mut found = Vec::new();
+    let mut usb = Vec::new();
     for bus in 0..buses {
         for dev in 0..32 {
             for func in 0..8 {
@@ -102,6 +116,14 @@ pub fn init(fdt: Option<&crate::dtb::Fdt>) -> usize {
                     let cmd = cfg_rd16(cfg, 0x04);
                     cfg_wr16(cfg, 0x04, (cmd | 0x2 | 0x4 | (1 << 10)) & !0x1);
                     found.push(VirtioPci { device_type, cfg, bars, irq });
+                } else if cfg_rd32(cfg, 0x08) >> 8 == CLASS_XHCI && header & 0x7f == 0 {
+                    // xHCI: BAR0 (64-bit MMIO); uzilişlar işlatilmaydi — hodisa halqasi sörov bilan
+                    let bars = setup_bars(cfg, &mut window);
+                    let cmd = cfg_rd16(cfg, 0x04);
+                    cfg_wr16(cfg, 0x04, cmd | 0x2 | 0x4 | (1 << 10));
+                    if bars[0] != 0 {
+                        usb.push(XhciPci { bar0: bars[0], vendor, device });
+                    }
                 }
                 if func == 0 && header & 0x80 == 0 {
                     break; // bir funksiyali qurilma
@@ -111,7 +133,13 @@ pub fn init(fdt: Option<&crate::dtb::Fdt>) -> usize {
     }
     let n = found.len();
     *DEVICES.lock() = found;
+    *XHCI.lock() = usb;
     n
+}
+
+/// `n`-çi xHCI kontrolleri (PCI sinfi 0x0C0330).
+pub fn xhci_nth(n: usize) -> Option<XhciPci> {
+    XHCI.lock().get(n).copied()
 }
 
 /// BAR larni öqiydi (kerak bölsa tayinlaydi) va ularni VA ga xaritalaydi.

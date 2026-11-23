@@ -1425,10 +1425,13 @@ fn pump(windows: &mut [Window]) -> bool {
 pub extern "C" fn run(_: usize) {
     let (_sw, sh) = gfx::size();
     set_metrics(sh); // ekran ölçamiga moslaşamiz
-    // Birinçi sozlaş serial konsulda ketayotgan bölsa — tugaşini kutamiz
+    // Birinçi sozlaş serial konsulda ketayotgan bölsa — tugaşini kutamiz. Grafik
+    // klaviatura (VNC: virtio-input yoki USB HID) bosişlari seriya kirişiga uzatiladi,
+    // ekranda konsolning oxirgi qatorlari körinadi — sozlaşni VNC dan ham tugatiş mumkin.
+    let mut ws = WaitState { cx: _sw / 2, cy: sh / 2, shift: false, clicks: 0, log_len: usize::MAX, dirty: true };
     while accounts::all().is_empty() {
-        wait_screen();
-        task::sleep_ms(200);
+        wait_screen(&mut ws);
+        task::sleep_ms(40);
     }
     // Hali kirilmagan bölsa — grafik parol ekrani
     if accounts::current().is_none() {
@@ -1437,12 +1440,67 @@ pub extern "C" fn run(_: usize) {
     desktop();
 }
 
-/// Birinçi sozlaş kutilayotganda körinadigan ekran.
-fn wait_screen() {
+struct WaitState {
+    cx: usize,
+    cy: usize,
+    shift: bool,
+    clicks: usize,
+    log_len: usize,
+    dirty: bool,
+}
+
+/// Birinçi sozlaş kutilayotganda körinadigan ekran: konsol oynasi + kursor.
+fn wait_screen(st: &mut WaitState) {
     let (w, h) = gfx::size();
+    for e in input::poll() {
+        match (e.typ, e.code) {
+            (input::EV_ABS, input::ABS_X) => st.cx = (e.value as usize * w) / 32768,
+            (input::EV_ABS, input::ABS_Y) => st.cy = (e.value as usize * h) / 32768,
+            (input::EV_KEY, input::BTN_LEFT) if e.value == 1 => {
+                st.clicks += 1;
+                if st.clicks == 1 {
+                    crate::println!("  [kiriş] siçqonça bosişi qabul qilindi ({}, {})", st.cx, st.cy);
+                }
+            }
+            (input::EV_KEY, 42) | (input::EV_KEY, 54) => st.shift = e.value != 0,
+            (input::EV_KEY, 28) | (input::EV_KEY, 96) if e.value == 1 => crate::uart::inject(b"\r"),
+            (input::EV_KEY, 14) if e.value == 1 => crate::uart::inject(&[0x7f]),
+            (input::EV_KEY, code) if e.value == 1 => {
+                if let Some(c) = keycode_char(code, st.shift) {
+                    let mut b = [0u8; 4];
+                    crate::uart::inject(c.encode_utf8(&mut b).as_bytes());
+                }
+            }
+            _ => {}
+        }
+        st.dirty = true;
+    }
+    let log = crate::klog::snapshot();
+    if !st.dirty && log.len() == st.log_len {
+        return;
+    }
+    st.dirty = false;
+    st.log_len = log.len();
+    let u = body();
     gradient(DESK_TOP, DESK_BOT);
-    gfx::draw_text_centered(w / 2, h / 2 - body() * 3, "Zamin OS", OQ, body() * 3);
-    gfx::draw_text_centered(w / 2, h / 2 + body(), "Birinçi sozlaş serial konsulda ketyapti…", KULRANG, body());
+    gfx::draw_text_centered(w / 2, u * 2, "Zamin OS", OQ, u * 2);
+    gfx::draw_text_centered(w / 2, u * 5, "Birinçi sozlaş · Первая настройка · First-time setup", KULRANG, u);
+    // Konsol oynasi: oxirgi qatorlar
+    let (px, py) = (u * 3, u * 7);
+    let (pw, ph) = (w.saturating_sub(u * 6), h.saturating_sub(u * 9));
+    gfx::fill_rect(px, py, pw, ph, 0x0010_141c);
+    let text = core::str::from_utf8(&log).unwrap_or("");
+    let line_h = u * 3 / 2;
+    let rows = (ph.saturating_sub(u)) / line_h.max(1);
+    let lines: Vec<&str> = text.split('\n').collect();
+    let start = lines.len().saturating_sub(rows);
+    for (i, l) in lines[start..].iter().enumerate() {
+        let l: String = l.chars().filter(|c| !c.is_control()).take(pw / (u / 2).max(1)).collect();
+        gfx::draw_text(px + u, py + u / 2 + i * line_h, &l, OQ, u);
+    }
+    if input::present() {
+        cursor(st.cx, st.cy);
+    }
     gfx::flush();
 }
 

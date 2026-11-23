@@ -12,7 +12,8 @@
 #                     SGI (barça yadrolar), seriya klaviatura uzilişi ("3" → English sozlaş),
 #                     virtio-gpu/keyboard/tablet-pci, virtio-net/rng-pci;
 #                     ACPI zaxira yöli (DTB yöq): RSDP/XSDT, MADT (GIC, CPU lar), GTDT (taymer),
-#                     SPCR (UART), MCFG (ECAM) — GICv3/4 CPU va GICv2/2 CPU; + acpi=off (UEFI + DTB)
+#                     SPCR (UART), MCFG (ECAM) — GICv3/4 CPU va GICv2/2 CPU; + acpi=off (UEFI + DTB);
+#                     + USB kiriş: qemu-xhci + usb-kbd + usb-tablet (QMP send-key / input-send-event)
 #   verify.sh obraz — yiğiş + scripts/vps/obraz.sh: bitta GPT disk (ESP + Zamin bölimi), UEFI
 #                     (QEMU_EFI.fd -bios yoki AAVMF pflash), GICv3, faqat virtio-*-pci: GPT bölimi
 #                     topiladi, grafik ekran (virtio-gpu), DHCP; sozlaş ustasi oxirigaça → sozlamalar
@@ -114,6 +115,16 @@ vps_all() {
     [ $rc -ne 0 ] && return $rc
     vps_test 2 2 || return 1
     vps_test 3 4 ",acpi=off" || return 1
+    vps_usb_test || return 1
+}
+# USB kiriş (Netcup VNC): virtio-keyboard/tablet-pci ÖRNIGA qemu-xhci + usb-kbd + usb-tablet;
+# til tanlaş ekraniga QMP send-key va input-send-event (abs) — surat docs/vps-usb.png
+vps_usb_test() {
+    local kernel=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel res rc
+    res=$(timeout 220 python3 scripts/agent/vps_usb.py "$kernel" "$LOG_DIR/verify-vps-usb.log" docs/vps-usb.png 2>&1); rc=$?
+    echo "${res:-FAIL vps-usb: timeout (qarang $LOG_DIR/verify-vps-usb.log)}"
+    [ $rc -eq 2 ] && return 0
+    [ $rc -eq 0 ]
 }
 # --- VPS disk obrazi (scripts/vps/obraz.sh): bitta GPT disk — ESP + Zamin bölimi ---
 #   Netcup VPS 500 ARM ga öxşaş: virt,gic-version=3, UEFI, virtio-*-pci. Ikki marta yuklanadi:

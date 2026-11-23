@@ -709,6 +709,21 @@ Qanday işlaydi:
   yadro VA oynasiga xaritalanadi. Firmware bölmasa (`-kernel`), BAR lar DTB `ranges` dan
   tayinlanadi. PCI orqali: **disk, tarmoq, GPU, rng, klaviatura/planşet**
   (virtio-input-pci, hodisalar sörov orqali); övoz hozirça faqat virtio-mmio.
+- **USB kiriş: xHCI + HID** (`src/drivers/xhci.rs`, `usb_hid.rs`): Netcup kabi libvirt/KVM
+  VPS lar VNC klaviatura/siçqonçasini köpinça virtio-input emas, `qemu-xhci` + `usb-kbd` +
+  `usb-tablet` orqali beradi. xHCI PCI sanovidan (sinf `0x0C0330`, BAR0 MMIO) topiladi:
+  HCRST, DCBAA, buyruq halqasi, hodisa halqasi + ERST, port reset, Enable Slot / Address
+  Device, deskriptorlar, Configure Endpoint (interrupt-IN), SET_CONFIGURATION,
+  SET_PROTOCOL(boot) va SET_IDLE. Uzilişlar işlatilmaydi — hodisa halqasi sörov bilan
+  öqiladi. Klaviatura boot hisoboti (8 bayt) sof funksiya `hid_report_diff(prev, cur)`
+  orqali Linux `KEY_*` kodlariga aylanadi (yangi tugma — bosiş, yöqolgani — böşatiş,
+  uşlab turiş — hodisa yöq); planşet X/Y 0..32767 va tugmalar — virtio-tablet hodisalari.
+  Ular virtio-input bilan **bir navbatda** (`input::poll`) keladi, GUI farqni bilmaydi.
+  Jurnalda: `xHCI: 8 port, usb-kbd, usb-tablet`; self-test `[ok] USB HID: …`
+  (modifikatorlar, 6 tugmali rollover, böşatiş, planşet şkalasi).
+- **Birinçi sozlaş VNC dan**: sozlaş ustasi seriya konsolda işlaydi; grafik ekranda endi
+  konsolning oxirgi qatorlari körinadi va grafik klaviatura (virtio-input yoki USB)
+  bosişlari seriya kirişiga uzatiladi — VNC orqali ham sozlaşni tugatiş mumkin.
 - Eski yöl (`-kernel`, GICv2, virtio-mmio) özgarmadi.
 
 Sinov: `scripts/agent/verify.sh vps` (ESP yasaydi, `virt,gic-version=3` + QEMU_EFI.fd
@@ -718,7 +733,13 @@ işlaşini isbotlaydi; GICv3, taymer, SGI, PCI disk uzilişi va 2 ta virtio-inpu
 tekşiriladi (virtio-net/gpu/rng-pci ham). Uç xil konfiguratsiya: **ACPI + GICv3, 4 CPU**
 (EDK2 ACPI berganda DTB ni yaşiradi — Netcup ga öxşaş), **ACPI + GICv2, 2 CPU** (MADT GICC
 yöli) va **`acpi=off`** (UEFI + DTB). ACPI rejimida MADT/GTDT/SPCR/MCFG hisobot qatorlari va
-CPU soni tekşiriladi. `verify.sh full` ham uni işlatadi.
+CPU soni tekşiriladi. Törtinçi konfiguratsiya — **USB kiriş** (`scripts/agent/vps_usb.py`):
+virtio-keyboard/tablet-pci örniga `-device qemu-xhci -device usb-kbd -device usb-tablet`;
+til tanlaş ekraniga QMP `send-key` ("3", Enter) va `input-send-event` (abs X/Y + çap
+tugma) yuboriladi — "First-time setup" çiqişi va siçqonça bosişi (koordinata ekranga
+töğri şkalalangan) tekşiriladi, surat `docs/vps-usb.png`. `verify.sh full` ham uni işlatadi.
+
+![VPS: USB klaviatura/planşet orqali birinçi sozlaş](docs/vps-usb.png)
 
 `scripts/agent/verify.sh pci` — UEFI siz yöl: `-kernel` bilan GICv2 va GICv3 da faqat
 virtio-*-pci qurilmalar. ECAM DTB dagi `pci-host-ecam-generic` dan öqiladi, BAR lar

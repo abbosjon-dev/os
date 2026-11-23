@@ -23,6 +23,16 @@ ls /sys/bus/virtio/devices 2>/dev/null | while read v; do
   echo "  $v id=$(cat /sys/bus/virtio/devices/$v/device) bus=$(basename "$(readlink -f /sys/bus/virtio/devices/$v/..)")"; done
 echo "-- PCI:"
 command -v lspci >/dev/null && lspci -nn 2>/dev/null | head -25 || ls /sys/bus/pci/devices 2>/dev/null | head -25
+echo "-- USB kontroller va kiritish qurilmalari (VNC klaviatura/sichqoncha):"
+if command -v lspci >/dev/null; then
+  lspci -nn 2>/dev/null | grep -iE "usb|0c03" | sed 's/^/  /' || echo "  USB kontroller yo'q"
+else
+  for d in /sys/bus/pci/devices/*; do
+    case $(cat "$d/class" 2>/dev/null) in 0x0c03*) echo "  $(basename "$d") class=$(cat "$d/class") $(cat "$d/vendor"):$(cat "$d/device") ($(basename "$(readlink -f "$d/driver" 2>/dev/null)" 2>/dev/null))";; esac
+  done
+fi
+command -v lsusb >/dev/null && lsusb 2>/dev/null | sed 's/^/  /'
+grep -h -E '^N: Name=' /proc/bus/input/devices 2>/dev/null | sed 's/^N: Name=/  kiritish: /'
 echo "-- uzilish kontrolleri (ARM):"
 grep -m3 -iE "gic" /proc/interrupts 2>/dev/null | awk '{print "  "$NF, $(NF-1)}' | sort -u
 dmesg 2>/dev/null | grep -m2 -iE "GICv[234]|gic-v3|gic,v" || true

@@ -302,6 +302,15 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
         tprintln!(msg::GPU_READY, w, h);
         let inputs = drivers::virtio_input::init();
         println!("  kiriş: {} ta virtio-input qurilma (klaviatura/planşet)", inputs);
+        // USB (xHCI): Netcup kabi VPS larda VNC kirişi qemu-xhci + usb-kbd/usb-tablet orqali
+        let usb = match drivers::xhci::init() {
+            Some((m, n)) => {
+                println!("  {}", m);
+                n
+            }
+            None => 0,
+        };
+        let inputs = inputs + usb;
         draw_desktop();
         if inputs > 0 {
             // Grafik muhit — kiriş bilan (alohida oqim)
@@ -591,6 +600,12 @@ fn self_tests() {
     match image::self_test() {
         Ok(n) => tprintln!(msg::TEST_IMAGE, n),
         Err(fmt) => panic!("rasm dekoderi yiqildi: {}", fmt),
+    }
+
+    // USB HID boot hisobotlari → Linux tugma kodlari (xHCI drayveri uçun)
+    match drivers::usb_hid::self_test() {
+        Ok(n) => println!("  [ok] USB HID: modifikatorlar, 6 tugmali rollover, böşatiş/uşlab turiş, planşet koordinata şkalasi ({} sinov)", n),
+        Err(e) => panic!("USB HID sinovi yiqildi: {}", e),
     }
 
     // GPT bölimlar jadvali (VPS disk obrazi)

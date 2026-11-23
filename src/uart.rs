@@ -181,6 +181,15 @@ pub fn read_byte() -> Option<u8> {
     rx::pop()
 }
 
+/// Grafik klaviaturadan (VNC: virtio-input / USB HID) kelgan baytni seriya kirişi
+/// navbatiga qöşadi — birinçi sozlaş ekrani faqat seriya konsolda bölgani uçun.
+pub fn inject(bytes: &[u8]) {
+    for &b in bytes {
+        rx::push(b);
+    }
+    crate::task::wake_input();
+}
+
 pub fn has_input() -> bool {
     !rx::is_empty()
 }
