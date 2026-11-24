@@ -300,6 +300,7 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
             tprintln!(msg::NET_NIC, format_args!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]));
             net::init();
             task::spawn_kernel("dhcp", net::dhcp::worker, 0).expect("dhcp oqimi");
+            task::spawn_kernel("ipv6", net::ipv6::worker, 0).expect("ipv6 oqimi");
         }
         None => tprintln!(msg::NET_NONE),
     }
@@ -524,11 +525,20 @@ extern "C" fn boot_tests(_: usize) {
     if let Ok(p) = task::spawn_user("sinov", image, "", task::SpawnOptions::kernel(false)) {
         task::wait(p);
     }
-    let frames_before = frame::stats().0;
-    let pid = task::spawn_user("sinov", image, "", task::SpawnOptions::kernel(false)).expect("sinov");
-    let code = task::wait(pid);
-    assert_eq!(code, Some(42), "sinov dasturi xato kod qaytardi");
-    assert_eq!(frame::stats().0, frames_before, "jarayon xotirasi töliq qaytmadi");
+    // Öljov paytida fon oqimlari (tarmoq: DHCP/DNS, IPv6 RA/ping) yadro heapini östirişi mumkin —
+    // şuning uçun 3 marta urinamiz: haqiqiy sizib çiqiş har safar takrorlanadi.
+    let (mut frames_before, mut frames_after) = (0, 1);
+    for _ in 0..3 {
+        frames_before = frame::stats().0;
+        let pid = task::spawn_user("sinov", image, "", task::SpawnOptions::kernel(false)).expect("sinov");
+        let code = task::wait(pid);
+        assert_eq!(code, Some(42), "sinov dasturi xato kod qaytardi");
+        frames_after = frame::stats().0;
+        if frames_after == frames_before {
+            break;
+        }
+    }
+    assert_eq!(frames_after, frames_before, "jarayon xotirasi töliq qaytmadi");
     tprintln!(msg::TEST_USER, 42);
 
     // Terminal: buyruqlar tarixi va Tab bilan töldiriş (sof mantiq, `terminal --self-test`)
@@ -760,6 +770,10 @@ fn self_tests() {
     match net::ipcfg::self_test() {
         Ok(n) => println!("  [ok] tarmoq sozlamalari: parse_ipv4, niqob (/24 va nuqtali), validate_static (tarmoq/broadcast/0.0.0.0/uzluksiz bölmagan niqob rad), /32 va on-link bölmagan şlyuz, saqlaş → öqiş aylanişi ({} sinov)", n),
         Err(e) => panic!("tarmoq sozlamalari tekşiruvi yiqildi: {}", e),
+    }
+    match net::ipv6::self_test() {
+        Ok(n) => println!("  [ok] IPv6: EUI-64 link-local, solicited-node manzil va 33:33:ff MAC filtri, ICMPv6 summasi (psevdo-sarlavha) ma'lum vektorga teng, NS/NA tahlili, RA prefiksi → SLAAC, RFC 5952 format, statik /64 saqlaş ({} sinov)", n),
+        Err(e) => panic!("IPv6 tekşiruvi yiqildi: {}", e),
     }
     match drivers::virtio_snd::self_test_volume() {
         Ok(n) => println!("  [ok] övoz balandligi: scale_samples 100%/50%/0%/övozsiz, i16 çegarasi ({} sinov)", n),

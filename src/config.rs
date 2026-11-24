@@ -4,7 +4,8 @@
 //!   sektor 0      — sarlavha: "ZAMINDSK", versiya, sozlamalar uzunligi
 //!   sektor 1..16  — sozlamalar matni ("kalit=qiymat" qatorlari): til, login, ism,
 //!                   PBKDF2 tuzi va takrorlar soni, örangan asosiy kalit, tarmoq rejimi
-//!                   (tarmoq=dhcp|statik, tarmoq_ip/niqob/shlyuz/dns)
+//!                   (tarmoq=dhcp|statik, tarmoq_ip/niqob/shlyuz/dns; tarmoq6=slaac|statik,
+//!                   tarmoq6_ip=manzil/prefiks, tarmoq6_shlyuz)
 //!   sektor 64..   — ZaminFS (şifrlangan fayl tizimi), ikki nusxa (A/B)
 //!
 //! Disk bölmasa, sozlamalar faqat xotirada turadi (keyingi yuklanişda yöqoladi).
@@ -123,6 +124,7 @@ pub fn load() -> Option<Settings> {
     }
     flush(&mut cur, &mut accounts, !in_section);
     crate::net::set_static_pref(crate::net::ipcfg::from_text(text));
+    crate::net::ipv6::set_static_pref(crate::net::ipv6::from_text(text));
     Some(Settings { lang, accounts })
 }
 
@@ -142,6 +144,7 @@ pub fn save(s: &Settings) -> bool {
         if crate::drivers::virtio_snd::muted() { "ha" } else { "yöq" }
     );
     text += &crate::net::ipcfg::to_text(crate::net::static_cfg().as_ref());
+    text += &crate::net::ipv6::to_text(crate::net::ipv6::static_pref().as_ref());
     for a in &s.accounts {
         text += &format!(
             "[hisob]\nlogin={}\nism={}\nuid={}\nadmin={}\nkdf=pbkdf2-sha256\ntakror={}\ntuz={}\nkalit={}\n",

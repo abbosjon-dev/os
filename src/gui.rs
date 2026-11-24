@@ -6009,7 +6009,8 @@ fn kv_table(x: usize, y: usize, rw: usize, rows: &[(&str, String)]) {
         }
         let ty = ry + (rh - small()) / 2;
         gfx::draw_text(x + u / 2, ty, k, 0xdbe3ee, small() * 9 / 10);
-        let v = fit_text(v, rw / 2, small() * 9 / 10);
+        let kw = gfx::text_width(k, small() * 9 / 10);
+        let v = fit_text(v, (rw / 2).max(rw.saturating_sub(kw + u * 2)), small() * 9 / 10);
         let vw = gfx::text_width(&v, small() * 9 / 10);
         gfx::draw_text((x + rw).saturating_sub(vw + u / 2), ty, &v, 0x8a9ab0, small() * 9 / 10);
     }
@@ -6156,16 +6157,24 @@ fn draw_settings_body(win: &Window) {
 }
 
 
-// ---------------- Sozlamalar → Tarmoq: DHCP yoki qölda (statik IPv4) ----------------
+// ---------------- Sozlamalar → Tarmoq: DHCP yoki qölda (statik IPv4) + IPv6 ----------------
 
-const NET_LABELS: [&str; 4] = ["IP manzil", "Niqob", "Şlyuz", "DNS"];
-const NET_HINTS: [&str; 4] = ["masalan 203.0.113.7 yoki …/24", "255.255.255.0 yoki /24", "masalan 203.0.113.1", "masalan 1.1.1.1"];
+const NET_LABELS: [&str; 6] = ["IP manzil", "Niqob", "Şlyuz", "DNS", "IPv6 manzil/prefiks", "IPv6 şlyuz"];
+const NET_HINTS: [&str; 6] = [
+    "masalan 203.0.113.7 yoki …/24",
+    "255.255.255.0 yoki /24",
+    "masalan 203.0.113.1",
+    "masalan 1.1.1.1",
+    "böş — SLAAC (avtomatik)",
+    "masalan fe80::1",
+];
 const NET_APPLY: &str = "Qöllaş";
 
-/// Tarmoq bölimi formasi: tanlangan rejim, 4 ta maydon (IP, niqob, şlyuz, DNS), fokus va xabar.
+/// Tarmoq bölimi formasi: tanlangan rejim, 6 ta maydon (IP, niqob, şlyuz, DNS; IPv6 manzil/prefiks,
+/// IPv6 şlyuz), fokus va xabar. IPv6 maydonlari ikkala rejimda ham tahrirlanadi (böş — SLAAC).
 struct NetForm {
     manual: bool,
-    fields: [String; 4],
+    fields: [String; 6],
     focus: Option<usize>,
     /// (matn, xatomi)
     msg: Option<(String, bool)>,
@@ -6176,19 +6185,27 @@ impl NetForm {
         let mut f = NetForm { manual: false, fields: Default::default(), focus: None, msg: None };
         if let Some(c) = crate::net::static_cfg() {
             f.manual = true;
-            f.fields = [ip_str(c.ip), ip_str(c.mask), ip_str(c.gw), ip_str(c.dns)];
+            f.fields[..4].clone_from_slice(&[ip_str(c.ip), ip_str(c.mask), ip_str(c.gw), ip_str(c.dns)]);
+        }
+        if let Some(c) = crate::net::ipv6::static_pref() {
+            f.fields[4] = alloc::format!("{}/{}", crate::net::ipv6::fmt(&c.addr), c.plen);
+            f.fields[5] = crate::net::ipv6::fmt(&c.gw);
         }
         f
     }
+    /// Maydon tahrirlanadimi: IPv4 — faqat "Qölda" rejimida, IPv6 — doim.
+    fn editable(&self, k: usize) -> bool {
+        self.manual || k >= 4
+    }
     /// Qölda rejimga ötilganda böş maydonlarni joriy (DHCP dan olingan) manzillar bilan töldiradi.
     fn prefill(&mut self) {
-        if self.fields.iter().all(|f| f.is_empty()) && crate::net::is_configured() {
-            self.fields = [
+        if self.fields[..4].iter().all(|f| f.is_empty()) && crate::net::is_configured() {
+            self.fields[..4].clone_from_slice(&[
                 ip_str(crate::net::our_ip()),
                 ip_str(crate::net::netmask()),
                 ip_str(crate::net::gateway()),
                 ip_str(crate::net::dns_server()),
-            ];
+            ]);
         }
     }
 }
@@ -6202,7 +6219,7 @@ fn net_mode_btn(win: &Window, k: usize) -> (usize, usize, usize, usize) {
     (x + k * bw, y0 + u * 2, bw, u * 3 / 2)
 }
 
-/// k-maydon (2×2 tör): IP | Niqob, Şlyuz | DNS.
+/// k-maydon (2×3 tör): IP | Niqob, Şlyuz | DNS, IPv6 manzil/prefiks | IPv6 şlyuz.
 fn net_field(win: &Window, k: usize) -> (usize, usize, usize, usize) {
     let u = body();
     let (_, x, _, _) = settings_geo(win);
@@ -6216,7 +6233,7 @@ fn net_field(win: &Window, k: usize) -> (usize, usize, usize, usize) {
 
 fn net_apply_btn(win: &Window) -> (usize, usize, usize, usize) {
     let u = body();
-    let (fx, fy, _, fh) = net_field(win, 2);
+    let (fx, fy, _, fh) = net_field(win, 4);
     let bw = gfx::text_width(NET_APPLY, small() * 9 / 10) + u * 3;
     (fx, fy + fh + u * 2 / 3, bw, u * 3 / 2)
 }
@@ -6248,14 +6265,15 @@ fn draw_net(win: &Window) {
         if cfg { ip_str(crate::net::gateway()) } else { String::new() },
         if cfg { ip_str(crate::net::dns_server()) } else { String::new() },
     ];
-    for k in 0..4 {
+    for k in 0..6 {
         let (fx, fy, fw, fh) = net_field(win, k);
+        let ed = f.editable(k);
         gfx::draw_text(fx, fy - small() * 4 / 5 - u / 4, NET_LABELS[k], 0x9fb0c3, small() * 4 / 5);
-        gfx::fill_round_rect(fx, fy, fw, fh, u / 3, if f.manual { 0x0f141d } else { 0x161c28 });
-        let focused = f.manual && f.focus == Some(k);
+        gfx::fill_round_rect(fx, fy, fw, fh, u / 3, if ed { 0x0f141d } else { 0x161c28 });
+        let focused = ed && f.focus == Some(k);
         gfx::round_outline(fx, fy, fw, fh, u / 3, if focused { 2 } else { 1 }, if focused { accent() } else { 0x3a4458 });
         let ty = fy + (fh - fpx) / 2;
-        let (txt, col) = if f.manual {
+        let (txt, col) = if ed {
             if f.fields[k].is_empty() && !focused { (String::from(NET_HINTS[k]), 0x56637a) } else { (f.fields[k].clone(), OQ) }
         } else if live[k].is_empty() {
             (String::from("—"), 0x6f7f95)
@@ -6265,13 +6283,13 @@ fn draw_net(win: &Window) {
         let t = fit_text(&txt, fw.saturating_sub(u), fpx);
         gfx::draw_text(fx + u / 2, ty, &t, col, fpx);
         if focused {
-            let cxp = fx + u / 2 + gfx::text_width(&f.fields[k], fpx) + 1;
+            let cxp = fx + u / 2 + gfx::text_width(&t, fpx) + 1;
             fill_rect(cxp.min(fx + fw - 3), ty, 2, fpx, accent());
         }
     }
     // "Qöllaş" + xabar
     let (bx, by, bw, bh) = net_apply_btn(win);
-    let pending = f.manual || crate::net::static_cfg().is_some();
+    let pending = f.manual || crate::net::static_cfg().is_some() || f.fields[4..].iter().any(|x| !x.is_empty()) || crate::net::ipv6::static_pref().is_some();
     if pending {
         gfx::fill_round_rect(bx, by, bw, bh, bh / 2, accent());
     } else {
@@ -6282,7 +6300,7 @@ fn draw_net(win: &Window) {
     let (mtxt, mcol) = match &f.msg {
         Some((m, true)) => (m.clone(), 0xff6b60),
         Some((m, false)) => (m.clone(), 0x30d158),
-        None if f.manual && f.focus.is_some() => (String::from("Tab — keyingi · Enter — qöllaş · Esc — çiqiş"), 0x6f7f95),
+        None if f.focus.is_some() => (String::from("Tab — keyingi · Enter — qöllaş · Esc — çiqiş"), 0x6f7f95),
         None => (String::new(), 0),
     };
     if !mtxt.is_empty() {
@@ -6302,19 +6320,30 @@ fn draw_net(win: &Window) {
     } else {
         "—"
     };
+    use crate::net::ipv6;
+    let v4 = if cfg {
+        alloc::format!("{}/{} · şlyuz {} · DNS {}", ip_str(crate::net::our_ip()), pfx, ip_str(crate::net::gateway()), ip_str(crate::net::dns_server()))
+    } else {
+        String::from("—")
+    };
+    let gw6 = ipv6::gateway6().map(|g| alloc::format!(" · şlyuz {}", ipv6::fmt(&g))).unwrap_or_default();
+    let v6 = match (ipv6::global_addr(), ipv6::link_local_addr()) {
+        (Some((a, p)), _) => alloc::format!("{}/{}{}", ipv6::fmt(&a), p, gw6),
+        (None, Some(ll)) => alloc::format!("{} (link-local){}", ipv6::fmt(&ll), gw6),
+        _ => String::from("—"),
+    };
     kv_table(x, by + bh + u * 2 / 3, rw, &[
         ("Qurilma", if up { alloc::format!("virtio-net · {}", mac) } else { String::from("Topilmadi") }),
         ("Holat", String::from(state)),
-        ("IP manzil", if cfg { alloc::format!("{}/{}", ip_str(crate::net::our_ip()), pfx) } else { String::from("—") }),
-        ("Şlyuz", if cfg { ip_str(crate::net::gateway()) } else { String::from("—") }),
-        ("DNS", if cfg { ip_str(crate::net::dns_server()) } else { String::from("—") }),
+        ("IPv4", v4),
+        ("IPv6", v6),
     ]);
 }
 
 /// Tarmoq bölimiga bosiş. Bosildi — true.
 fn net_click(win: &mut Window, cx: usize, cy: usize) -> bool {
     let modes = [net_mode_btn(win, 0), net_mode_btn(win, 1)];
-    let fields = [net_field(win, 0), net_field(win, 1), net_field(win, 2), net_field(win, 3)];
+    let fields: [_; 6] = core::array::from_fn(|k| net_field(win, k));
     let apply = net_apply_btn(win);
     let Some(f) = win.nform.as_mut() else { return false };
     for (k, r) in modes.iter().enumerate() {
@@ -6327,7 +6356,7 @@ fn net_click(win: &mut Window, cx: usize, cy: usize) -> bool {
     }
     for (k, r) in fields.iter().enumerate() {
         if in_rect(*r, cx, cy) {
-            if !f.manual {
+            if !f.editable(k) {
                 f.manual = true;
                 f.prefill();
             }
@@ -6343,15 +6372,17 @@ fn net_click(win: &mut Window, cx: usize, cy: usize) -> bool {
     f.focus.take().is_some()
 }
 
-/// Tarmoq maydoniga tugma: raqam, '.', '/', Backspace, Tab (Shift+Tab), Enter.
+/// Tarmoq maydoniga tugma: raqam, '.', '/', IPv6 da a-f va ':', Backspace, Tab (Shift+Tab), Enter.
 /// Maydon fokusda bölmasa — klaviatura yutilmaydi.
 fn net_key(win: &mut Window, code: u16, shift: bool) {
     let Some(f) = win.nform.as_mut() else { return };
-    let Some(k) = f.focus.filter(|_| f.manual) else { return };
+    let Some(k) = f.focus.filter(|&k| f.editable(k)) else { return };
+    // Tab aylanişi: "Qölda" — 6 maydon, DHCP — faqat IPv6 maydonlari
+    let (first, n) = if f.manual { (0, 6) } else { (4, 2) };
     match code {
-        15 => f.focus = Some(if shift { (k + 3) % 4 } else { (k + 1) % 4 }),
+        15 => f.focus = Some(first + if shift { (k - first + n - 1) % n } else { (k - first + 1) % n }),
         28 => {
-            if k < 3 {
+            if k < 5 {
                 f.focus = Some(k + 1);
             } else {
                 net_apply(f);
@@ -6362,8 +6393,14 @@ fn net_key(win: &mut Window, code: u16, shift: bool) {
             f.fields[k].pop();
         }
         _ => {
-            let Some(ch) = keycode_char(code, shift).filter(|c| c.is_ascii_digit() || *c == '.' || *c == '/') else { return };
-            if f.fields[k].len() < 18 {
+            let v6 = k >= 4;
+            let Some(ch) = keycode_char(code, shift)
+                .map(|c| c.to_ascii_lowercase())
+                .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '/' || (v6 && (matches!(c, 'a'..='f') || *c == ':')))
+            else {
+                return;
+            };
+            if f.fields[k].len() < if v6 { 43 } else { 18 } {
                 f.fields[k].push(ch);
             }
         }
@@ -6371,37 +6408,67 @@ fn net_key(win: &mut Window, code: u16, shift: bool) {
     f.msg = None;
 }
 
-/// "Qöllaş": tekşiradi, darhol qöllaydi va diskka saqlaydi.
+/// "Qöllaş": tekşiradi (IPv4 va IPv6 — ikkalasi ham), darhol qöllaydi va diskka saqlaydi.
 fn net_apply(f: &mut NetForm) {
-    if !f.manual {
+    use crate::net::ipv6;
+    let v4 = if f.manual {
+        match crate::net::ipcfg::from_fields(&f.fields[0], &f.fields[1], &f.fields[2], &f.fields[3]) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                f.msg = Some((String::from(e), true));
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    // IPv6: ikkala maydon böş — SLAAC, aks holda statik manzil/prefiks + şlyuz
+    let v6 = match ipv6::from_fields(&f.fields[4], &f.fields[5]) {
+        Ok(c) => c,
+        Err(e) => {
+            f.msg = Some((String::from(e), true));
+            return;
+        }
+    };
+    if v6 != ipv6::static_pref() {
+        ipv6::set_static_pref(v6);
+        ipv6::apply_static(v6);
+        if v6.is_some() && crate::net::present() {
+            let _ = crate::task::spawn_kernel("ipv6-tekşiruv", ipv6::check_worker, 0);
+        }
+    }
+    let note6 = match v6 {
+        Some(c) => {
+            f.fields[4] = alloc::format!("{}/{}", ipv6::fmt(&c.addr), c.plen);
+            f.fields[5] = ipv6::fmt(&c.gw);
+            alloc::format!(" · IPv6 {}/{}", f.fields[4].split('/').next().unwrap_or(""), c.plen)
+        }
+        None => String::new(),
+    };
+    f.focus = None;
+    let Some(c) = v4 else {
         let was_static = crate::net::static_cfg().is_some();
         crate::net::set_static_pref(None);
         let saved = crate::config::save_current();
         if was_static && crate::net::present() {
             let _ = crate::task::spawn_kernel("dhcp", crate::net::dhcp::rerun, 0);
         }
-        f.focus = None;
-        f.msg = Some((String::from(if saved { "DHCP tanlandi va saqlandi" } else { "DHCP tanlandi (disk yöq — faqat şu seans)" }), false));
-        notify("Tarmoq", "Avtomatik (DHCP)", 0x34c759);
+        let what = alloc::format!("{}{}", if saved { "DHCP tanlandi va saqlandi" } else { "DHCP tanlandi (disk yöq — faqat şu seans)" }, note6);
+        notify("Tarmoq", &alloc::format!("Avtomatik (DHCP){}", note6), 0x34c759);
+        f.msg = Some((what, false));
         return;
+    };
+    crate::net::set_static_pref(Some(c));
+    crate::net::apply_static(c);
+    let saved = crate::config::save_current();
+    if crate::net::present() {
+        let _ = crate::task::spawn_kernel("tarmoq-tekşiruv", net_check_worker, 0);
     }
-    match crate::net::ipcfg::from_fields(&f.fields[0], &f.fields[1], &f.fields[2], &f.fields[3]) {
-        Ok(c) => {
-            crate::net::set_static_pref(Some(c));
-            crate::net::apply_static(c);
-            let saved = crate::config::save_current();
-            if crate::net::present() {
-                let _ = crate::task::spawn_kernel("tarmoq-tekşiruv", net_check_worker, 0);
-            }
-            f.fields = [ip_str(c.ip), ip_str(c.mask), ip_str(c.gw), ip_str(c.dns)];
-            f.focus = None;
-            let pfx = crate::net::ipcfg::mask_prefix(c.mask).unwrap_or(32);
-            let what = alloc::format!("Statik {}/{} qöllandi{}", ip_str(c.ip), pfx, if saved { " va saqlandi" } else { " (disk yöq)" });
-            notify("Tarmoq", &what, 0x34c759);
-            f.msg = Some((what, false));
-        }
-        Err(e) => f.msg = Some((String::from(e), true)),
-    }
+    f.fields[..4].clone_from_slice(&[ip_str(c.ip), ip_str(c.mask), ip_str(c.gw), ip_str(c.dns)]);
+    let pfx = crate::net::ipcfg::mask_prefix(c.mask).unwrap_or(32);
+    let what = alloc::format!("Statik {}/{} qöllandi{}{}", ip_str(c.ip), pfx, if saved { " va saqlandi" } else { " (disk yöq)" }, note6);
+    notify("Tarmoq", &what, 0x34c759);
+    f.msg = Some((what, false));
 }
 
 /// Fon: statik sozlama qöllangandan keyin ping/DNS tekşiruvi (jurnalga).

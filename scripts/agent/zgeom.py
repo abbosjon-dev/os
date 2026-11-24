@@ -104,10 +104,10 @@ def metrics(w, h):
     g["net_manual"] = (cx + bw + bw // 2, my + mh // 2)
     fw = (rw - u) // 2
     rowh = small * 4 // 5 + u // 4 + u * 3 // 2 + u // 2
-    for k in range(4):
+    for k in range(6):  # 0..3 — IPv4 (IP, niqob, şlyuz, DNS), 4..5 — IPv6 (manzil/prefiks, şlyuz)
         fy = my + mh + u // 2 + (k // 2) * rowh + small * 4 // 5 + u // 4
         g["net_f%d" % k] = (cx + (k % 2) * (fw + u) + fw // 2, fy + u * 3 // 4)
-    fy2 = my + mh + u // 2 + rowh + small * 4 // 5 + u // 4
+    fy2 = my + mh + u // 2 + 2 * rowh + small * 4 // 5 + u // 4
     g["net_apply"] = (cx + u, fy2 + u * 3 // 2 + u * 2 // 3 + u * 3 // 4)
     # Sozlamalar → Övoz slayderi (gui.rs vol_track): tugmaça markazi foizga qarab
     vx = sx + sbw + u

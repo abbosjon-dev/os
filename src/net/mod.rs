@@ -1,6 +1,6 @@
 //! Zamin tarmoq stegi (TCP/IP) — noldan yozilgan.
 //!
-//! Qatlamlar: Ethernet → ARP / IPv4 → ICMP, UDP, TCP. Yuqorida DHCP, DNS.
+//! Qatlamlar: Ethernet → ARP / IPv4 → ICMP, UDP, TCP; IPv6 → NDP, ICMPv6 (ipv6.rs). Yuqorida DHCP, DNS.
 //! Bitta "tarmoq oqimi" kelgan kadrlarni qabul qilib, qatlamlarga tarqatadi.
 //! Jönatiş istalgan oqimdan (drayver sinxron jönatadi).
 
@@ -8,6 +8,7 @@ pub mod dhcp;
 pub mod dns;
 pub mod http;
 pub mod ipcfg;
+pub mod ipv6;
 pub mod tcp;
 pub mod tls;
 pub mod udp;
@@ -354,6 +355,7 @@ fn dispatch(frame: &[u8]) {
     match ethertype {
         ETH_ARP => handle_arp(payload),
         ETH_IPV4 => handle_ipv4(payload),
+        ipv6::ETH_IPV6 => ipv6::handle(frame[0..6].try_into().unwrap(), frame[6..12].try_into().unwrap(), payload),
         _ => {}
     }
 }

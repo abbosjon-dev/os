@@ -406,7 +406,9 @@
       "id": "T51",
       "title": "VPS: IPv6 asosi — NDP, ICMPv6 echo, link-local + SLAAC va statik IPv6 (Netcup /64)",
       "detail": "Netcup ARM VPS IPv4 ni DHCP bilan, IPv6 /64 ni esa statik beradi (shlyuz fe80::1). Fayllar: src/net/mod.rs (ETH_IPV6 0x86dd ni qabul qilish, handle_ipv6), yangi src/net/ipv6.rs (MAC dan EUI-64 bo'yicha link-local, Neighbor Solicitation/Advertisement, NDP keshi, Router Advertisement → SLAAC prefiksi va standart shlyuz, ICMPv6 echo so'rov/javob, ICMPv6 nazorat summasi psevdo-sarlavha bilan, MLD shart emas — solicited-node multicast MAC 33:33:ff:xx:xx:xx filtri). Sozlamalar → Tarmoq ga statik IPv6 manzil/prefiks/shlyuz maydonlari qo'shiladi va diskka saqlanadi (src/config.rs, src/gui.rs). user/src/bin/ping.rs IPv6 manzilni qabul qiladi. Qabul mezoni: self-test `[ok] IPv6: …` (EUI-64, solicited-node manzil, ICMPv6 summasi ma'lum vektorga teng, NA tahlili, RA prefiksi). QEMU `-nic user,ipv6=on` bilan verify.sh: jurnalda SLAAC manzili `fec0::…`, `ping fec0::2` javob oladi. Eski IPv4 sinovlari o'zgarishsiz o'tadi.",
-      "batch": 8
+      "batch": 8,
+      "status": "done",
+      "done_at": "2026-11-24 10:22:02"
     },
     {
       "id": "T52",

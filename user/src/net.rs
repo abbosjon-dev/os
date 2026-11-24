@@ -46,6 +46,85 @@ pub fn ping(ip: Ip, seq: u16) -> Result<u64> {
     check(unsafe { syscall(SYS_PING, ip.as_ptr() as u64, seq as u64, 0, 0) }).map(|ms| ms)
 }
 
+pub type Ip6 = [u8; 16];
+
+/// ICMPv6 echo (ping). Natija: javob vaqti (ms).
+pub fn ping6(ip: &Ip6, seq: u16) -> Result<u64> {
+    check(unsafe { syscall(SYS_PING, ip.as_ptr() as u64, seq as u64, 6, 0) })
+}
+
+/// "fec0::2", "2a03:4000::1", "[fe80::1]" → 16 bayt (IPv4 qöşimçasisiz).
+pub fn parse_ipv6(s: &str) -> Option<Ip6> {
+    let s = s.trim();
+    let s = s.strip_prefix('[').and_then(|x| x.strip_suffix(']')).unwrap_or(s);
+    let s = s.split('%').next()?;
+    fn groups(part: &str) -> Option<Vec<u16>> {
+        if part.is_empty() {
+            return Some(Vec::new());
+        }
+        part.split(':')
+            .map(|g| if g.is_empty() || g.len() > 4 || !g.bytes().all(|b| b.is_ascii_hexdigit()) { None } else { u16::from_str_radix(g, 16).ok() })
+            .collect()
+    }
+    let mut w = [0u16; 8];
+    match s.split_once("::") {
+        Some((a, b)) => {
+            let (ga, gb) = (groups(a)?, groups(b)?);
+            if b.contains("::") || ga.len() + gb.len() > 7 {
+                return None;
+            }
+            w[..ga.len()].copy_from_slice(&ga);
+            w[8 - gb.len()..].copy_from_slice(&gb);
+        }
+        None => {
+            let g = groups(s)?;
+            if g.len() != 8 {
+                return None;
+            }
+            w.copy_from_slice(&g);
+        }
+    }
+    let mut out = [0u8; 16];
+    for (i, v) in w.iter().enumerate() {
+        out[2 * i..2 * i + 2].copy_from_slice(&v.to_be_bytes());
+    }
+    Some(out)
+}
+
+/// IPv6 matni (RFC 5952: eng uzun nol guruhlar "::").
+pub fn ip6_string(a: &Ip6) -> String {
+    let w: [u16; 8] = core::array::from_fn(|i| u16::from_be_bytes([a[2 * i], a[2 * i + 1]]));
+    let (mut best, mut blen, mut i) = (8, 0, 0);
+    while i < 8 {
+        let s = i;
+        while i < 8 && w[i] == 0 {
+            i += 1;
+        }
+        if i - s > blen && i - s >= 2 {
+            best = s;
+            blen = i - s;
+        }
+        if i == s {
+            i += 1;
+        }
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < 8 {
+        if i == best {
+            out.push_str("::");
+            i += blen;
+            continue;
+        }
+        if !out.is_empty() && !out.ends_with(':') {
+            out.push(':');
+        }
+        out += &crate::format!("{:x}", w[i]);
+        i += 1;
+    }
+    out
+}
+
 /// TCP ulanişi.
 pub struct Tcp(u64);
 

@@ -30,8 +30,11 @@
 #                     topiladi, grafik ekran (virtio-gpu), DHCP; sozlaş ustasi oxirigaça → sozlamalar
 #                     Zamin bölimiga yoziladi (MBR/GPT butun) → qayta yuklanişda diskdan öqiladi
 #   verify.sh tarmoq — yiğiş + Sozlamalar → Tarmoq (GUI, QMP): "Qölda" → 10.0.2.15/24, şlyuz 10.0.2.2,
-#                     DNS 10.0.2.3 → "Qöllaş" (diskka saqlanadi) → qayta yuklanişda DHCP sörovisiz
+#                     DNS 10.0.2.3, IPv6 fec0::10/64 + şlyuz fe80::2 → "Qöllaş" (diskka saqlanadi) → qayta yuklanişda DHCP sörovisiz
 #                     statik manzil, ping şlyuz va DNS muvaffaqiyatli; surat docs/settings-network.png
+#   verify.sh ipv6  — yiğiş + QEMU -netdev user,ipv4=on,ipv6=on: self-test [ok] IPv6, link-local (EUI-64),
+#                     RA → SLAAC fec0::…/64, seriya qobiqda 'ping fec0::2' va 'ping fe80::2' javob oladi,
+#                     IPv4 'ping 10.0.2.2' ham ötadi (scripts/agent/ipv6_sinov.py)
 #   verify.sh pci   — yiğiş + -kernel (DTB ECAM) GICv2 va GICv3 da faqat virtio-*-pci qurilmalar
 # Çiqiş kodi 0 — ötdi. Natija qisqa matn sifatida stdout ga.
 set -uo pipefail
@@ -324,7 +327,7 @@ pci_test() {
 net_test() {
     local kernel=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel
     local d=$LOG_DIR/tarmoq; mkdir -p "$d" /tmp/claude-0; rm -f "$d"/*.png "$d"/*.log
-    local form="@settings;w,2;@set_tab3;w,1;@net_manual;bs,20;t,10.0.2.15/24;kp,tab;bs,20;kp,tab;bs,20;t,10.0.2.2;kp,tab;bs,20;t,10.0.2.3;@net_apply;w,4;m,@park"
+    local form="@settings;w,2;@set_tab3;w,1;@net_manual;bs,20;t,10.0.2.15/24;kp,tab;bs,20;kp,tab;bs,20;t,10.0.2.2;kp,tab;bs,20;t,10.0.2.3;kp,tab;bs,45;t,fec0::10/64;kp,tab;bs,45;t,fe80::2;@net_apply;w,4;m,@park"
     CLICKS="w,2;$form" timeout 300 python3 scripts/agent/shot.py "$kernel" "$d/qollash.png" fresh >"$d/shot1.log" 2>&1
     local l1=$d/qollash.png.log
     [ -s "$d/qollash.png" ] || { echo "FAIL tarmoq: surat olinmadi (qarang $d/shot1.log)"; return 1; }
@@ -333,7 +336,8 @@ net_test() {
     python3 - /tmp/claude-0/shot-disk.img <<'PY' || { echo "FAIL tarmoq: sozlama diskka yozilmadi"; return 1; }
 import sys
 t = open(sys.argv[1], "rb").read(17 * 512)[512:].split(b"\0")[0].decode()
-need = ["tarmoq=statik", "tarmoq_ip=10.0.2.15", "tarmoq_niqob=255.255.255.0", "tarmoq_shlyuz=10.0.2.2", "tarmoq_dns=10.0.2.3"]
+need = ["tarmoq=statik", "tarmoq_ip=10.0.2.15", "tarmoq_niqob=255.255.255.0", "tarmoq_shlyuz=10.0.2.2", "tarmoq_dns=10.0.2.3",
+        "tarmoq6=statik", "tarmoq6_ip=fec0::10/64", "tarmoq6_shlyuz=fe80::2"]
 sys.exit(0 if all(n in t.splitlines() for n in need) else 1)
 PY
     # 2-yuklaniş: şu disk bilan (GUI kirişi + Tarmoq bölimi surati)
@@ -344,9 +348,13 @@ PY
     grep -qaE '\[net \] tarmoq: statik 10\.0\.2\.15/24, şlyuz 10\.0\.2\.2, DNS 10\.0\.2\.3 \(diskdagi' "$l2" || { echo "FAIL tarmoq: qayta yuklanişda statik manzil qöllanmadi (qarang $l2)"; return 1; }
     grep -qaE '\[net \] DHCP' "$l2" && { echo "FAIL tarmoq: statik rejimda DHCP sörovi yuborildi"; return 1; }
     grep -qaE 'tarmoq: ping 10\.0\.2\.2 — javob [0-9]+ ms' "$l2" || { echo "FAIL tarmoq: şlyuzga ping ötmadi"; return 1; }
+    # statik IPv6 (Netcup kabi: manzil/64 + şlyuz fe80::…) — diskdan qöllanadi, şlyuzga ICMPv6 ping
+    grep -qaE '\[net \] IPv6: statik fec0::10/64, şlyuz fe80::2' "$l1" || { echo "FAIL tarmoq: statik IPv6 Sozlamalardan qöllanmadi (qarang $l1)"; return 1; }
+    grep -qaE '\[net \] IPv6: statik fec0::10/64, şlyuz fe80::2' "$l2" || { echo "FAIL tarmoq: qayta yuklanişda statik IPv6 qöllanmadi (qarang $l2)"; return 1; }
+    grep -qaE 'IPv6: ping fe80::2 — javob [0-9]+ ms' "$l2" || { echo "FAIL tarmoq: IPv6 şlyuzga (fe80::2) ping ötmadi"; return 1; }
     grep -qaE 'tarmoq: DNS zamin\.app → [0-9.]+' "$l2" || echo "  (ogohlantiriş: DNS javobi yöq — xostda internet yöqmi?)"
     cp "$d/qollash.png" docs/settings-network.png
-    echo "OK tarmoq: GUI → statik 10.0.2.15/24 → diskka → qayta yuklanişda DHCP siz qöllandi, ping şlyuz$(grep -qaE 'tarmoq: DNS zamin' "$l2" && echo ' + DNS')"
+    echo "OK tarmoq: GUI → statik 10.0.2.15/24 + IPv6 fec0::10/64 (şlyuz fe80::2) → diskka → qayta yuklanişda DHCP siz qöllandi, ping şlyuz (IPv4 va IPv6)$(grep -qaE 'tarmoq: DNS zamin' "$l2" && echo ' + DNS')"
 }
 # --- Zamin paneli (tezkor sozlamalar): karnay belgisi → slayder 30% → Sozlamalar → Övoz da ham 30%,
 #     diskka saqlanadi (qayta yuklanişda 30%), klaviatura (Alt+Q, Tab, ←) bilan 20%, panel burçaklari toza ---
@@ -380,6 +388,16 @@ panel_test() {
 }
 if [ "$MODE" = "panel" ]; then
     panel_test; exit $?
+fi
+# --- IPv6: QEMU -netdev user,ipv4=on,ipv6=on — SLAAC (RA, fec0::/64), ping fec0::2, IPv4 ham ---
+ipv6_test() {
+    local kernel=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel res
+    res=$(timeout 300 python3 scripts/agent/ipv6_sinov.py "$kernel" "$LOG_DIR/verify-ipv6.log" 2>&1)
+    echo "${res:-FAIL ipv6: timeout (qarang $LOG_DIR/verify-ipv6.log)}"
+    [[ "$res" == OK* ]]
+}
+if [ "$MODE" = "ipv6" ]; then
+    ipv6_test; exit $?
 fi
 if [ "$MODE" = "tarmoq" ]; then
     net_test; exit $?
@@ -546,7 +564,10 @@ tail -1 "$GDIR.txt"
 # --- Zamin paneli (tezkor sozlamalar) ---
 panel_test || exit 1
 
-# --- Statik IPv4 (Sozlamalar → Tarmoq) ---
+# --- IPv6: SLAAC + ICMPv6 echo (seriya qobiq) ---
+ipv6_test || exit 1
+
+# --- Statik IPv4 + IPv6 (Sozlamalar → Tarmoq) ---
 net_test || exit 1
 
 # --- DTB + virtio-pci (GICv2/GICv3) ---

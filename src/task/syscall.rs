@@ -365,6 +365,12 @@ fn handle(num: u64, a: [u64; 6]) -> SysResult {
             copy_to_user(a[2], &ip)?;
             Ok(0)
         }
+        SYS_PING if a[2] == 6 => {
+            // IPv6: x0 — 16 baytli manzil
+            let ip = copy_from_user(a[0], 16)?;
+            let ip: crate::net::ipv6::Ip6 = ip[..16].try_into().map_err(|_| ERR_INVALID)?;
+            crate::net::ipv6::ping6(&ip, a[1] as u16).map(|ms| ms as i64).ok_or(ERR_NOT_FOUND)
+        }
         SYS_PING => {
             let ip = copy_from_user(a[0], 4)?;
             crate::net::ping([ip[0], ip[1], ip[2], ip[3]], a[1] as u16).map(|ms| ms as i64).ok_or(ERR_NOT_FOUND)

@@ -86,6 +86,14 @@ yuklanişda statik rejimda **DHCP sörovi umuman yuborilmaydi** — VPS da DHCP 
 bölmasa ham (niqob `/32` yoki boşqa tarmoq) qabul qilinadi — ARP to'g'ridan-to'g'ri şlyuzga
 yuboriladi. **Avtomatik (DHCP)** ga qaytilsa — saqlanadi va DHCP darhol qayta söraladi.
 
+**IPv6: SLAAC yoki statik /64 (Netcup).** Şu bölimdagi uçinçi qator — **IPv6 manzil/prefiks**
+va **IPv6 şlyuz** (ikkala rejimda ham tahrirlanadi; o'n oltilik raqamlar va `:` qabul
+qilinadi). Ikkalasi böş bölsa — **SLAAC**: router e'loni (RA) dagi prefiks + MAC dan EUI-64.
+Netcup ARM VPS da IPv6 /64 statik beriladi: masalan `2a03:4000:…::1/64` va şlyuz `fe80::1` →
+**Qöllaş** — manzil darhol qöllanadi, diskka saqlanadi (`tarmoq6=statik`, `tarmoq6_ip=…/64`,
+`tarmoq6_shlyuz=`) va fonda şlyuzga ICMPv6 ping yuboriladi (jurnal: `IPv6: ping fe80::1 —
+javob N ms`). Pastdagi jadvalda IPv4 va IPv6 holati (global manzil yoki link-local, şlyuz).
+
 **Övoz balandligi va övozsiz rejim.** Sozlamalar → **Övoz** bölimida sudraladigan
 slayder (0–100 %, foiz körsatkiçi bilan) va **"Övozsiz"** tugmasi bor. Daraja global:
 musiqa pleeri, brauzerdagi `<audio>` va ish stolidagi pleer vidjeti — barçasi
@@ -1064,15 +1072,28 @@ Zamin OS protsessorning barça yadrolarini işlatadi (`cargo run` — 4 ta yadro
 To'liq TCP/IP stegi — noldan yozilgan (QEMU SLIRP user-net bilan sinaldi):
 
 - **virtio-net** drayveri (eski v1 va modern v2); qabul uzilişlar orqali, jönatiş sinxron;
-- **Ethernet → ARP → IPv4**; **ICMP** (ping), **UDP**, **TCP** (mijoz: ulaniş, jönatiş, oliş, yopiş);
+- **Ethernet → ARP → IPv4**, **IPv6** (NDP, SLAAC, ICMPv6); **ICMP** (ping), **UDP**, **TCP** (mijoz: ulaniş, jönatiş, oliş, yopiş);
 - **DHCP** mijozi — yuklanişda avtomatik IP, gateway va DNS oladi;
 - **statik IPv4** — Sozlamalar → Tarmoq → "Qölda" (IP, niqob, şlyuz, DNS) diskka saqlanadi;
   yuklanişda DHCP ötkazib yuboriladi, jurnalda `tarmoq: statik 10.0.2.15/24, …`, şlyuzga
   ping va DNS natijasi; on-link bölmagan şlyuz (`/32`, VPS) ham işlaydi
   (mantiq: `src/net/ipcfg.rs` — `parse_ipv4`, `validate_static`, self-test
   `[ok] tarmoq sozlamalari`; sinov: `verify.sh tarmoq`);
+- **IPv6 asosi** (`src/net/ipv6.rs`): MAC dan EUI-64 böyiça **link-local** (`fe80::5054:ff:fe12:3456`),
+  **NDP** — Neighbor Solicitation/Advertisement (qöşnilar keşi, DAD sörovlariga javob),
+  Router Solicitation → **Router Advertisement**: prefiks (A bayrog'i, /64) → **SLAAC** manzil
+  va standart şlyuz (router link-local manzili); **statik IPv6** (manzil/prefiks + şlyuz,
+  Sozlamalar → Tarmoq, diskka saqlanadi); **ICMPv6 echo** (sörov va javob), nazorat summasi
+  psevdo-sarlavha bilan. MLD yuborilmaydi — kadrlar MAC böyiça dasturiy filtrlanadi:
+  özimizniki, `33:33:00:00:00:01` va solicited-node `33:33:ff:xx:xx:xx` (manzillarimiz).
+  Jurnal: `IPv6: link-local …`, `IPv6: SLAAC fec0::…/64, şlyuz fe80::2 (RA)`. Self-test
+  `[ok] IPv6: …` (EUI-64, solicited-node, ICMPv6 summasi ma'lum vektorga teng, NA tahlili,
+  RA prefiksi, RFC 5952 matn formati); sinov: `verify.sh ipv6` — QEMU
+  `-netdev user,ipv4=on,ipv6=on` (faqat `ipv6=on` yozilsa QEMU IPv4 ni öçiradi!),
+  `ping fec0::2` va `ping fe80::2` javob oladi, IPv4 ping ham ötadi;
 - **DNS** mijozi — domen nomidan IP;
-- dasturlar: `tarmoq` (holat: rejim DHCP/statik, IP/prefiks, niqob, şlyuz, DNS), `ping`, `yukla` (HTTP sahifa).
+- dasturlar: `tarmoq` (holat: rejim DHCP/statik, IP/prefiks, niqob, şlyuz, DNS), `ping` (IPv4,
+  domen yoki IPv6: `ping fec0::2`), `yukla` (HTTP sahifa).
 
 ```
 abbosjon@zamin:~> tarmoq
@@ -1084,6 +1105,9 @@ abbosjon@zamin:~> tarmoq
   DNS:      10.0.2.3
 abbosjon@zamin:~> ping 10.0.2.2
   10.0.2.2 seq=0 vaqt=9 ms ... 4/4 javob
+abbosjon@zamin:~> ping fec0::2                 # IPv6: NDP + ICMPv6 echo
+PING fec0::2
+  fec0::2 seq=0 vaqt=12 ms ... 4/4 javob
 abbosjon@zamin:~> yukla example.com /          # DNS → TCP → HTTP
 ```
 
@@ -1449,7 +1473,7 @@ src/pipe.rs          Quvurlar
 src/time.rs          Sana/vaqt, vaqt mintaqasi
 src/klog.rs          Yadro jurnali (halqa bufer)
 src/drivers/virtio_net.rs  virtio-net drayveri
-src/net/              Tarmoq stegi: Ethernet, ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS
+src/net/              Tarmoq stegi: Ethernet, ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS; IPv6 (ipv6.rs: NDP, SLAAC, ICMPv6)
 src/fs/fat.rs         FAT16/FAT32 öquvçi (faqat öqiş)
 src/net/tls.rs        TLS 1.3 mijozi (X25519, ChaCha20-Poly1305, HKDF)
 src/crypto/x25519.rs  X25519 kalit almaşinuvi

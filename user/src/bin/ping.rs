@@ -1,4 +1,4 @@
-//! ping — manzilga 4 ta paket yuboradi. `ping 10.0.2.2` yoki `ping zamin.app`
+//! ping — manzilga 4 ta paket yuboradi. `ping 10.0.2.2`, `ping zamin.app` yoki `ping fec0::2` (IPv6)
 #![no_std]
 #![no_main]
 
@@ -12,6 +12,9 @@ fn main() -> i64 {
     if host.is_empty() {
         println!("{}", tr(["Foydalaniş: ping <manzil>", "Использование: ping <адрес>", "Usage: ping <address>"]));
         return 2;
+    }
+    if host.contains(':') {
+        return ping6(host);
     }
     if !net::info().configured {
         println!("{}", tr(["Tarmoq sozlanmagan.", "Сеть не настроена.", "Network is not configured."]));
@@ -30,6 +33,29 @@ fn main() -> i64 {
         match net::ping(ip, seq) {
             Ok(ms) => {
                 println!("  {} seq={} {}={} ms", net::ip_string(ip), seq, tr(["vaqt", "время", "time"]), ms);
+                ok += 1;
+            }
+            Err(_) => println!("  seq={} {}", seq, tr(["javob yöq", "нет ответа", "no reply"])),
+        }
+        zamin::sleep_ms(300);
+    }
+    println!("  {}/4 {}", ok, tr(["javob", "ответов", "replies"]));
+    if ok > 0 { 0 } else { 1 }
+}
+
+/// IPv6 (ICMPv6 echo): `ping fec0::2`, `ping fe80::1`.
+fn ping6(host: &str) -> i64 {
+    let Some(ip) = net::parse_ipv6(host) else {
+        println!("{}: {}", tr(["IPv6 manzil notöğri", "неверный IPv6-адрес", "invalid IPv6 address"]), host);
+        return 2;
+    };
+    let s = net::ip6_string(&ip);
+    println!("PING {}", s);
+    let mut ok = 0;
+    for seq in 0..4 {
+        match net::ping6(&ip, seq) {
+            Ok(ms) => {
+                println!("  {} seq={} {}={} ms", s, seq, tr(["vaqt", "время", "time"]), ms);
                 ok += 1;
             }
             Err(_) => println!("  seq={} {}", seq, tr(["javob yöq", "нет ответа", "no reply"])),
