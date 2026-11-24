@@ -438,7 +438,9 @@
       "id": "T55",
       "batch": 8,
       "title": "Bosqich yakuni: versiyani oshirish (VPS boshqaruvi va terminal ranglari: ACPI o'chirish, IPv6, ANSI SGR, inline-block, qorong'i fonda bu)",
-      "detail": "Shu to'plamda (batch 8) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz."
+      "detail": "Shu to'plamda (batch 8) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz.",
+      "status": "done",
+      "done_at": "2026-11-24 14:42:07"
     }
   ],
   "batch": 8,

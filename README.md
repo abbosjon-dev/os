@@ -1689,7 +1689,7 @@ API kalit / apiKeyHelper / boşqa BASE_URL → rad etiladi, 3 ketma-ket tekşiru
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.33**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.34**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -1801,5 +1801,15 @@ bosqiç (etap) yakunlanganda kötariladi.
   (cp/mv/grep/head/tail/wc, uç tilli); Zamin paneli tezkor sozlamalari (övoz slayderi,
   tarmoq holati, Qulflaş / Qayta yuklaş / Öçiriş). Skrinşotlar: `docs/web-corners-gop.png`,
   `docs/terminal-buyruqlar.png`, `docs/panel-tezkor.png`.
+- 0.0.34 — **VPS boşqaruvi va terminal ranglari**: quvvat tugmasi orqali muloyim öçiriş
+  (ACPI GED / ACPI0013 va DTB PL061 gpio-keys — Netcup SCP «Shutdown (ACPI)», QMP
+  `system_powerdown` bilan sinaladi); IPv6 asosi (NDP, ICMPv6 echo, EUI-64 link-local, SLAAC
+  va Sozlamalardan statik IPv6 /64 + şlyuz, diskka saqlanadi); grafik terminalda ANSI SGR
+  ranglari (30–37, 90–97, 40–47, 100–107, qalin, tiklaş) — rangli `ls` va xato çiqişi, `rang`
+  buyruği; brauzerda CSS `display: inline-block` (vertical-align bilan) va `visibility: hidden`;
+  Fayllar menejerida «Xususiyatlar» oynasi (hajm, tur, egasi, ruxsatlar, vaqtlar, ruxsatlarni
+  özgartiriş); yumaloq burçaklar qorong'i sahifa foni va qorong'i mavzuda qayta tekşirildi.
+  Skrinşotlar: `docs/terminal-rang.png`, `docs/web-inline.png`, `docs/fayl-xususiyat.png`,
+  `docs/settings-network.png`, `docs/corners-dark.png`.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.
