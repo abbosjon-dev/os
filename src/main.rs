@@ -499,6 +499,13 @@ extern "C" fn boot_tests(_: usize) {
         let before = drivers::virtio_blk::irq_count();
         let mut sector = [0u8; drivers::virtio_blk::SECTOR];
         drivers::virtio_blk::read(0, &mut sector).expect("disk öqiş");
+        // Javob halqasi uziliş işlovçisidan oldin körinişi mumkin (uziliş boşqa CPU ga yoki
+        // biroz keçikib keladi) — hisoblagiçni qisqa muddat (≤ 1 s) kutamiz.
+        let t0 = timer::counter();
+        let limit = timer::frequency();
+        while drivers::virtio_blk::irq_count() <= before && timer::counter().wrapping_sub(t0) < limit {
+            core::hint::spin_loop();
+        }
         assert!(drivers::virtio_blk::irq_count() > before, "disk uzilişi kelmadi");
         tprintln!(msg::TEST_DISK_IRQ);
     }

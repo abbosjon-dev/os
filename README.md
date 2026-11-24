@@ -1564,7 +1564,7 @@ API kalit / apiKeyHelper / boşqa BASE_URL → rad etiladi, 3 ketma-ket tekşiru
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.32**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.33**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -1668,5 +1668,13 @@ bosqiç (etap) yakunlanganda kötariladi.
   `[atribut]`, `:first-child`, `:last-child`, `:nth-child(an+b)`, `:not()`. Skrinşotlar:
   `docs/vps-usb.png`, `docs/vps-gop.png`, `docs/settings-network.png`, `docs/web-selectors.png`,
   `docs/web-corners-1920.png`.
+- 0.0.33 — **VPS mustahkamligi va iş muhiti**: yumaloq burçaklar UEFI GOP framebuffer
+  (ramfb, BGRX/RGBX, qator qadami ≠ en×4) va `-cpu neoverse-n1` da qayta tekşirildi — töq
+  piksel 0; ACPI yölida haqiqiy sana va vaqt (UEFI GetTime → ARM taymer, PL031 zaxirasi);
+  virtio-scsi-pci disk drayveri (INQUIRY, READ CAPACITY, READ/WRITE(10/16), Netcup «SCSI»
+  kontrolleri); terminal buyruqlari `nusxa`, `köçir`, `qidir`, `bosh`, `oxir`, `hajm`
+  (cp/mv/grep/head/tail/wc, uç tilli); Zamin paneli tezkor sozlamalari (övoz slayderi,
+  tarmoq holati, Qulflaş / Qayta yuklaş / Öçiriş). Skrinşotlar: `docs/web-corners-gop.png`,
+  `docs/terminal-buyruqlar.png`, `docs/panel-tezkor.png`.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

@@ -382,7 +382,9 @@
       "id": "T48",
       "batch": 7,
       "title": "Bosqich yakuni: versiyani oshirish (VPS mustahkamligi va ish muhiti: GOP ekranda burchaklar, UEFI soati, virtio-scsi disk, terminal buyr)",
-      "detail": "Shu to'plamda (batch 7) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz."
+      "detail": "Shu to'plamda (batch 7) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz.",
+      "status": "done",
+      "done_at": "2026-11-24 07:15:44"
     }
   ],
   "batch": 7,
