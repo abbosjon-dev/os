@@ -194,6 +194,10 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
     heap::init();
     tprintln!(msg::HEAP_READY, heap::stats().1 >> 20);
 
+    // Haqiqiy vaqt: PL031 (DTB) → UEFI GetTime + taymer hisoblagiçi → 0
+    let src = timer::configure_rtc(fdt.as_ref(), efi.and_then(|e| e.efi_time()));
+    println!("  Vaqt manbai: {}, {} UTC", src.name(), time::format_datetime(&time::utc(timer::unix_time())));
+
     // PCIe (bölsa): virtio-pci qurilmalari — MMU dan keyin, jarayonlardan oldin (ECAM/BAR xaritasi)
     if drivers::pci::init(fdt.as_ref()) > 0 {
         let names: Vec<&str> = drivers::pci::virtio_types()
@@ -606,6 +610,11 @@ fn self_tests() {
         panic!("kriptografiya tekşiruvi yiqildi: {}", alg);
     }
     tprintln!(msg::TEST_SHA);
+
+    match time::self_test() {
+        Ok(n) => println!("  [ok] EFI_TIME → Unix: kabisa yil, 2038 dan keyin, oy oxiri, xato sanalar ({} sinov)", n),
+        Err(e) => panic!("EFI_TIME → Unix aylantiriş tekşiruvi yiqildi: {}", e),
+    }
 
     // X.509: sertifikat tahlilçisi (muddat va host nomi tekşiruvi)
     net::x509::self_test().expect("X.509 tahlilçi tekşiruvi yiqildi");

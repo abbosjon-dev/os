@@ -350,7 +350,9 @@
       "id": "T44",
       "title": "VPS: ACPI/UEFI yo'lida haqiqiy sana va vaqt (UEFI GetTime → RTC zaxirasi)",
       "detail": "Muammo: src/time.rs faqat PL031 ni ishlatadi, PL031 esa DTB dan topiladi. Netcup da ACPI yo'lida DTB yashirilgan, shuning uchun soat 1970 yoki 0 bo'lib qolishi mumkin. Shu sababli fayl vaqtlari, TLS sertifikat muddati va panel soati noto'g'ri chiqadi. Fayllar: src/efi.rs (ExitBootServices dan oldin RuntimeServices->GetTime ni chaqirib, EFI_TIME ni Unix soniyalarga o'tkazish va saqlash), src/time.rs (manba tartibi: PL031 (DTB) → UEFI vaqti + ARM taymer hisoblagichi bilan o'sish → 0), src/acpi.rs (kerak bo'lsa). Yadro jurnaliga 'Vaqt manbai: UEFI|PL031' yoziladi. Qabul mezoni: verify.sh vps (ACPI, GICv3) va acpi=off loglarida 'Vaqt manbai:' qatori va yili ≥ 2025 bo'lgan sana bor. Self-test: EFI_TIME → Unix aylantirish 3 ta ma'lum sanada (kabisa yil, 2038 dan keyin, oy oxiri) to'g'ri natija beradi va [ok] bilan verify.sh full da o'tadi.",
-      "batch": 7
+      "batch": 7,
+      "status": "done",
+      "done_at": "2026-11-24 02:03:31"
     },
     {
       "id": "T45",

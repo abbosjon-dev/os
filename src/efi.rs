@@ -45,7 +45,15 @@ pub struct BootInfo {
     /// [`GOP_MAGIC`] bölmasa — GOP yöq (yoki faqat Blt rejimi).
     pub gop_magic: u64,
     pub gop: GopInfo,
+    /// UEFI RuntimeServices->GetTime (ExitBootServices dan oldin): Unix soniyalar (UTC) va
+    /// şu paytdagi ARM taymer hisoblagichi (CNTPCT). `time_magic` [`TIME_MAGIC`] bölmasa — yöq.
+    pub time_magic: u64,
+    pub efi_unix: u64,
+    pub efi_counter: u64,
 }
+
+pub const TIME_MAGIC: u64 = 0x5a41_4d49_4e54_494d; // "ZAMINTIM"
+const _: () = assert!(core::mem::size_of::<BootInfo>() <= 0x2000, "BootInfo linker.ld dagi joyga sigʻmaydi");
 
 pub const GOP_MAGIC: u64 = 0x5a41_4d49_4e47_4f50; // "ZAMINGOP"
 
@@ -77,6 +85,10 @@ impl BootInfo {
     pub fn gop(&self) -> Option<&GopInfo> {
         (self.gop_magic == GOP_MAGIC).then_some(&self.gop)
     }
+    /// UEFI GetTime natijasi: (Unix soniyalar, CNTPCT) — bölsa.
+    pub fn efi_time(&self) -> Option<(u64, u64)> {
+        (self.time_magic == TIME_MAGIC).then_some((self.efi_unix, self.efi_counter))
+    }
 }
 
 #[repr(C)]
@@ -99,7 +111,7 @@ struct SystemTable {
     con_out: *const TextOutput,
     stderr_handle: usize,
     stderr: usize,
-    runtime_services: usize,
+    runtime_services: *const RuntimeServices,
     boot_services: *const BootServices,
     table_entries: usize,
     config_table: *const ConfigTable,
@@ -109,6 +121,52 @@ struct SystemTable {
 struct TextOutput {
     reset: usize,
     output_string: extern "efiapi" fn(*const TextOutput, *const u16) -> usize,
+}
+
+/// EFI_RUNTIME_SERVICES: sarlavhadan keyin birinçi funksiya — GetTime.
+#[repr(C)]
+struct RuntimeServices {
+    hdr: TableHeader,
+    get_time: extern "efiapi" fn(*mut EfiTime, *mut u8) -> usize,
+}
+
+/// EFI_TIME (16 bayt).
+#[repr(C)]
+#[derive(Default)]
+struct EfiTime {
+    year: u16,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    pad1: u8,
+    nanosecond: u32,
+    /// UTC dan farq (daqiqa) yoki 2047 — nomaʼlum (mahalliy vaqt).
+    timezone: i16,
+    daylight: u8,
+    pad2: u8,
+}
+
+/// GetTime → (Unix soniyalar UTC, CNTPCT). Linux `rtc-efi` kabi TimeZone maydoni hisobga
+/// olinmaydi: firmware lar (EDK2/QEMU, Ampere) RTC ni UTC da saqlaydi va 2047 qaytaradi.
+fn efi_get_time(st: &SystemTable) -> Option<(u64, u64)> {
+    if st.runtime_services.is_null() {
+        return None;
+    }
+    let rs = unsafe { &*st.runtime_services };
+    if rs.hdr.signature != 0x5652_4553_544e_5552 || rs.hdr.header_size < 32 {
+        return None; // "RUNTSERV" emas
+    }
+    let mut t = EfiTime::default();
+    if (rs.get_time)(&mut t, core::ptr::null_mut()) != EFI_SUCCESS {
+        return None;
+    }
+    let cnt: u64;
+    unsafe { core::arch::asm!("isb", "mrs {}, cntpct_el0", out(reg) cnt) };
+    let _ = (t.pad1, t.nanosecond, t.timezone, t.daylight, t.pad2);
+    let u = crate::time::civil_to_unix(t.year as u64, t.month as u64, t.day as u64, t.hour as u64, t.minute as u64, t.second as u64)?;
+    Some((u, cnt))
 }
 
 type GetMemoryMap = extern "efiapi" fn(*mut usize, *mut u8, *mut usize, *mut usize, *mut u32) -> usize;
@@ -326,6 +384,11 @@ extern "efiapi" fn efi_main(image: usize, st: *const SystemTable) -> usize {
     if gop.is_some() {
         say(st, "Zamin OS: GOP framebuffer topildi\n");
     }
+    // Haqiqiy vaqt: ACPI yölida PL031 DTB orqali topilmaydi — firmware soatini öqib qöyamiz
+    let efi_time = efi_get_time(st);
+    if efi_time.is_none() {
+        say(st, "Zamin OS: UEFI GetTime ishlamadi\n");
+    }
     say(st, "Zamin OS: ExitBootServices...\n");
     let map = &raw mut MAP as *mut u8;
     let (mut size, mut key, mut dsize, mut dver) = (0usize, 0usize, 0usize, 0u32);
@@ -353,6 +416,12 @@ extern "efiapi" fn efi_main(image: usize, st: *const SystemTable) -> usize {
     info.reserved_count = 0;
     info.acpi_used = 0;
     info.gop_magic = 0;
+    info.time_magic = 0;
+    if let Some((u, c)) = efi_time {
+        info.efi_unix = u;
+        info.efi_counter = c;
+        info.time_magic = TIME_MAGIC;
+    }
     if let Some(g) = gop {
         info.gop = g;
         info.gop_magic = GOP_MAGIC;

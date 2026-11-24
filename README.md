@@ -752,6 +752,14 @@ Qanday işlaydi:
   yadro taymer INTID ni `/timer` dan, PSCI `CPU_ON` maqsadlarini `/cpus` dan oladi (ikkalasi
   `-kernel` DTB sida ham işlaydi). Jurnalda qisqa hisobot: `ACPI: RSDP v2 → XSDT: …`,
   `ACPI MADT: …`, `ACPI GTDT: …`, `ACPI SPCR: …; MCFG: …`.
+- **Haqiqiy sana va vaqt** (`src/timer.rs`, `src/efi.rs`): ACPI yölida DTB yaşirilgani uçun
+  PL031 topilmaydi, şuning uçun `efi_main` ExitBootServices dan oldin
+  `RuntimeServices->GetTime` ni çaqiradi, `EFI_TIME` ni Unix soniyalarga aylantiradi
+  (`time::civil_to_unix`) va şu paytdagi ARM taymer hisoblagiçi (`CNTPCT`) bilan birga
+  saqlaydi. Manba tartibi: **PL031** (DTB dagi `arm,pl031`) → **UEFI** vaqti + hisoblagiç
+  ösişi → 0. Jurnalda: `Vaqt manbai: UEFI, 2026-11-24 01:35:03 UTC` (EDK2 `acpi=off` da
+  ham PL031 ni özi egallaydi — UEFI tanlanadi). Fayl vaqtlari, TLS sertifikat muddati va
+  panel soati şundan oladi. Self-test: kabisa yil, 2038/2106 dan keyin, oy oxiri, xato sanalar.
 - Qattiq yozilgan manzillar endi **DTB dan**: UART (`arm,pl011`), GIC (v2 yoki v3), RAM
   boşi/hajmi, PCIe ECAM.
 - **GICv3** (`src/gic.rs`): distributor + har yadroning redistributori, `ICC_*` tizim

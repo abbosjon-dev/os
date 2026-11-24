@@ -13,6 +13,7 @@
 #                     virtio-gpu/keyboard/tablet-pci, virtio-net/rng-pci;
 #                     ACPI zaxira yöli (DTB yöq): RSDP/XSDT, MADT (GIC, CPU lar), GTDT (taymer),
 #                     SPCR (UART), MCFG (ECAM) — GICv3/4 CPU va GICv2/2 CPU; + acpi=off (UEFI + DTB);
+#                     haqiqiy vaqt: 'Vaqt manbai: UEFI|PL031, YYYY-…' (yil ≥ 2025);
 #                     + USB kiriş: qemu-xhci + usb-kbd + usb-tablet (QMP send-key / input-send-event)
 #                     + -cpu neoverse-n1 (Netcup Ampere: RNDR/PAuth/BTI/MTE yöq, ID_AA64* hisoboti)
 #                     + GOP zaxira ekran: virtio-gpu yöq, -device ramfb → UEFI GOP framebuffer
@@ -106,6 +107,7 @@ vps_test() {
             elif ! grep -qaE '\[net \] virtio-net' "$log"; then res="FAIL vps ($tag): virtio-net-pci topilmadi"
             elif ! grep -qaE '\[gpu \] virtio-gpu' "$log"; then res="FAIL vps ($tag): virtio-gpu-pci topilmadi"
             elif ! grep -qaE 'manbalar: virtio-rng' "$log"; then res="FAIL vps ($tag): virtio-rng-pci topilmadi"
+            elif ! grep -qaE 'Vaqt manbai: (UEFI|PL031), (20(2[5-9]|[3-9][0-9])|2[1-9][0-9]{2})-[0-9]{2}-[0-9]{2} ' "$log"; then res="FAIL vps ($tag): haqiqiy vaqt yöq ('Vaqt manbai:' qatori yoki yil < 2025)"
             elif ! grep -qaE '  CPU: MIDR 0x[0-9a-f]+ .*ID_AA64: PAN' "$log"; then res="FAIL vps ($tag): ID_AA64* hisoboti yöq"
             elif [ "$cpu" = neoverse-n1 ] && ! grep -qaE 'CPU: MIDR 0x414fd0c[0-9a-f] \(Neoverse-N1\).*RNDR yöq, PAuth yöq, BTI yöq, MTE yöq' "$log"; then res="FAIL vps ($tag): Neoverse-N1 ID_AA64* imkoniyatlari kutilganidek emas"
             elif [ "$cpu" = neoverse-n1 ] && ! grep -qaE '\[ok\]' "$log"; then res="FAIL vps ($tag): self-test [ok] yöq"
