@@ -447,7 +447,9 @@
       "title": "Yumaloq burchaklar: har burchak uchun alohida radius (border-*-*-radius), foizli radius (50% doira) va 60px dan katta radiuslar — tishchalar",
       "detail": "Hozir src/css.rs:1456 da border-radius faqat birinchi qiymatni oladi va 0..60px ga qisiladi. % qiymatlari va 2–4 qiymatli yozuv (masalan '10px 0 20px 5px') e'tiborga olinmaydi. Ish: (1) css.rs da s.radius ni [f32;4] ga aylantirish; border-radius ning 1–4 qiymatli shaklini, border-top-left/top-right/bottom-right/bottom-left-radius ni va % ni (quti o'lchamiga nisbatan, chizishda hisoblanadi) tahlil qilish. Yig'indi tomondan oshsa, CSS qoidasi bo'yicha proporsional kichraytirish. (2) html.rs dagi fon/chegara/soya/gradient/overflow kesish chizuvini va src/gfx dagi yumaloq to'rtburchak primitivini har burchak alohida radiusli qilish. Anti-aliasing qirrasi ichki to'ldirish bilan bir xil qamrovni ishlatsin, shunda qora piksel 'tishchalar' qolmaydi. (3) zamin://matn va zamin://bezak ga yangi bloklarni qo'shish: turli burchaklar, 50% doira avatar, 0 radiusli burchak bilan aralash, qalin chegara + katta radius, qorong'i fon. (4) check_corners.py ni yangi bloklarni ham tekshiradigan qilish. Bloklar ichki fon/ota fon rangidan keskin qoraroq piksel topilsa, tekshiruv yiqilsin. Qabul mezoni: css.rs self-test '[ok] CSS radius' 1/2/3/4 qiymatli, % va kichraytirish holatlarini qamraydi; verify.sh full dagi check_corners.py yangi bloklarda ham o'tadi; docs/ ga skrinshot.",
       "batch": 9,
-      "attempts": 1
+      "attempts": 1,
+      "status": "done",
+      "done_at": "2026-11-24 16:59:46"
     },
     {
       "id": "T57",
