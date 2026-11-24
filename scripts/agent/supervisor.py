@@ -233,6 +233,16 @@ def kill_session(sid):
         time.sleep(0.5)
 
 
+def est_cost(cfg, res):
+    """Taxminiy narx. CLI narxni qaytarmagan bo'lsa (vaqt limiti oshib
+    o'ldirilgan, JSON buzilgan) — fail-closed: sikl uchun eng yuqori qiymat
+    hisoblanadi, umumiy chegara past ko'rsatilmasin."""
+    v = res.get("total_cost_usd")
+    if v is None or res.get("_timeout") or res.get("_unparsed"):
+        return float(cfg["max_est_usd_per_cycle"])
+    return float(v)
+
+
 def verify(cfg):
     # verify.sh QEMU ni bir necha konfiguratsiyada yuklaydi — vaqt cheklangan;
     # oshib ketsa butun jarayon guruhi (QEMU lar ham) o'ldiriladi va tekshiruv
@@ -310,7 +320,7 @@ def plan_tasks(cfg, state, tasks, n_plan):
     lim = guard.limit_hit(stderr + "\n" + str(res.get("result", "")), res)
     if lim:
         return "LIMIT", lim, 0.0
-    est = float(res.get("total_cost_usd") or 0)
+    est = est_cost(cfg, res)
     text = str(res.get("result", ""))
     try:
         obj = json.loads(text[text.index("{"):text.rindex("}") + 1])
@@ -484,7 +494,7 @@ def loop(cfg, state):
                 state["session_id"] = res["session_id"]
             halt(state, f"obuna limiti / to'lov belgisi: '{lim}'")
             return 7
-        est = float(res.get("total_cost_usd") or 0)
+        est = est_cost(cfg, res)
         state["est_usd_total"] = round(state["est_usd_total"] + est, 4)
         if res.get("session_id"):
             state["session_id"] = res["session_id"]
