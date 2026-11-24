@@ -441,9 +441,51 @@
       "detail": "Shu to'plamda (batch 8) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz.",
       "status": "done",
       "done_at": "2026-11-24 14:42:07"
+    },
+    {
+      "id": "T56",
+      "title": "Yumaloq burchaklar: har burchak uchun alohida radius (border-*-*-radius), foizli radius (50% doira) va 60px dan katta radiuslar — tishchalar",
+      "detail": "Hozir src/css.rs:1456 da border-radius faqat birinchi qiymatni oladi va 0..60px ga qisiladi. % qiymatlari va 2–4 qiymatli yozuv (masalan '10px 0 20px 5px') e'tiborga olinmaydi. Ish: (1) css.rs da s.radius ni [f32;4] ga aylantirish; border-radius ning 1–4 qiymatli shaklini, border-top-left/top-right/bottom-right/bottom-left-radius ni va % ni (quti o'lchamiga nisbatan, chizishda hisoblanadi) tahlil qilish. Yig'indi tomondan oshsa, CSS qoidasi bo'yicha proporsional kichraytirish. (2) html.rs dagi fon/chegara/soya/gradient/overflow kesish chizuvini va src/gfx dagi yumaloq to'rtburchak primitivini har burchak alohida radiusli qilish. Anti-aliasing qirrasi ichki to'ldirish bilan bir xil qamrovni ishlatsin, shunda qora piksel 'tishchalar' qolmaydi. (3) zamin://matn va zamin://bezak ga yangi bloklarni qo'shish: turli burchaklar, 50% doira avatar, 0 radiusli burchak bilan aralash, qalin chegara + katta radius, qorong'i fon. (4) check_corners.py ni yangi bloklarni ham tekshiradigan qilish. Bloklar ichki fon/ota fon rangidan keskin qoraroq piksel topilsa, tekshiruv yiqilsin. Qabul mezoni: css.rs self-test '[ok] CSS radius' 1/2/3/4 qiymatli, % va kichraytirish holatlarini qamraydi; verify.sh full dagi check_corners.py yangi bloklarda ham o'tadi; docs/ ga skrinshot.",
+      "batch": 9
+    },
+    {
+      "id": "T57",
+      "title": "VPS: katta RAM (-m 8G) va ko'p yadro (-smp 8) da UEFI+ACPI yuklanishini tekshirish va tuzatish",
+      "detail": "Netcup ARM VPS larda bir necha GiB RAM va 4+ vCPU bo'ladi, lekin barcha sinovlar -m 512M/1G da ishlaydi. src/main.rs:146-153 (EFI ram_lo/ram_hi → bitta hudud), src/memory/frame.rs (bitmap yadro oxiriga yoziladi: 8 GiB uchun ~256 KiB), src/memory/mmu.rs (1 GiB bloklar, IOREMAP_FIRST=128) va src/efi.rs dagi xotira xaritasi bilan ishlashni ko'rib chiqish. EFI xaritasidagi RAM teshiklari va 4 GiB dan yuqoridagi hududlar band/bo'sh deb to'g'ri belgilanishi, bitmap esa EFI runtime/ACPI hududlari ustiga tushmasligi kerak. Kernel heap va Tizim monitori umumiy xotirani to'g'ri ko'rsatsin. PSCI CPU_ON 8 ta yadroni ham ishga tushirsin (MADT dagi MPIDR lar). verify.sh vps ga yangi konfiguratsiya qo'shish: UEFI + ACPI + GICv3, -m 8G -smp 8, virtio-*-pci. Qabul mezoni: jurnalda 'RAM … 8192 MiB' va 8 ta yadro chiqadi, barcha [test] lar [ok], frame allokatori self-testi 4 GiB dan yuqoridagi sahifani ajratib/bo'shatib, unga yozib/o'qib tekshiradi, til tanlash ekranigacha yetadi; verify.sh full o'tadi.",
+      "batch": 9
+    },
+    {
+      "id": "T58",
+      "title": "VPS + Sozlamalar → Sana va vaqt: SNTP bilan sinxronlash va vaqt mintaqasini tanlash",
+      "detail": "VPS da PL031 yo'q, UEFI GetTime esa noaniq bo'lishi mumkin. Yangi src/net/sntp.rs: UDP/123 orqali SNTPv4 so'rovi (RFC 4330, 48 bayt), javobdagi transmit timestamp → Unix vaqt (1900 epoxa, 32.32 kasr), stratum va leap tekshiruvi. Server: DHCP option 42 bo'lsa o'sha, bo'lmasa sozlamadagi nom (standart pool.ntp.org, mavjud DNS orqali). Natija src/timer.rs dagi manba tartibiga 'NTP' sifatida qo'shiladi (PL031 → NTP → UEFI) va keyin har soatda yangilanadi. Sozlamalar ilovasiga 'Sana va vaqt' bo'limi qo'shiladi: joriy vaqt va manba (PL031/UEFI/NTP), 'Avtomatik (NTP)' almashtirgichi, NTP server maydoni, vaqt mintaqasi ro'yxati (UTC−12…UTC+14, standart Toshkent UTC+5). Sozlamalar diskka (config.rs) saqlanadi; panel soati va fayl vaqtlari darhol yangilanadi. Qabul mezoni: self-test '[ok] SNTP' tayyor javob paketini tahlil qiladi (epoxa o'tishi, 2036 era chegarasi, stratum 0 = KoD rad etiladi, noto'g'ri uzunlik) va mintaqa o'zgarganda vaqt siljishini tekshiradi; verify.sh full o'tadi. Internet yo'q muhitda NTP so'rovi vaqt chegarasi bilan jim tugashi kerak (osilib qolmasin). Sozlamalar → Sana va vaqt bo'limining skrinshoti docs/ ga qo'shiladi.",
+      "batch": 9
+    },
+    {
+      "id": "T59",
+      "title": "Terminal qobig'i: ';', '&&', '||' bilan buyruqlarni zanjirlash, $? holat kodi va '*'/'?' glob kengaytirish",
+      "detail": "user/src/bin/terminal.rs da quvurlar (|) va > / >> bor, lekin ketma-ket buyruqlar va glob yo'q. Ish: (1) qatorni qo'shtirnoqlarni hisobga olib ';', '&&', '||' bo'yicha bo'lish; har bo'lak oldingi chiqish kodiga qarab ishga tushadi. (2) Oxirgi chiqish kodini saqlash va '$?' ni almashtirish; 'chiq'/'exit N' kodni o'rnatsin. (3) Argumentlardagi '*' va '?' ni joriy (yoki ko'rsatilgan) papka fayllari bilan kengaytirish, natija saralangan; mos kelmasa so'z o'zgarmaydi (bash kabi); qo'shtirnoq ichida kengaytirilmaydi. (4) 'yordam' matni va README dagi 'Zamin terminali' bo'limini yangilash. Mantiqni sof funksiyalarga ajratish (masalan, split_chain, glob_match) va terminalning o'z self-test buyrug'ida yoki yadro [test] ida sinash. Qabul mezoni: self-test glob_match ('*.txt', 'a?c', '*', bo'sh nom, nuqtali fayllar) va zanjirni ('false && x || echo ok' → ok, 'a; b', qo'shtirnoq ichidagi ';') tekshiradi; verify.sh full dagi grafik terminal sinovi 'ls *.txt && echo tayyor' chiqishini kutadi.",
+      "batch": 9
+    },
+    {
+      "id": "T60",
+      "title": "Brauzer CSS: z-index (joylashgan elementlar tartibi), box-sizing: border-box va list-style-type",
+      "detail": "position: relative/absolute/fixed bor, lekin z-index yo'q: ustma-ust bloklar faqat hujjat tartibida chiziladi. box-sizing yo'q, shuning uchun width + padding ko'pchilik sahifalarda (reset CSS '*{box-sizing:border-box}') kengayib ketadi. Ro'yxat belgilari ham boshqarilmaydi. Ish: css.rs da z-index (butun son, auto), box-sizing (content-box/border-box), list-style-type / list-style (disc, circle, square, decimal, lower-alpha, upper-roman, none) ni tahlil qilish. html.rs da: joylashgan elementlarni z-index bo'yicha barqaror saralab chizish (manfiy z-index oddiy oqimdan oldin), border-box da width/height ga padding va chegarani kiritish, <ol>/<ul> markerlarini turiga qarab chizish (start atributi bilan decimal/alpha/roman). Yangi sinov sahifasi zamin://qatlam (yoki zamin://html ga bo'lim). Qabul mezoni: css.rs self-testi uchala xossani va noto'g'ri qiymatlarni tekshiradi; layout self-testi border-box da tashqi kenglik = width ekanini va z-index 2 bo'lgan quti 1 dagidan keyin chizilishini tasdiqlaydi; zamin://qatlam skrinshoti docs/ da; verify.sh full o'tadi.",
+      "batch": 9
+    },
+    {
+      "id": "T61",
+      "title": "Brauzer CSS: ::before / ::after psevdo-elementlari (content: matn, attr(), bo'sh blok) va letter-spacing",
+      "detail": "Hozir css.rs:639 '::before' kabi tanlagichlarni tashlab yuboradi. Ko'p saytlar ikonka, tirnoq, ajratgich va 'clearfix' uchun ularni ishlatadi. Ish: tanlagich tahlilchisi ::before/::after (va eski :before/:after) ni qabul qilsin va qoidani psevdo-element sifatida saqlasin. Kaskaddan so'ng content: '…' / \"…\" (\\ escape, \\A qator), attr(name), counter-siz, none/normal qiymatlari bo'lsa, elementning birinchi/oxirgi bolasi sifatida sintetik qator ichi (yoki display: block bo'lsa blok) tugun yaratilsin. Unga mavjud rang, shrift, fon, padding, border-radius, inline-block uslublari qo'llansin. content: '' + display:block + width/height bo'sh bezak blokini chizsin. Qo'shimcha: letter-spacing (px/em, manfiy ham) matn o'lchash va chizishda qo'llanadi. Qabul mezoni: css.rs self-testi (::before/::after, :after eski yozuvi, attr(), escape, ::before:hover rad etilmaydi) va html.rs layout testi (psevdo matn DOM ga qo'shilgani, tartib: before → bolalar → after) o'tadi; zamin://html yoki yangi zamin://psevdo sahifasi skrinshoti docs/ da; verify.sh full o'tadi.",
+      "batch": 9
+    },
+    {
+      "id": "T62",
+      "batch": 9,
+      "title": "Bosqich yakuni: versiyani oshirish (VPS tayyorgarligi va ish muhiti: burchak radiuslari, katta RAM, SNTP vaqt, terminal qobig'i, CSS qat)",
+      "detail": "Shu to'plamda (batch 9) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz."
     }
   ],
-  "batch": 8,
+  "batch": 9,
   "plan_notes": [
     "Ma'lum nuqson: zamin://matn sahifasida bloklar chetida kichik qora 'tishchalar' (yumaloq burchak chizish xatosi) — birinchi navbatda tuzat.",
     "Har to'plamda kamida bitta vazifa veb/brauzerdan tashqari bo'lsin (ilovalar, terminal, fayl menejeri, sozlamalar, yadro).",
