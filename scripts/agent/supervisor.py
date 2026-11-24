@@ -36,6 +36,7 @@ CONTEXT = os.path.join(AG, "CONTEXT.md")
 DEFAULT_CFG = {
     "claude_bin": "claude",
     "max_cycles": 20,
+    "verify_timeout_s": 2700,
     "max_consecutive_failures": 3,
     "cycle_timeout_s": 3600,
     # obuna ichida hisoblangan (taxminiy) foydalanish chegarasi — pul emas,
@@ -211,9 +212,43 @@ def run_claude(cfg, prompt, state, cyc, tag="cycle", tools=None, perm=None):
     return res, stderr
 
 
+def kill_session(sid):
+    """sid sessiyasidagi BARCHA jarayonlarni o'ldiradi (timeout(1) o'z jarayon
+    guruhini ochadi, shuning uchun killpg yetarli emas)."""
+    for _ in range(3):
+        found = False
+        for d in os.listdir("/proc"):
+            if not d.isdigit():
+                continue
+            try:
+                st = open(f"/proc/{d}/stat").read()
+                f = st[st.rindex(")") + 2:].split()
+                if int(f[3]) == sid:  # 6-maydon: session id
+                    os.kill(int(d), signal.SIGKILL)
+                    found = True
+            except (OSError, ValueError, IndexError):
+                pass
+        if not found:
+            return
+        time.sleep(0.5)
+
+
 def verify(cfg):
-    r = subprocess.run([os.path.join(HERE, "verify.sh"), cfg["verify_mode"]], cwd=REPO,
-                       capture_output=True, text=True, timeout=900)
+    # verify.sh QEMU ni bir necha konfiguratsiyada yuklaydi — vaqt cheklangan;
+    # oshib ketsa butun jarayon guruhi (QEMU lar ham) o'ldiriladi va tekshiruv
+    # MUVAFFAQIYATSIZ hisoblanadi (supervisor yiqilmaydi).
+    lim = int(cfg.get("verify_timeout_s", 2700))
+    ch = subprocess.Popen([os.path.join(HERE, "verify.sh"), cfg["verify_mode"]], cwd=REPO,
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                          start_new_session=True)
+    try:
+        out, _ = ch.communicate(timeout=lim)
+    except subprocess.TimeoutExpired:
+        kill_session(ch.pid)
+        out, _ = ch.communicate()
+        log(f"verify.sh {lim} s dan oshdi — tekshiruv o'tmadi deb hisoblanadi")
+        return False, (out or "")[-400:] + f"\nverify.sh vaqt limiti ({lim} s) oshdi"
+    r = subprocess.CompletedProcess(ch.args, ch.returncode, out or "", "")
     tail = r.stdout[-400:]
     blog = os.path.join(LOGS, "verify-build.log")
     if r.returncode and os.path.exists(blog):
