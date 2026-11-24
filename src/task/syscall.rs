@@ -227,6 +227,11 @@ fn handle(num: u64, a: [u64; 6]) -> SysResult {
             fs::remove(&user_path(a[0], a[1])?).map_err(fs_err)?;
             Ok(0)
         }
+        SYS_RENAME => {
+            let (from, to) = (user_path(a[0], a[1])?, user_path(a[2], a[3])?);
+            fs::rename(&from, &to).map_err(fs_err)?;
+            Ok(0)
+        }
 
         // --- Zamin kanallari ---
         SYS_CHAN_OPEN => {

@@ -33,6 +33,7 @@ mod image;
 mod ipc;
 mod js;
 mod line;
+mod matn;
 mod irq;
 mod klog;
 mod memory;
@@ -518,6 +519,9 @@ extern "C" fn boot_tests(_: usize) {
     let image = task::programs::find("terminal").expect("terminal dasturi yöq");
     let pid = task::spawn_user("terminal", image, "--self-test", task::SpawnOptions::kernel(false)).expect("terminal");
     assert_eq!(task::wait(pid), Some(0), "terminal tarix/tab sinovi yiqildi");
+    // Seriya qobiq matn buyruqlari (qidir/bosh/oxir/hajm/nusxa) — umumiy src/matn.rs
+    assert_eq!(matn::self_test(), 0, "matn buyruqlari sinovi yiqildi");
+    println!("  [ok] matn buyruqlari: qidir -i/-n, bosh/oxir -n N, hajm (qator/söz/bayt), nusxa/köçir manzili");
 
     // FAT yoziş: ikkinçi disk bölsa — fayl yozib, qayta öqib tekşiramiz
     if drivers::virtio_blk::fat_present() {

@@ -13,7 +13,7 @@
 
 use zamin::abi::{INHERIT, OPEN_APPEND, OPEN_CREATE, OPEN_TRUNCATE};
 use zamin::fs::{self, File};
-use zamin::{String, Vec, format, print, println, tr};
+use zamin::{String, Vec, format, matn, print, println, tr};
 
 zamin::entry!(main);
 
@@ -37,6 +37,12 @@ const BUILTINS: &[Cmd] = &[
     (["ruxsat", "права", "chmod"], &[], ["ruxsatlar: ruxsat 600 fayl", "права: права 600 файл", "permissions: chmod 600 file"]),
     (["çeklangan", "песочница", "sandbox"], &["cheklangan"], ["dasturni qafasda (faqat joriy papka) işlatiş", "запустить в песочнице (только текущая папка)", "run sandboxed (current folder only)"]),
     (["signal", "сигнал", "signal"], &[], ["signal yuboriş: signal PID [raqam]", "послать сигнал: сигнал PID [номер]", "send a signal: signal PID [num]"]),
+    (["nusxa", "копировать", "cp"], &["nusxala"], ["faylni nusxalaş: nusxa manba manzil", "копировать файл: копировать откуда куда", "copy a file: cp from to"]),
+    (["köçir", "переместить", "mv"], &["kochir", "kocir"], ["köçiriş / nomini özgartiriş: köçir manba manzil", "переместить / переименовать: переместить откуда куда", "move / rename: mv from to"]),
+    (["qidir", "искать", "grep"], &[], ["qatorlarda qidiriş: qidir [-i] [-n] naqsh fayl", "поиск в строках: искать [-i] [-n] образец файл", "search lines: grep [-i] [-n] pattern file"]),
+    (["bosh", "начало", "head"], &[], ["birinçi qatorlar: bosh [-n N] fayl", "первые строки: начало [-n N] файл", "first lines: head [-n N] file"]),
+    (["oxir", "конец", "tail"], &[], ["oxirgi qatorlar: oxir [-n N] fayl", "последние строки: конец [-n N] файл", "last lines: tail [-n N] file"]),
+    (["hajm", "счёт", "wc"], &["счет"], ["qator, söz va baytlar soni: hajm fayl", "число строк, слов и байт: счёт файл", "line, word and byte count: wc file"]),
     (["çiqiş", "выход", "exit"], &["chiqish", "chiqiş", "ciqis"], ["çiqiş (qayta kiriş söraladi)", "выйти (снова запросит вход)", "log out"]),
 ];
 
@@ -248,7 +254,18 @@ fn self_test() -> i64 {
     if !ok(tab_line("aks 1 | fa", false, &cmds, &files), "aks 1 | fayllar ") {
         return 13;
     }
-    println!("[ok] terminal tarix/tab: History push/prev/next, {} ta çeklov, complete() va tab_line()", HISTORY_MAX);
+    // Fayl buyruqlari: matn mantiqi va Tab yangi buyruqlarni taniydi
+    if zamin::matn::self_test() != 0 {
+        return 14;
+    }
+    let all: Vec<String> = BUILTINS.iter().flat_map(|(n, _, _)| n.iter().map(|x| String::from(*x))).collect();
+    if !ok(tab_line("nus", false, &all, &files), "nusxa ") || !ok(tab_line("qid", false, &all, &files), "qidir ") || !ok(tab_line("hajm Hi", false, &all, &files), "hajm Hisob.txt ") {
+        return 15;
+    }
+    if find(BUILTINS, "kochir") != find(BUILTINS, "mv") || find(BUILTINS, "çiqiş") != Some(22) || find(BUILTINS, "wc") != Some(21) {
+        return 16;
+    }
+    println!("[ok] terminal tarix/tab: History push/prev/next, {} ta çeklov, complete() va tab_line(); nusxa/köçir/qidir/bosh/oxir/hajm", HISTORY_MAX);
     0
 }
 
@@ -654,7 +671,8 @@ impl Shell {
             12 => {
                 self.run_pipeline(&[args], None, false);
             }
-            16 => return false, // çiqiş
+            22 => return false, // çiqiş
+            16..=21 => self.file_cmd(i, args),
             15 => {
                 let mut it = args.split_whitespace();
                 let (Some(pid), sig) = (it.next().and_then(|v| v.parse::<u64>().ok()), it.next().and_then(|v| v.parse::<u64>().ok()).unwrap_or(zamin::abi::SIG_TERM)) else {
@@ -700,6 +718,73 @@ impl Shell {
             _ => {}
         }
         true
+    }
+
+    /// Fayl buyruqlari: nusxa (16), köçir (17), qidir (18), bosh (19), oxir (20), hajm (21).
+    /// Ruxsatlarni yadro tekşiradi (öqiş/yoziş/köçiriş syscall'lari foydalanuvçi nomidan).
+    fn file_cmd(&self, i: usize, args: &str) {
+        let usage = || println!("  {}", BUILTINS[i].2[zamin::lang()]);
+        match i {
+            16 | 17 => {
+                let parts: Vec<&str> = args.split_whitespace().collect();
+                let [src, dst] = parts.as_slice() else { return usage() };
+                let src = self.resolve(src);
+                let dst = self.resolve(dst);
+                let dst = matn::dest_path(&src, &dst, fs::entries(&dst).is_ok());
+                if normalize(&src) == normalize(&dst) {
+                    println!("  {}: {}", dst, tr(["manba va manzil bir xil", "источник и цель совпадают", "source and destination are the same"]));
+                    return;
+                }
+                if i == 17 {
+                    match fs::rename(&src, &dst) {
+                        Ok(()) => println!("  {}: {} → {}", tr(["köçirildi", "перемещено", "moved"]), src, dst),
+                        Err(e) => println!("  {}: {}", src, e),
+                    }
+                    return;
+                }
+                let data = match fs::read(&src) {
+                    Ok(d) => d,
+                    Err(e) => return println!("  {}: {}", src, e),
+                };
+                match fs::write(&dst, &data) {
+                    Ok(()) => println!("  {}: {} → {} ({} B)", tr(["nusxalandi", "скопировано", "copied"]), src, dst, data.len()),
+                    Err(e) => println!("  {}: {}", dst, e),
+                }
+            }
+            18 => {
+                let Some(o) = matn::parse_grep(args) else { return usage() };
+                let path = self.resolve(o.file);
+                match fs::read(&path) {
+                    Ok(d) => {
+                        for l in matn::grep(&String::from_utf8_lossy(&d), &o) {
+                            println!("{}", l);
+                        }
+                    }
+                    Err(e) => println!("  {}: {}", path, e),
+                }
+            }
+            _ => {
+                let (n, file) = if i == 21 { (0, args.trim()) } else { matn::parse_count(args).unwrap_or((0, "")) };
+                if file.is_empty() {
+                    return usage();
+                }
+                let path = self.resolve(file);
+                let data = match fs::read(&path) {
+                    Ok(d) => d,
+                    Err(e) => return println!("  {}: {}", path, e),
+                };
+                if i == 21 {
+                    let (l, w, b) = matn::wc(&data);
+                    println!("  {} {}, {} {}, {} {}  {}", l, tr(["qator", "строк", "lines"]), w, tr(["söz", "слов", "words"]), b, tr(["bayt", "байт", "bytes"]), file);
+                    return;
+                }
+                let text = String::from_utf8_lossy(&data);
+                let lines = if i == 19 { matn::head(&text, n) } else { matn::tail(&text, n) };
+                for l in lines {
+                    println!("{}", l);
+                }
+            }
+        }
     }
 
     /// Dasturni ~/dasturlar ga nusxalaydi (ELF ekanligi tekşiriladi).

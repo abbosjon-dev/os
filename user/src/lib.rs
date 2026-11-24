@@ -25,6 +25,11 @@ pub mod abi {
     include!("../../src/abi.rs");
 }
 
+/// Terminal matn buyruqlari (yadro seriya qobiği bilan umumiy kod).
+pub mod matn {
+    include!("../../src/matn.rs");
+}
+
 pub use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
 
 /// Tizim xatosi (manfiy kod, `abi::ERR_*`).

@@ -122,3 +122,8 @@ pub fn mkdir(path: &str) -> Result<()> {
 pub fn remove(path: &str) -> Result<()> {
     check(unsafe { syscall(SYS_REMOVE, path.as_ptr() as u64, path.len() as u64, 0, 0) }).map(|_| ())
 }
+
+/// Fayl yoki papkani köçiradi / nomini özgartiradi (maʼlumot nusxalanmaydi).
+pub fn rename(from: &str, to: &str) -> Result<()> {
+    check(unsafe { syscall(SYS_RENAME, from.as_ptr() as u64, from.len() as u64, to.as_ptr() as u64, to.len() as u64) }).map(|_| ())
+}

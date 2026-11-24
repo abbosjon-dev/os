@@ -2,6 +2,7 @@
 # Zamin OS — mustaqil tekşiruv (supervisor "DONE" ga ishonmaydi, şuni işlatadi).
 #   verify.sh quick — yiğiş: xato va ogohlantirish yöq
 #   verify.sh full  — + QEMU da (grafikasiz) yuklaniş: barça self-test [ok], panic yöq;
+#                     + seriya qobiq: nusxa/köçir/qidir/bosh/oxir/hajm (seriya_qobiq.py)
 #                     + brauzer sahifalari surati: yumaloq burçaklarda töq piksel yöq
 #                     + pci sinovi (DTB + virtio-pci, GICv2/GICv3)
 #                     + vps sinovi (UEFI firmware örnatilgan bölsa)
@@ -373,6 +374,11 @@ done
 kill $QPID 2>/dev/null; wait $QPID 2>/dev/null; rm -f "$DISK"
 echo "$RESULT"
 [[ "$RESULT" == OK* ]] || exit 1
+
+# --- Seriya qobiq: terminal fayl buyruqlari (nusxa, köçir, qidir, bosh, oxir, hajm) ---
+QRES=$(timeout 300 python3 scripts/agent/seriya_qobiq.py "$KERNEL" "$LOG_DIR/verify-qobiq.log" 2>&1)
+echo "${QRES:-FAIL seriya qobiq: timeout (qarang $LOG_DIR/verify-qobiq.log)}"
+[[ "$QRES" == OK* ]] || exit 1
 
 # --- Yumaloq burçaklar regressiyasi: brauzer sahifalari suratga olinadi va
 #     check_corners.py dan ötkaziladi ("qora tişçalar" qaytmasligi uçun) ---

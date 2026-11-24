@@ -119,6 +119,8 @@ pub const SYS_TLS_SEND: u64 = 46;
 pub const SYS_TLS_RECV: u64 = 47;
 /// TLS yopiş. x0 = handle.
 pub const SYS_TLS_CLOSE: u64 = 48;
+/// Fayl yoki papkani köçiradi / nomini özgartiradi. x0,x1 = eski yöl; x2,x3 = yangi yöl.
+pub const SYS_RENAME: u64 = 49;
 
 /// Signallar
 pub const SIG_TERM: u64 = 15;

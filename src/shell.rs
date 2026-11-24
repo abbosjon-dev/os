@@ -4,7 +4,7 @@
 use crate::i18n::{self, Lang, Text, msg};
 use crate::line::{LineEditor, read_line};
 use crate::memory::{frame, heap};
-use crate::{accounts, config};
+use crate::{accounts, config, matn};
 use crate::fs::{self, FsError};
 use crate::task::{self, State};
 use crate::{print, println, power, timer, tprint, tprintln, uart};
@@ -31,6 +31,12 @@ enum Cmd {
     Write,
     Mkdir,
     Rm,
+    Copy,
+    Move,
+    Grep,
+    Head,
+    Tail,
+    Wc,
     Channels,
     Whoami,
     Passwd,
@@ -70,6 +76,12 @@ const COMMANDS: &[Command] = &[
     Command { cmd: Cmd::Write, names: ["yoz", "записать", "write"], aliases: &[], help: ["faylga yoziş: yoz uy/a.txt Salom", "записать в файл: записать uy/a.txt Привет", "write to a file: write uy/a.txt Hello"] },
     Command { cmd: Cmd::Mkdir, names: ["papka", "папка", "mkdir"], aliases: &[], help: ["papka yaratiş: papka uy/rasmlar", "создать папку: папка uy/foto", "create a directory: mkdir uy/photos"] },
     Command { cmd: Cmd::Rm, names: ["taşla", "удалить", "rm"], aliases: &["tashla"], help: ["fayl yoki böş papkani öçiriş", "удалить файл или пустую папку", "remove a file or empty directory"] },
+    Command { cmd: Cmd::Copy, names: ["nusxa", "копировать", "cp"], aliases: &["nusxala"], help: ["faylni nusxalaş: nusxa uy/a.txt uy/b.txt", "копировать файл: копировать откуда куда", "copy a file: cp from to"] },
+    Command { cmd: Cmd::Move, names: ["köçir", "переместить", "mv"], aliases: &["kochir", "kocir"], help: ["köçiriş / nomini özgartiriş: köçir manba manzil", "переместить / переименовать: переместить откуда куда", "move / rename: mv from to"] },
+    Command { cmd: Cmd::Grep, names: ["qidir", "искать", "grep"], aliases: &[], help: ["qatorlarda qidiriş: qidir [-i] [-n] naqsh fayl", "поиск в строках: искать [-i] [-n] образец файл", "search lines: grep [-i] [-n] pattern file"] },
+    Command { cmd: Cmd::Head, names: ["bosh", "начало", "head"], aliases: &[], help: ["birinçi qatorlar: bosh [-n N] fayl", "первые строки: начало [-n N] файл", "first lines: head [-n N] file"] },
+    Command { cmd: Cmd::Tail, names: ["oxir", "конец", "tail"], aliases: &[], help: ["oxirgi qatorlar: oxir [-n N] fayl", "последние строки: конец [-n N] файл", "last lines: tail [-n N] file"] },
+    Command { cmd: Cmd::Wc, names: ["hajm", "счёт", "wc"], aliases: &["счет"], help: ["qator, söz va baytlar soni: hajm fayl", "число строк, слов и байт: счёт файл", "line, word and byte count: wc file"] },
     Command { cmd: Cmd::Channels, names: ["kanallar", "каналы", "channels"], aliases: &[], help: ["Zamin kanallari (IPC)", "каналы Zamin (IPC)", "Zamin channels (IPC)"] },
     Command { cmd: Cmd::Whoami, names: ["kimman", "кто", "whoami"], aliases: &[], help: ["joriy foydalanuvçi", "текущий пользователь", "current user"] },
     Command { cmd: Cmd::Passwd, names: ["parol", "пароль", "passwd"], aliases: &[], help: ["parolni özgartiriş", "сменить пароль", "change password"] },
@@ -255,6 +267,68 @@ fn find(name: &str) -> Option<Cmd> {
         .iter()
         .find(|c| c.names.contains(&name) || c.aliases.contains(&name))
         .map(|c| c.cmd)
+}
+
+fn usage(cmd: Cmd) {
+    let help = COMMANDS.iter().find(|c| core::mem::discriminant(&c.cmd) == core::mem::discriminant(&cmd)).map_or("", |c| c.help[i18n::current() as usize]);
+    println!("  {}", help);
+}
+
+/// Fayl buyruqlari (foydalanuvçi terminali bilan umumiy mantiq — `matn`).
+/// Ruxsatlar fs qatlamida (joriy foydalanuvçi nomidan) tekşiriladi.
+fn file_cmd(cmd: Cmd, args: &str) {
+    let read = |path: &str| fs::read_all(path).map_err(|e| tprintln!(msg::SH_ERROR, path, fs_error_text(e))).ok();
+    match cmd {
+        Cmd::Copy | Cmd::Move => {
+            let parts: alloc::vec::Vec<&str> = args.split_whitespace().collect();
+            let [src, dst] = parts.as_slice() else { return usage(cmd) };
+            let src = abs_path(src);
+            let dst = abs_path(dst);
+            let dst = matn::dest_path(&src, &dst, fs::list(&dst).is_ok());
+            if src.trim_end_matches('/') == dst.trim_end_matches('/') {
+                println!("  {}: {}", dst, i18n::pick(&["manba va manzil bir xil", "источник и цель совпадают", "source and destination are the same"]));
+                return;
+            }
+            if matches!(cmd, Cmd::Move) {
+                match fs::rename(&src, &dst) {
+                    Ok(()) => println!("  {}: {} → {}", i18n::pick(&["köçirildi", "перемещено", "moved"]), src, dst),
+                    Err(e) => tprintln!(msg::SH_ERROR, src, fs_error_text(e)),
+                }
+                return;
+            }
+            let Some(data) = read(&src) else { return };
+            let res = fs::open(&dst, crate::abi::OPEN_CREATE | crate::abi::OPEN_TRUNCATE).and_then(|id| fs::write(id, Some(0), &data));
+            match res {
+                Ok(n) => println!("  {}: {} → {} ({} B)", i18n::pick(&["nusxalandi", "скопировано", "copied"]), src, dst, n),
+                Err(e) => tprintln!(msg::SH_ERROR, dst, fs_error_text(e)),
+            }
+        }
+        Cmd::Grep => {
+            let Some(o) = matn::parse_grep(args) else { return usage(cmd) };
+            let Some(data) = read(&abs_path(o.file)) else { return };
+            for l in matn::grep(&String::from_utf8_lossy(&data), &o) {
+                println!("{}", l);
+            }
+        }
+        _ => {
+            let is_wc = matches!(cmd, Cmd::Wc);
+            let (n, file) = if is_wc { (0, args.trim()) } else { matn::parse_count(args).unwrap_or((0, "")) };
+            if file.is_empty() {
+                return usage(cmd);
+            }
+            let Some(data) = read(&abs_path(file)) else { return };
+            if is_wc {
+                let (l, w, b) = matn::wc(&data);
+                println!("  {} {}, {} {}, {} {}  {}", l, i18n::pick(&["qator", "строк", "lines"]), w, i18n::pick(&["söz", "слов", "words"]), b, i18n::pick(&["bayt", "байт", "bytes"]), file);
+                return;
+            }
+            let text = String::from_utf8_lossy(&data);
+            let lines = if matches!(cmd, Cmd::Head) { matn::head(&text, n) } else { matn::tail(&text, n) };
+            for l in lines {
+                println!("{}", l);
+            }
+        }
+    }
 }
 
 pub struct Shell {
@@ -506,6 +580,7 @@ impl Shell {
                     Err(e) => tprintln!(msg::SH_ERROR, path, fs_error_text(e)),
                 }
             }
+            Cmd::Copy | Cmd::Move | Cmd::Grep | Cmd::Head | Cmd::Tail | Cmd::Wc => file_cmd(cmd, args),
             Cmd::Channels => {
                 let list = crate::ipc::list();
                 if list.is_empty() {

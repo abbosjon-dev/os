@@ -366,7 +366,9 @@
       "id": "T46",
       "title": "Terminal: fayl buyruqlari nusxa/köçir/qidir/bosh/oxir/hajm (cp, mv, grep, head, tail, wc)",
       "detail": "Yo'l xaritasining 10-bandi. Grafik terminalda fayllar bilan ishlash uchun eng zarur buyruqlar yetishmaydi. Fayllar: user/src/bin/terminal.rs (BUILTINS ro'yxatiga uch tilli nomlar va yordam matni: nusxa/копировать/cp, köçir/переместить/mv (aliaslar nusxa, kochir), qidir/искать/grep [-i] [-n] naqsh fayl, bosh/начало/head [-n N], oxir/конец/tail [-n N], hajm/счёт/wc). Mavjud fayl syscall'laridan (open/read/write/rename) foydalaniladi, ruxsatlar hurmat qilinadi, xatolar foydalanuvchi tilida chiqadi. Tab bilan to'ldirish yangi buyruqlarni ham taniydi. src/shell.rs dagi seriya qobiqqa ham shu buyruqlar qo'shiladi. README 'Zamin terminali' bo'limi yangilanadi. Qabul mezoni: verify.sh full dagi seriya qobiq sinovida 'yoz /tmp/a.txt ...' → 'nusxa /tmp/a.txt /tmp/b.txt' → 'qidir -n zamin /tmp/b.txt' → 'bosh -n 1' → 'oxir -n 1' → 'hajm' (qator/so'z/bayt) kutilgan natijani beradi. 'köçir' dan keyin manba fayl yo'qoladi. Skrinshot docs/terminal-buyruqlar.png (shot.py).",
-      "batch": 7
+      "batch": 7,
+      "status": "done",
+      "done_at": "2026-11-24 03:29:23"
     },
     {
       "id": "T47",

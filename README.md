@@ -1166,6 +1166,38 @@ abbosjon@zamin:~> çiqiş                                    # çiqiş (qayta ki
 - töxtatiş xavfsiz: jarayon yadro içida (masalan, qulf uşlab turganda) uzilmaydi, foydalanuvçi
   rejimiga qaytayotganda özi tugaydi.
 
+### Fayl buyruqlari: nusxa, köçir, qidir, bosh, oxir, hajm
+
+```
+test@zamin:~> nusxa /tmp/a.txt /tmp/b.txt          # cp / копировать
+  nusxalandi: /tmp/a.txt → /tmp/b.txt (52 B)
+test@zamin:~> qidir -n zamin /tmp/b.txt             # grep / искать  [-i] [-n] naqsh fayl
+1:Salom zamin OS
+test@zamin:~> bosh -n 1 /tmp/b.txt                  # head / начало  [-n N | -N] fayl
+test@zamin:~> oxir -n 1 /tmp/b.txt                  # tail / конец   [-n N | -N] fayl
+test@zamin:~> hajm /tmp/b.txt                       # wc / счёт
+  3 qator, 8 söz, 52 bayt  /tmp/b.txt
+test@zamin:~> köçir /tmp/b.txt /tmp/c.txt           # mv / переместить (aliaslar: kochir, kocir)
+  köçirildi: /tmp/b.txt → /tmp/c.txt
+```
+
+- Buyruqlar uç tilda (uz/ru/en nomlari) va ASCII aliaslar bilan (`kochir`, `nusxala`, `счет`)
+  ham grafik terminalda (`/dasturlar/terminal`), ham yadroning seriya zaxira qobiğida
+  (`src/shell.rs`) bor; Tab bilan töldiriş ularni ham taniydi. `bosh`/`oxir` standart — 10 qator.
+- Manzil papka bölsa (`nusxa a.txt ~`) — fayl nomi saqlanib, şu papkaga yoziladi.
+- `nusxa` — `open/read/write` syscall'lari orqali; `köçir` — yangi `SYS_RENAME` (49) tizim
+  çaqiruvi: maʼlumot nusxalanmaydi, tugun yangi papkaga ulanadi, manba yöqoladi. Ruxsatlarni
+  yadro tekşiradi (öqiş, ikkala papkaga yoziş, sticky `/tmp`, tizim fayllari) — masalan
+  `nusxa a.txt /tizim/x` → `ruxsat yöq`. Xatolar va foydalaniş matni joriy tilda çiqadi.
+- Mantiq bitta umumiy faylda — `src/matn.rs` (`parse_grep`, `grep`, `parse_count`, `head`,
+  `tail`, `wc`, `dest_path`); yadro uni `mod matn`, foydalanuvçi kutubxonasi `zamin::matn`
+  (`include!`) sifatida oladi. Yuklanişda `[ok] matn buyruqlari` va `terminal --self-test`
+  tekşiradi; `verify.sh full` dagi seriya qobiq sinovi (`scripts/agent/seriya_qobiq.py`)
+  toza diskda sozlaşdan ötib, `yoz` → `nusxa` → `qidir -n` → `bosh/oxir -n 1` → `hajm` →
+  `köçir` (manba yöqolişi) va ruxsat xatolarini kutilgan natija bilan soliştiradi.
+
+![Terminal: fayl buyruqlari](docs/terminal-buyruqlar.png)
+
 ### Buyruqlar tarixi va Tab bilan töldiriş
 
 - **↑ / ↓** — oldingi / keyingi buyruq; oxirida terilayotgan qator (qoralama) qaytadi.
