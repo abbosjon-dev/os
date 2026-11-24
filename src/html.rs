@@ -64,7 +64,7 @@ pub struct Block {
     pub pad: f32,
     pub bw: f32,
     pub bc: Option<u32>,
-    pub radius: f32,
+    pub radius: [f32; 4], // TL, TR, BR, BL (manfiy — foiz)
     pub grad: Option<css::Grad>,     // konteyner foni: linear-gradient
     pub shadow: Option<css::Shadow>, // konteyner soyasi: box-shadow
     pub maxw: Option<(f32, bool)>,
@@ -138,7 +138,7 @@ pub struct Cbox {
     pub pad: f32,
     pub bw: f32,
     pub bc: Option<u32>,
-    pub radius: f32,
+    pub radius: [f32; 4], // TL, TR, BR, BL (manfiy — foiz)
     pub grad: Option<css::Grad>,
     pub shadow: Option<css::Shadow>,
     pub maxw: Option<(f32, bool)>,
@@ -1429,7 +1429,7 @@ impl P {
         let key = self.serial;
         for b in blocks.iter_mut() {
             // Bitta ramka-quti: ichki hujjat foni, çegara, iframe kengligi
-            (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.wpx, b.center, b.bmt, b.bmb) = (Some(fbg), key, 8.0, border, Some(bc), 2.0, width, 0.0, false, 6.0, 6.0);
+            (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.wpx, b.center, b.bmt, b.bmb) = (Some(fbg), key, 8.0, border, Some(bc), [2.0; 4], width, 0.0, false, 6.0, 6.0);
             (b.grad, b.shadow) = (None, None);
             b.outer = Vec::new();
         }
@@ -1782,7 +1782,7 @@ impl P {
             b.fwpx = 0.0;
             b.fgrow = grow;
             b.rspan = 0; // joy egallovçi
-            (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.wpx, b.center) = (None, 0, 0.0, 0.0, None, 0.0, None, 0.0, false);
+            (b.bg, b.bgk, b.pad, b.bw, b.bc, b.radius, b.maxw, b.wpx, b.center) = (None, 0, 0.0, 0.0, None, [0.0; 4], None, 0.0, false);
             (b.grad, b.shadow) = (None, None);
             b.outer = Vec::new();
             b.spans.push(Span { text: String::from("\u{2007}"), link: None, bold: false, code: false, br: false, color: None, size: b.size, el: NO_EL, button: false, underline: false, input: NO_EL, fx: 0 });
@@ -2757,7 +2757,7 @@ pub fn plain(text: &str) -> Doc {
         src: String::new(),
         hidden: false,
         bgk: 0,
-        pad: 0.0, bw: 0.0, bc: None, radius: 0.0, grad: None, shadow: None, maxw: None, wpx: 0.0, center: false, mt: 0.0, mb: 0.0, bmt: 0.0, bmb: 0.0,
+        pad: 0.0, bw: 0.0, bc: None, radius: [0.0; 4], grad: None, shadow: None, maxw: None, wpx: 0.0, center: false, mt: 0.0, mb: 0.0, bmt: 0.0, bmb: 0.0,
         flex: 0, fcol: 0, fmode: 0, fgap: 0.0, gcols: 0, fjust: 0, fw: None, fwpx: 0.0, fgrow: 0.0,
         mark: String::new(), det: NO_EL, summary: false, iw: 0, ih: 0, rspan: 1,
         ibg: 0, ibc: 0, ibw: None, ibwpx: 0.0, iva: 0, ijust: 0,

@@ -885,7 +885,7 @@ pub fn self_test_inline() -> Result<usize, &'static str> {
     }
     let boxes: Vec<&Deco> = deco.iter().filter(|d| d.fill == Some(0x2563eb)).collect();
     let bw3 = gfx::px_round(260.0 * k);
-    if boxes.len() != 3 || boxes.iter().zip([bw, bw, bw3]).any(|(d, w)| d.w != w || d.radius == 0 || d.h == 0) || b.0 < boxes[0].x + bw {
+    if boxes.len() != 3 || boxes.iter().zip([bw, bw, bw3]).any(|(d, w)| d.w != w || d.radius.iter().any(|&r| r == 0.0) || d.h == 0) || b.0 < boxes[0].x + bw {
         return Err("inline-block qutisi: width / fon / border-radius xato");
     }
     n += 2;
@@ -9881,6 +9881,19 @@ document.getElementById("qs").textContent = location.search;
 <div dir="rtl" style="display:flex;gap:10px"><div class="ic">rtl 1</div><div class="gb">rtl 2</div><div class="bola">rtl 3</div></div>
 <div class="b" style="border-width:4px;border-radius:20px">border: 4px, radius 20px.</div>
 <div class="b" style="border-width:1px;border-radius:3px">border: 1px, radius 3px.</div>
+<h2>Har burçak alohida, foiz va katta radius</h2>
+<style>
+.rr{background:#dfe9fb;color:#1a2233;padding:10px;margin:8px 0}
+.av{width:64px;height:64px;padding:0;border-radius:50%;background:#3a7bd5}
+.tq{background:#1a2233;color:#e6e9ef;padding:12px;margin:8px 0}
+</style>
+<div class="rr" style="border-radius:10px 0 20px 5px;border:2px solid #3a7bd5">border-radius: 10px 0 20px 5px — 4 qiymat, çegara 2px.</div>
+<div class="rr" style="border-radius:30px 6px 0">border-radius: 30px 6px 0 — 3 qiymat (pastki öng burçak töğri).</div>
+<div class="rr" style="border-top-left-radius:24px;border-bottom-right-radius:24px">border-top-left / bottom-right-radius: 24px, qolganlari 0.</div>
+<div style="display:flex;gap:16px"><div class="av"></div><div class="av" style="height:58px;border:3px solid #1e3a8a;background:#fde7c8"></div><div class="av" style="border-radius:50% 0 50% 50%"></div></div>
+<div class="rr" style="border:10px solid #3a7bd5;border-radius:80px;padding:26px 40px">border: 10px, radius 80px — qalin çegara va katta radius.</div>
+<div class="tq" style="border-radius:0 40px 0 40px">Qorong'i fon: border-radius 0 40px 0 40px.</div>
+<div class="rr" style="border-radius:999px;padding:12px 24px">border-radius: 999px — "tabletka" (yiğindi oşdi → kiçraytirildi).</div>
 "##,
         "zamin://bezak" => r##"<title>CSS bezak: gradient va soya</title>
 <style>
@@ -9907,6 +9920,23 @@ body{background:#f3f5f9;color:#1a2233}
 <div class="s"><b>Qattiq soya</b><p>4px 4px 0</p></div>
 <div class="y"><b>Yorug'lik</b><p>0 0 20px 2px</p></div>
 <div class="x"><b>Yaroqsiz CSS</b><p>e'tiborsiz qoldirildi</p></div>
+</div>
+<h2>Har burçak alohida radius</h2>
+<style>
+.r4{background:#ffffff;color:#1a2233;padding:12px}
+.ava{width:72px;height:72px;padding:0;border-radius:50%}
+</style>
+<div style="display:flex;gap:16px">
+<div class="r4" style="border-radius:24px 0 24px 0;box-shadow:0 4px 12px rgba(0,0,0,.30)"><b>24px 0 24px 0</b><p>soya bilan</p></div>
+<div class="k v" style="border-radius:40px 8px"><b>40px 8px</b><p>gradient, 2 qiymat</p></div>
+<div class="r4" style="border:8px solid #1e3a8a;border-radius:70px 70px 12px 12px"><b>8px çegara</b><p>radius 70px</p></div>
+<div style="background:#1a2233;color:#e6e9ef;padding:12px;border-radius:0 32px"><b>Qorong'i</b><p>0 32px</p></div>
+</div>
+<div style="display:flex;gap:18px;margin:18px 0">
+<div class="ava" style="background:#3a7bd5"></div>
+<div class="ava" style="background:linear-gradient(135deg,#ff5f6d,#ffc371)"></div>
+<div class="ava" style="height:64px;background:#ffffff;border:4px solid #3a7bd5;box-shadow:0 0 12px rgba(0,0,0,.25)"></div>
+<div class="ava" style="background:#1e3a8a;border-radius:50% 50% 0 50%"></div>
 </div>
 "##,
         "zamin://inline" => r##"<title>CSS inline-block va visibility</title>
@@ -10883,7 +10913,7 @@ struct Deco {
     w: usize,
     h: usize,
     fill: Option<Color>,
-    radius: usize,
+    radius: [f32; 4], // ekran px (manfiy — foiz), çizişda css::radius_px bilan butun songa
     bw: usize,
     bc: Color,
     grad: Option<crate::css::Grad>,
@@ -10894,7 +10924,7 @@ struct Deco {
 }
 
 fn dfill(x: usize, y: usize, w: usize, h: usize, c: Color) -> Deco {
-    Deco { x, y, w, h, fill: Some(c), radius: 0, bw: 0, bc: 0, grad: None, shadow: None, clip: None, alpha: 255 }
+    Deco { x, y, w, h, fill: Some(c), radius: [0.0; 4], bw: 0, bc: 0, grad: None, shadow: None, clip: None, alpha: 255 }
 }
 
 /// Sahifa joylaşuvi: elementlar, bezaklar va toʻliq balandlik.
@@ -10978,7 +11008,7 @@ fn out_of_flow(run: &[&crate::html::Block]) -> Vec<crate::html::Block> {
             let mut c = (*b).clone();
             if c.bgk != 0 && c.bgk < c.oser {
                 // quti tasqaridagi ajdodniki — bu yerda çizilmaydi
-                (c.bg, c.bgk, c.pad, c.bw, c.bc, c.radius) = (None, 0, 0.0, 0.0, None, 0.0);
+                (c.bg, c.bgk, c.pad, c.bw, c.bc, c.radius) = (None, 0, 0.0, 0.0, None, [0.0; 4]);
                 (c.grad, c.shadow) = (None, None);
             }
             if c.bgk == c.oser || c.bgk == 0 {
@@ -11016,7 +11046,7 @@ fn ib_columns(run: &[&crate::html::Block]) -> Vec<(u32, Vec<crate::html::Block>)
         let s = c.ibc;
         c.ibg = 0;
         if c.bgk != 0 && c.bgk < s {
-            (c.bg, c.bgk, c.pad, c.bw, c.bc, c.radius) = (None, 0, 0.0, 0.0, None, 0.0);
+            (c.bg, c.bgk, c.pad, c.bw, c.bc, c.radius) = (None, 0, 0.0, 0.0, None, [0.0; 4]);
             (c.grad, c.shadow) = (None, None);
         }
         if c.bgk == s {
@@ -11381,11 +11411,12 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
             .max(if c.ser == b.ibc { 1 } else { u * 4 });
             let cx = px + if c.center { pw.saturating_sub(cw) / 2 } else { 0 };
             let bwp = if c.bw > 0.0 { lpx(c.bw).max(1) } else { 0 };
-            let padp = lpx(c.pad).max(if c.bg.is_some() || bwp > 0 { u / 2 } else { 0 });
+            // aniq "padding: 0" (-0.0) — eng kiçik çekiniş qöşilmaydi
+            let padp = if c.pad.is_sign_negative() { 0 } else { lpx(c.pad).max(if c.bg.is_some() || bwp > 0 { u / 2 } else { 0 }) };
             let inset = padp + bwp;
             y += lpx(c.mt);
             let shadow = c.shadow.map(|s| (spx(s.dx) as i32, spx(s.dy) as i32, lpx(s.blur), spx(s.spread) as i32, s.color, s.alpha));
-            deco.push(Deco { x: cx, y, w: cw, h: 0, fill: c.bg, radius: lpx(c.radius), bw: bwp, bc: c.bc.unwrap_or(0x808080), grad: c.grad, shadow, clip: None, alpha: c.op });
+            deco.push(Deco { x: cx, y, w: cw, h: 0, fill: c.bg, radius: c.radius.map(|r| if r < 0.0 { r } else { r * k }), bw: bwp, bc: c.bc.unwrap_or(0x808080), grad: c.grad, shadow, clip: None, alpha: c.op });
             if c.dx != 0.0 || c.dy != 0.0 {
                 box_shifts.push((deco.len() - 1, spx(c.dx), spx(c.dy)));
             }
@@ -11955,7 +11986,7 @@ fn draw_browser(win: &Window) {
             // Burçak radiusi — TÖLIQ quti böyiça (aylantirilganda ham özgarmaydi); yuqoridan
             // qisman aylantirilgan quti körinmaydigan `skip` qatorlari bilan çiziladi, şunda
             // qisman körinadigan yoy va çegara ham haqiqiy geometriya böyiça çiqadi.
-            let r = d.radius.min(d.w / 2).min(d.h / 2);
+            let r = crate::css::radius_px(d.radius, d.w, d.h);
             let skip = top - d.y;
             // opacity: alfa < 255 — fon yarim şaffof (fill_round_rect_a), gradient/çegara sahifa foni bilan aralaşadi
             let al = d.alpha as u32;
@@ -11982,7 +12013,7 @@ fn draw_browser(win: &Window) {
                 gfx::BoxFill::Solid(c) if al < 255 && d.bw == 0 => gfx::round_box_a(dx, dy, d.w, d.h, skip, r, gfx::BoxFill::Solid(c), 0, c, al),
                 gfx::BoxFill::Solid(c) if al < 255 => gfx::round_box(dx, dy, d.w, d.h, skip, r, gfx::BoxFill::Solid(fade(c)), d.bw, fade(d.bc)),
                 // oddiy töğri burçakli quti — tez yöl
-                gfx::BoxFill::Solid(c) if r == 0 && d.bw == 0 => fill_rect(dx, dy, d.w, dh, c),
+                gfx::BoxFill::Solid(c) if r == [[0, 0]; 4] && d.bw == 0 => fill_rect(dx, dy, d.w, dh, c),
                 _ => gfx::round_box(dx, dy, d.w, d.h, skip, r, fill, d.bw, fade(d.bc)),
             }
             if d.clip.is_some() {

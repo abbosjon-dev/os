@@ -376,6 +376,33 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   ![Och fon (#fff): zamin://matn bezak bölimi](docs/corners-light.png)
 
   ![Aylantirilgan holat: pastdan kesilgan flex/rtl bloklar](docs/web-round-scroll.png)
+
+  **Har burçak uçun alohida radius, foiz va katta radiuslar**: `border-radius` endi 1–4 qiymatli
+  yozuvni (`10px 0 20px 5px` — çap-yuqori, öng-yuqori, öng-pastki, çap-pastki; `/` dan keyingi
+  qism e'tiborsiz) va `border-top-left-radius` … `border-bottom-left-radius` xossalarini qabul
+  qiladi; 60 px çeklovi olib taşlandi. Foiz CSS kabi hisoblanadi — gorizontal radius qutining
+  enidan, vertikali böyidan (kvadratda `50%` — doira, nokvadratda — ellips). Bir tomondagi
+  ikki radius yiğindisi tomondan oşsa, hamma radius bir xil `f = min(tomon / yiğindi)`
+  koeffitsiyentga kiçraytiriladi (`border-radius: 999px` → "tabletka"). Fon, çegara, gradient,
+  opacity va `box-shadow` bitta primitivda (`gfx::round_box`, `gfx::fit_radii`, elliptik
+  `corner_cov_e`) çiziladi: AA qirrasi içki töldiriş bilan bir xil qamrovdan olinadi, soya
+  har burçak masofa funksiyasi (`rrect4_sdf`) bilan hisoblanadi. Aniq `padding: 0` endi
+  fonli qutiga eng kiçik içki çekiniş qöşmaydi (doira avatar haqiqatan kvadrat qutida).
+  Self-test: `[ok] CSS radius` (1/2/3/4 qiymat, alohida burçaklar, %, kiçraytiriş) va
+  `[ok] yumaloq burçaklar` (0 radius bilan aralaş, > 60 px, doira/ellips, qalin çegara, soya).
+  zamin://matn va zamin://bezak oxiriga yangi bloklar qöşildi (turli burçaklar, 50% doira
+  avatar, 0 radiusli burçak bilan aralaş, qalin çegara + 80 px radius, qorong'i fon).
+  `check_corners.py` endi har burçak yoyini butunlay tekşiradi (`arc_corner`): radius bbox
+  qirralaridan baholanadi, zona içidagi har qator/ustun çetdan içkariga yuriladi va AA
+  çetidagi piksellar içki fon, mahalliy töldiriş va taşqi fondan to'q bölsa — nuqson.
+  Tekşiruvçining özi ham sinanadi: doira avatar yoyiga qöyilgan bitta qora piksel topilişi şart.
+  Tezlik: `box-shadow` endi element qamrovini quti bilan bir xil butun sonli `rr_cov` dan oladi,
+  töğri qirralar böylab yumşatiş jadvaldan (sqrt faqat burçak yoylarida), gradient esa 16.16
+  fiksirlangan nuqtada — softfloat nişonida soyali/gradientli sahifa kadri ~1.6 s dan ~0.3 s ga
+  tuşdi (manzil satriga yozişda tugmalar yöqolmaydi).
+
+  ![Har burçak alohida radius: zamin://bezak](docs/web-radius.png)
+  ![Katta radius, qalin çegara, tabletka: zamin://matn oxiri](docs/web-radius-matn.png)
 - **Ichma-ich blok konteynerlari** — ota blokning foni, chegarasi, padding'i va soyasi endi bola
   bloklarni haqiqatan o'rab oladi (karta ichida karta, sidebar ichidagi bloklar). `html::Block`
   eng yaqin quti (`bgk`) dan tashqari ajdod qutilar zanjirini saqlaydi (`outer: Vec<Cbox>` —

@@ -288,8 +288,7 @@ pub fn gradient_round_rect(x: usize, y: usize, w: usize, h: usize, rt: usize, rb
     }
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };
-    let rt = rt.min(w / 2).min(h / 2);
-    let rb = rb.min(w / 2).min(h / 2);
+    let r4 = tb4(w, h, rt, rb);
     // 256 rangli jadval (har piksel uçun töxtaş qidirmaslik uçun)
     let mut lut = [0u32; 256];
     for (i, c) in lut.iter_mut().enumerate() {
@@ -303,10 +302,7 @@ pub fn gradient_round_rect(x: usize, y: usize, w: usize, h: usize, rt: usize, rb
     for dy in 0..h {
         let py = (dy + skip) as f32 + 0.5 - cy;
         for dx in 0..w {
-            let cov = match corner_at(dx, dy, w, h, rt, rb) {
-                Some((ox, oy, r)) => corner_cov(ox, oy, r),
-                None => 255,
-            };
+            let cov = rr_cov(dx, dy, w, h, &r4);
             if cov == 0 {
                 continue;
             }
@@ -321,24 +317,52 @@ pub fn gradient_round_rect(x: usize, y: usize, w: usize, h: usize, rt: usize, rb
 /// (hw, hh) — yarim ölçamlar, r — burçak radiusi.
 #[inline]
 fn rrect_sdf(px: f32, py: f32, cx: f32, cy: f32, hw: f32, hh: f32, r: f32) -> f32 {
-    let qx = absf(px - cx) - (hw - r);
-    let qy = absf(py - cy) - (hh - r);
+    let r = r.min(hw).min(hh);
+    rrect4_sdf(px, py, cx - hw, cy - hh, hw * 2.0, hh * 2.0, [[r, r]; 4])
+}
+
+/// Har burçagi alohida radiusli (TL, TR, BR, BL) töğriburçakning işorali masofasi:
+/// (x0, y0) — çap-yuqori nuqta, w×h ölçam. Töğri burçakli quti masofasi va burçak
+/// doiralari masofasining kattasi (yoy markazidan taşqaridagi çorak sohada).
+#[inline]
+fn rrect4_sdf(px: f32, py: f32, x0: f32, y0: f32, w: f32, h: f32, r: [[f32; 2]; 4]) -> f32 {
+    let (x1, y1) = (x0 + w, y0 + h);
+    let qx = (x0 - px).max(px - x1);
+    let qy = (y0 - py).max(py - y1);
     let (mx, my) = (qx.max(0.0), qy.max(0.0));
-    sqrtf(mx * mx + my * my) + qx.max(qy).min(0.0) - r
+    let mut d = sqrtf(mx * mx + my * my) + qx.max(qy).min(0.0);
+    // burçak (ellips) markazlari va yönalişlari (taşqariga)
+    let [a, b, c, e] = r;
+    for (cx, cy, sx, sy, [rx, ry]) in [(x0 + a[0], y0 + a[1], -1.0, -1.0, a), (x1 - b[0], y0 + b[1], 1.0, -1.0, b), (x1 - c[0], y1 - c[1], 1.0, 1.0, c), (x0 + e[0], y1 - e[1], -1.0, 1.0, e)] {
+        if rx > 0.0 && ry > 0.0 && (px - cx) * sx > 0.0 && (py - cy) * sy > 0.0 {
+            let (ex, ey) = (px - cx, py - cy);
+            let dc = if rx == ry {
+                sqrtf(ex * ex + ey * ey) - rx
+            } else {
+                // ellips: k = |(ex/rx, ey/ry)|, masofa ≈ (k − 1) / |∇k| (çegara yaqinida aniq)
+                let (ux, uy) = (ex / rx, ey / ry);
+                let k = sqrtf(ux * ux + uy * uy).max(1e-6);
+                let g = sqrtf(ux * ux / (rx * rx) + uy * uy / (ry * ry)) / k;
+                (k - 1.0) / g.max(1e-6)
+            };
+            d = d.max(dc);
+        }
+    }
+    d
 }
 
 /// CSS box-shadow: element (ex, ey, ew, eh, burçak radiusi er) soyasi — (dx, dy) ga
 /// surilgan, spread ga kengaygan, blur bilan yumşatilgan; rang c, eng katta alfa `alpha`.
 /// Elementning öz (töliq qoplangan) sohasiga çizilmaydi.
 #[allow(clippy::too_many_arguments)]
-pub fn box_shadow(ex: i32, ey: i32, ew: usize, eh: usize, er: usize, dx: i32, dy: i32, blur: usize, spread: i32, c: Color, alpha: u32) {
+pub fn box_shadow(ex: i32, ey: i32, ew: usize, eh: usize, er: Radii, dx: i32, dy: i32, blur: usize, spread: i32, c: Color, alpha: u32) {
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };
     box_shadow_on(f, ex, ey, ew, eh, er, dx, dy, blur, spread, c, alpha);
 }
 
 #[allow(clippy::too_many_arguments)]
-fn box_shadow_on(f: &Fb, ex: i32, ey: i32, ew: usize, eh: usize, er: usize, dx: i32, dy: i32, blur: usize, spread: i32, c: Color, alpha: u32) {
+fn box_shadow_on(f: &Fb, ex: i32, ey: i32, ew: usize, eh: usize, er: Radii, dx: i32, dy: i32, blur: usize, spread: i32, c: Color, alpha: u32) {
     if ew == 0 || eh == 0 || alpha == 0 {
         return;
     }
@@ -347,37 +371,58 @@ fn box_shadow_on(f: &Fb, ex: i32, ey: i32, ew: usize, eh: usize, er: usize, dx: 
         return;
     }
     let (sx, sy) = (ex + dx - spread, ey + dy - spread);
-    let sr = (er as i32 + spread).clamp(0, sw.min(sh) / 2) as f32;
-    let er = (er.min(ew / 2).min(eh / 2)) as f32;
+    // element radiuslari (quti çizişi bilan bir xil moslaş) va soyaniki (+ spread)
+    let er = fit_radii(er.map(|p| p.map(|v| v as f32)), ew, eh);
+    let sr = fit_radii(er.map(|p| p.map(|v| if v == 0 { 0.0 } else { (v as i32 + spread).max(0) as f32 })), sw as usize, sh as usize);
+    let srf = sr.map(|p| p.map(|v| v as f32));
     let bl = blur as i32;
-    let (scx, scy) = (sx as f32 + sw as f32 / 2.0, sy as f32 + sh as f32 / 2.0);
-    let (ecx, ecy) = (ex as f32 + ew as f32 / 2.0, ey as f32 + eh as f32 / 2.0);
+    let (sxf, syf, swf, shf) = (sx as f32, sy as f32, sw as f32, sh as f32);
     let x0 = (sx - bl).max(0);
     let y0 = (sy - bl).max(0);
     let x1 = (sx + sw + bl).min(f.w as i32);
     let y1 = (sy + sh + bl).min(f.h as i32);
-    let alpha = alpha.min(255) as f32;
+    let alpha = alpha.min(255);
+    // Yumşatiş jadvali: töğri qirralar böylab masofa yarim piksel qadamli (d2 = 2·d, butun),
+    // şuning uçun smoothstep bir marta hisoblanadi (softfloat nişonida har piksel uçun float
+    // amallari juda qimmat). Faqat burçak zonalarida (yoy) haqiqiy masofa (sqrt) olinadi.
+    let smooth = |d: f32| -> u32 {
+        let t = ((bl as f32 - d) / (2.0 * bl as f32)).clamp(0.0, 1.0);
+        (t * t * (3.0 - 2.0 * t) * alpha as f32) as u32
+    };
+    let lut: alloc::vec::Vec<u32> = if bl > 0 { (-2 * bl..=2 * bl).map(|d2| smooth(d2 as f32 / 2.0)).collect() } else { alloc::vec::Vec::new() };
+    let (sx1, sy1) = (sx + sw, sy + sh);
     for py in y0..y1 {
         for px in x0..x1 {
-            let (fx, fy) = (px as f32 + 0.5, py as f32 + 0.5);
-            // Elementning piksel qamrovi (ke): töliq qoplangan pikselga chizmaymiz. CSS da
-            // tashqi soya faqat element TAŞQARISIDA; çet (AA) pikselda soya elementning
-            // öz qamrovi bilan ikki marta qöşilmasligi kerak — aks holda blur = 0 soyada
-            // burçak yoyi böylab fon va elementdan töqroq "tişça" piksellar çiqadi.
-            let ke = (0.5 - rrect_sdf(fx, fy, ecx, ecy, ew as f32 / 2.0, eh as f32 / 2.0, er)).clamp(0.0, 1.0);
-            if ke >= 0.999 {
+            // Elementning piksel qamrovi (ke) — quti çizişi bilan AYNAN bir xil butun sonli
+            // qamrov (rr_cov). Töliq qoplangan pikselga çizmaymiz: CSS da taşqi soya faqat
+            // element TAŞQARISIDA; çet (AA) pikselda soya elementning öz qamrovi bilan ikki
+            // marta qöşilmasligi kerak — aks holda burçak yoyida "tişça" piksellar çiqadi.
+            let (lx, ly) = (px - ex, py - ey);
+            let ke = if lx >= 0 && ly >= 0 && (lx as usize) < ew && (ly as usize) < eh { rr_cov(lx as usize, ly as usize, ew, eh, &er) } else { 0 };
+            if ke >= 255 {
                 continue;
             }
-            let d = rrect_sdf(fx, fy, scx, scy, sw as f32 / 2.0, sh as f32 / 2.0, sr);
-            let k = if bl == 0 {
+            let a = if bl == 0 {
                 // keskin soya: pikselning element taşqarisidagi qismini qança qoplaydi
-                let ks = (0.5 - d).clamp(0.0, 1.0);
-                ((ks - ke) / (1.0 - ke)).clamp(0.0, 1.0)
+                let (qx, qy) = (px - sx, py - sy);
+                let ks = if qx >= 0 && qy >= 0 && qx < sw && qy < sh { rr_cov(qx as usize, qy as usize, sw as usize, sh as usize, &sr) } else { 0 };
+                if ks <= ke { 0 } else { (ks - ke) * 255 / (255 - ke) * alpha / 255 }
             } else {
-                let t = ((bl as f32 - d) / (2.0 * bl as f32)).clamp(0.0, 1.0);
-                t * t * (3.0 - 2.0 * t)
+                // burçak zonasi (yoy markazidan taşqarida) — haqiqiy masofa, aks holda jadval
+                let (hx, hy) = (2 * px + 1, 2 * py + 1); // piksel markazi, yarim piksel birligida
+                let corner = (hx < 2 * (sx + sr[0][0] as i32) && hy < 2 * (sy + sr[0][1] as i32))
+                    || (hx > 2 * (sx1 - sr[1][0] as i32) && hy < 2 * (sy + sr[1][1] as i32))
+                    || (hx > 2 * (sx1 - sr[2][0] as i32) && hy > 2 * (sy1 - sr[2][1] as i32))
+                    || (hx < 2 * (sx + sr[3][0] as i32) && hy > 2 * (sy1 - sr[3][1] as i32));
+                let qx2 = (2 * sx - hx).max(hx - 2 * sx1);
+                let qy2 = (2 * sy - hy).max(hy - 2 * sy1);
+                if corner || (qx2 > 0 && qy2 > 0) {
+                    smooth(rrect4_sdf(px as f32 + 0.5, py as f32 + 0.5, sxf, syf, swf, shf, srf))
+                } else {
+                    let d2 = qx2.max(qy2);
+                    if d2 >= 2 * bl { 0 } else if d2 <= -2 * bl { smooth(-(bl as f32)) } else { lut[(d2 + 2 * bl) as usize] }
+                }
             };
-            let a = (k * alpha) as u32;
             if a > 0 {
                 blend(f, px as usize, py as usize, c, a);
             }
@@ -435,39 +480,100 @@ fn corner_cov(ox: i32, oy: i32, r: i32) -> u32 {
     (inside * 255 / 16).max(4)
 }
 
-/// Piksel (dx,dy) burçak zonasidami? Bölsa — (ox, oy, r). rt — yuqori, rb — pastki
-/// burçaklar radiusi (çaqiruvçi ularni w/2, h/2 bilan çeklagan bölişi şart).
+/// Burçak radiuslari: TL, TR, BR, BL tartibida, har biri [gorizontal, vertikal] (piksel).
+/// Doiraviy burçakda ikkalasi teng; CSS foizi nokvadrat qutida elliptik burçak beradi.
+pub type Radii = [[usize; 2]; 4];
+
+/// Doiraviy radiuslar (TL, TR, BR, BL) → `Radii`.
 #[inline]
-fn corner_at(dx: usize, dy: usize, w: usize, h: usize, rt: usize, rb: usize) -> Option<(i32, i32, i32)> {
-    let (r, oy) = if dy < rt {
-        (rt, rt - 1 - dy)
-    } else if rb > 0 && dy >= h - rb {
-        (rb, dy - (h - rb))
-    } else {
-        return None;
-    };
-    let ox = if dx < r {
-        r - 1 - dx
-    } else if dx >= w - r {
-        dx - (w - r)
-    } else {
-        return None;
-    };
-    Some((ox as i32, oy as i32, r as i32))
+pub fn circ(r: [usize; 4]) -> Radii {
+    r.map(|v| [v, v])
 }
 
-fn round_rect_on(f: &Fb, x: usize, y: usize, w: usize, h: usize, rt: usize, rb: usize, c: Color, alpha: u32) {
+/// Burçak radiuslarini (kasr piksel, [gorizontal, vertikal]) w×h qutiga moslaydi: bir
+/// tomondagi ikki radius yiğindisi (yuqori/pastki — gorizontal, çap/öng — vertikal) tomondan
+/// oşsa, hammasi bir xil koeffitsiyentga kiçraytiriladi (CSS qoidasi), keyin pastga
+/// yaxlitlanadi — yiğindi heç qaçon tomondan oşmaydi, şuning uçun yonma-yon burçak
+/// zonalari ustma-ust tuşmaydi. Bir komponenti 0 bölgan burçak — töğri (ikkalasi 0).
+pub fn fit_radii(v: [[f32; 2]; 4], w: usize, h: usize) -> Radii {
+    let v = v.map(|p| if p[0] <= 0.0 || p[1] <= 0.0 { [0.0, 0.0] } else { p });
+    let (wf, hf) = (w as f32, h as f32);
+    let mut f = 1.0f32;
+    for (sum, side) in [(v[0][0] + v[1][0], wf), (v[3][0] + v[2][0], wf), (v[0][1] + v[3][1], hf), (v[1][1] + v[2][1], hf)] {
+        if sum > side && sum > 0.0 {
+            f = f.min(side / sum);
+        }
+    }
+    let mut o = v.map(|p| p.map(|x| if f < 1.0 { (x * f + 1e-3) as usize } else { (x + 0.5) as usize }));
+    for (a, b, k, side) in [(0, 1, 0, w), (3, 2, 0, w), (0, 3, 1, h), (1, 2, 1, h)] {
+        while o[a][k] + o[b][k] > side {
+            if o[a][k] >= o[b][k] { o[a][k] -= 1 } else { o[b][k] -= 1 }
+        }
+    }
+    // doiraviy burçak doiraviy qoladi (yaxlitlaş tuzatişi bir komponentni kamaytirgan bölsa)
+    for (p, q) in o.iter_mut().zip(v.iter()) {
+        if q[0] == q[1] {
+            let m = p[0].min(p[1]);
+            *p = [m, m];
+        }
+    }
+    o.map(|p| if p[0] == 0 || p[1] == 0 { [0, 0] } else { p })
+}
+
+/// Elliptik burçak qamrovi (0..255): `corner_cov` ning rx ≠ ry varianti (4×4 namuna,
+/// (x/rx)² + (y/ry)² ≤ 1). rx = ry bölsa — aynan `corner_cov`.
+#[inline]
+fn corner_cov_e(ox: i32, oy: i32, rx: i32, ry: i32) -> u32 {
+    if rx == ry {
+        return corner_cov(ox, oy, rx);
+    }
+    if rx <= 0 || ry <= 0 || ox < 0 || oy < 0 {
+        return 0;
+    }
+    let (ax, ay) = ((rx as i128 * 8) * (rx as i128 * 8), (ry as i128 * 8) * (ry as i128 * 8));
+    let inside = |x: i128, y: i128| x * x * ay + y * y * ax <= ax * ay;
+    let (x0, y0) = (ox as i128 * 8, oy as i128 * 8);
+    if !inside(x0, y0) {
+        return 0;
+    }
+    if inside(x0 + 8, y0 + 8) {
+        return 255;
+    }
+    let mut n = 0u32;
+    for sy in [1i128, 3, 5, 7] {
+        for sx in [1i128, 3, 5, 7] {
+            if inside(x0 + sx, y0 + sy) {
+                n += 1;
+            }
+        }
+    }
+    (n * 255 / 16).max(4)
+}
+
+/// Piksel (dx, dy) ning w×h yumaloq qutidagi qamrovi (0..255). r — burçak radiuslari
+/// (`fit_radii` dan ötgan). Piksel bir neçta burçak zonasiga tuşsa (qarama-qarşi katta
+/// radiuslar) — eng kiçik qamrov (şakllar kesişmasi).
+#[inline]
+fn rr_cov(dx: usize, dy: usize, w: usize, h: usize, r: &Radii) -> u32 {
+    let mut c = 255u32;
+    let (rx, by) = (w - 1 - dx, h - 1 - dy);
+    // (gorizontal masofa çetdan, vertikal masofa çetdan, radiuslar)
+    for (ex, ey, [qx, qy]) in [(dx, dy, r[0]), (rx, dy, r[1]), (rx, by, r[2]), (dx, by, r[3])] {
+        if ex < qx && ey < qy {
+            c = c.min(corner_cov_e((qx - 1 - ex) as i32, (qy - 1 - ey) as i32, qx as i32, qy as i32));
+        }
+    }
+    c
+}
+
+fn round_rect_on(f: &Fb, x: usize, y: usize, w: usize, h: usize, r: Radii, c: Color, alpha: u32) {
     if w == 0 || h == 0 || alpha == 0 {
         return;
     }
-    let rt = rt.min(w / 2).min(h / 2);
-    let rb = rb.min(w / 2).min(h / 2);
+    let r = fit_radii(r.map(|p| p.map(|v| v as f32)), w, h);
     for dy in 0..h {
         for dx in 0..w {
-            let cov = match corner_at(dx, dy, w, h, rt, rb) {
-                Some((ox, oy, r)) => corner_cov(ox, oy, r),
-                None => 255,
-            };
+            let cov = rr_cov(dx, dy, w, h, &r);
             blend(f, x + dx, y + dy, c, cov * alpha.min(255) / 255);
         }
     }
@@ -483,14 +589,21 @@ pub fn fill_round_rect(x: usize, y: usize, w: usize, h: usize, r: usize, c: Colo
 pub fn fill_round_rect_tb(x: usize, y: usize, w: usize, h: usize, rt: usize, rb: usize, c: Color) {
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };
-    round_rect_on(f, x, y, w, h, rt, rb, c, 255);
+    round_rect_on(f, x, y, w, h, tb4(w, h, rt, rb), c, 255);
+}
+
+/// Yuqori/pastki radius (eski API) → 4 burçak, har biri w/2, h/2 bilan çeklangan.
+#[inline]
+fn tb4(w: usize, h: usize, rt: usize, rb: usize) -> Radii {
+    let (rt, rb) = (rt.min(w / 2).min(h / 2), rb.min(w / 2).min(h / 2));
+    circ([rt, rt, rb, rb])
 }
 
 /// Yumaloq burçakli shaffof töğriburçak (alfa 0..255).
 pub fn fill_round_rect_a(x: usize, y: usize, w: usize, h: usize, r: usize, c: Color, alpha: u32) {
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };
-    round_rect_on(f, x, y, w, h, r, r, c, alpha);
+    round_rect_on(f, x, y, w, h, tb4(w, h, r, r), c, alpha);
 }
 
 /// Yumaloq burçakli ramka (ichi boʻsh).
@@ -509,7 +622,7 @@ pub fn round_outline_tb(x: usize, y: usize, w: usize, h: usize, rt: usize, rb: u
 /// markazi bir xil (CSS kabi). Bitta ötişda çiziladi — qatlamlar orasida çok qolmaydi.
 #[allow(clippy::too_many_arguments)]
 fn round_ring(f: &Fb, x: usize, y: usize, w: usize, h: usize, rt: usize, rb: usize, t: usize, c: Color) {
-    round_box_on(f, x, y, w, h, 0, rt, rb, BoxFill::None, t, c, 255);
+    round_box_on(f, x, y, w, h, 0, tb4(w, h, rt, rb), BoxFill::None, t, c, 255);
 }
 
 /// Yumaloq quti foni: yöq, bir rang yoki chiziqli gradient (CSS burçagi, töxtaşlar).
@@ -536,35 +649,34 @@ fn mix_rgb(a: Color, b: Color, k: u32) -> Color {
 /// qatorlar, ekrandagi `y` — `skip`-qatorning örni. Burçaklar haqiqiy geometriya böyiça
 /// (qisman körinadigan yoy ham töğri) çiziladi, pastdan kesilganini qirqiş çeklaydi.
 #[allow(clippy::too_many_arguments)]
-pub fn round_box(x: usize, y: usize, w: usize, h: usize, skip: usize, r: usize, fill: BoxFill, t: usize, bc: Color) {
+pub fn round_box(x: usize, y: usize, w: usize, h: usize, skip: usize, r: Radii, fill: BoxFill, t: usize, bc: Color) {
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };
-    round_box_on(f, x, y, w, h, skip, r, r, fill, t, bc, 255);
+    round_box_on(f, x, y, w, h, skip, r, fill, t, bc, 255);
 }
 
 /// `round_box` ning yarim şaffof (opacity) varianti: butun quti alfa (0..255) bilan
 /// fonga qöyiladi; aylantirilganda ham burçaklar töliq geometriya böyiça çiqadi.
 #[allow(clippy::too_many_arguments)]
-pub fn round_box_a(x: usize, y: usize, w: usize, h: usize, skip: usize, r: usize, fill: BoxFill, t: usize, bc: Color, alpha: u32) {
+pub fn round_box_a(x: usize, y: usize, w: usize, h: usize, skip: usize, r: Radii, fill: BoxFill, t: usize, bc: Color, alpha: u32) {
     let g = FB.lock();
     let Some(f) = g.as_ref() else { return };
-    round_box_on(f, x, y, w, h, skip, r, r, fill, t, bc, alpha);
+    round_box_on(f, x, y, w, h, skip, r, fill, t, bc, alpha);
 }
 
 #[allow(clippy::too_many_arguments)]
-fn round_box_on(f: &Fb, x: usize, y: usize, w: usize, h: usize, skip: usize, rt: usize, rb: usize, fill: BoxFill, t: usize, bc: Color, alpha: u32) {
+fn round_box_on(f: &Fb, x: usize, y: usize, w: usize, h: usize, skip: usize, r: Radii, fill: BoxFill, t: usize, bc: Color, alpha: u32) {
     if w == 0 || h == 0 || skip >= h || alpha == 0 {
         return;
     }
     if t == 0 && matches!(fill, BoxFill::None) {
         return;
     }
-    let rt = rt.min(w / 2).min(h / 2);
-    let rb = rb.min(w / 2).min(h / 2);
+    let r = fit_radii(r.map(|p| p.map(|v| v as f32)), w, h);
     let t = t.min(w.div_ceil(2)).min(h.div_ceil(2));
-    // içki (çegaradan içkaridagi) quti
+    // içki (çegaradan içkaridagi) quti: radiuslar (r − t), markazlar taşqi yoy bilan bir xil
     let (iw, ih) = (w.saturating_sub(2 * t), h.saturating_sub(2 * t));
-    let (irt, irb) = (rt.saturating_sub(t), rb.saturating_sub(t));
+    let ir = r.map(|p| p.map(|v| v.saturating_sub(t)));
     // gradient: 256 rangli jadval va yönaliş
     let mut lut = [0u32; 256];
     let (mut dxv, mut dyv, mut len) = (0.0f32, 0.0f32, 1.0f32);
@@ -585,11 +697,16 @@ fn round_box_on(f: &Fb, x: usize, y: usize, w: usize, h: usize, skip: usize, rt:
     for dy in skip..end {
         let sy = y + dy - skip;
         let py = dy as f32 + 0.5 - cy;
+        // gradient: qator boşidagi jadval indeksi va qadam (16.16 fiksirlangan nuqta — softfloat
+        // nişonida har piksel uçun float amallaridan qoçamiz)
+        let (gk0, gstep) = if matches!(fill, BoxFill::Grad(..)) {
+            let k0 = ((0.5 - cx) * dxv + py * dyv) / len + 0.5;
+            ((k0 * 255.0 * 65536.0) as i64, (dxv / len * 255.0 * 65536.0) as i64)
+        } else {
+            (0, 0)
+        };
         for dx in 0..w {
-            let a = match corner_at(dx, dy, w, h, rt, rb) {
-                Some((ox, oy, r)) => corner_cov(ox, oy, r),
-                None => 255,
-            };
+            let a = rr_cov(dx, dy, w, h, &r);
             if a == 0 {
                 continue;
             }
@@ -599,19 +716,14 @@ fn round_box_on(f: &Fb, x: usize, y: usize, w: usize, h: usize, skip: usize, rt:
             } else if dx < t || dy < t || dx >= t + iw || dy >= t + ih {
                 0
             } else {
-                match corner_at(dx - t, dy - t, iw, ih, irt, irb) {
-                    Some((ox, oy, r)) => corner_cov(ox, oy, r),
-                    None => 255,
-                }
-                .min(a)
+                rr_cov(dx - t, dy - t, iw, ih, &ir).min(a)
             };
             let (col, cov) = match fill {
                 BoxFill::None => (bc, a - i),
                 BoxFill::Solid(c) => (mix_rgb(bc, c, i * 255 / a), a),
                 BoxFill::Grad(..) => {
-                    let px = dx as f32 + 0.5 - cx;
-                    let k = ((px * dxv + py * dyv) / len + 0.5).clamp(0.0, 1.0);
-                    (mix_rgb(bc, lut[(k * 255.0 + 0.5) as usize], i * 255 / a), a)
+                    let k = ((gk0 + gstep * dx as i64 + 32768) >> 16).clamp(0, 255) as usize;
+                    (mix_rgb(bc, lut[k], i * 255 / a), a)
                 }
             };
             if cov > 0 {
@@ -662,7 +774,7 @@ pub fn self_test_round() -> Result<usize, &'static str> {
             for p in buf.iter_mut() {
                 *p = bg;
             }
-            round_rect_on(&f, 3, 2, w, h, rt, rb, fg, 255);
+            round_rect_on(&f, 3, 2, w, h, tb4(w, h, rt, rb), fg, 255);
             round_ring(&f, 3, 2, w, h, rt, rb, 1, fg);
             let min = lum(bg).min(lum(fg));
             for &p in buf.iter() {
@@ -682,6 +794,75 @@ pub fn self_test_round() -> Result<usize, &'static str> {
     n += self_test_round_frac()?;
     n += self_test_round_box()?;
     n += self_test_round_alpha()?;
+    n += self_test_round4()?;
+    Ok(n)
+}
+
+/// Har burçagi alohida radiusli qutilar (TL, TR, BR, BL; 0 radius bilan aralaş, 60 px dan
+/// katta va doira): (1) hech bir piksel fon, quti va çegara ranglarining eng töqidan töq
+/// emas ("tişça" yöq); (2) 0 radiusli burçak pikseli töliq böyalgan, yumaloq burçakniki —
+/// fon; (3) soya (blur 0) ostidagi element sohasi soyasiz quti bilan bir xil; (4) çegara rangi
+/// fon rangiga teng bölsa — oddiy töldirilgan quti bilan aynan bir xil.
+fn self_test_round4() -> Result<usize, &'static str> {
+    let (bw, bh) = (200usize, 170usize);
+    let mut buf = alloc::vec![0u32; bw * bh];
+    let mut rb = alloc::vec![0u32; bw * bh];
+    let lum = |c: u32| (c >> 16 & 0xff) + (c >> 8 & 0xff) + (c & 0xff);
+    let mut n = 0;
+    let fc = |v: [f32; 4], w, h| fit_radii(v.map(|x| [x, x]), w, h);
+    if fc([200.0; 4], 100, 60) != circ([30; 4]) || fc([90.0, 0.0, 90.0, 0.0], 100, 100) != circ([90, 0, 90, 0]) || fc([7.5, 7.5, 0.0, 0.0], 15, 40) != circ([7, 8, 0, 0])
+        || fit_radii([[38.0, 41.0]; 4], 76, 82) != [[38, 41]; 4] || fit_radii([[50.0, 0.0], [9.0, 9.0], [0.0; 2], [0.0; 2]], 76, 82) != circ([0, 9, 0, 0]) {
+        return Err("4 radius: fit_radii notöğri");
+    }
+    for &(bg, fg, bc) in &[(0xeef2f8u32, 0xffffffu32, 0x3a7bd5u32), (0x111111, 0x2a3346, 0x4f8cff), (0xffffff, 0x1e3a8a, 0xffc371)] {
+        for &(w, h, r, t) in &[
+            (120usize, 70usize, circ([10, 0, 24, 4]), 0usize),
+            (120, 70, circ([0, 30, 0, 30]), 3),
+            (150, 150, circ([75; 4]), 0),
+            (150, 150, circ([75; 4]), 6),
+            (190, 120, circ([90, 90, 10, 0]), 8),
+            (100, 100, circ([90, 0, 90, 0]), 2),
+            (61, 41, circ([200; 4]), 1),
+            (76, 82, [[38, 41]; 4], 0),               // 50% nokvadrat qutida — ellips
+            (76, 82, [[38, 41]; 4], 3),
+            (160, 60, [[80, 30], [80, 30], [0, 0], [16, 16]], 2),
+        ] {
+            let f = Fb { ptr: buf.as_mut_ptr() as usize, w: bw, h: bh, noclip: true };
+            buf.fill(bg);
+            let r: Radii = r;
+            round_box_on(&f, 4, 3, w, h, 0, r, BoxFill::Solid(fg), t, bc, 255);
+            let darkest = lum(bg).min(lum(fg)).min(if t > 0 { lum(bc) } else { 765 });
+            if buf.iter().any(|&p| lum(p) + 3 < darkest) {
+                return Err("4 radius: fon, quti va çegaradan töqroq piksel");
+            }
+            let fr = fit_radii(r.map(|p| p.map(|v| v as f32)), w, h);
+            let edge = if t > 0 { bc } else { fg };
+            for (i, &(cx, cy)) in [(4usize, 3usize), (4 + w - 1, 3), (4 + w - 1, 3 + h - 1), (4, 3 + h - 1)].iter().enumerate() {
+                let p = buf[cy * bw + cx];
+                if (fr[i][0] == 0 && p != edge) || (fr[i][0] >= 4 && fr[i][1] >= 4 && p != bg) {
+                    return Err("4 radius: burçak radiusi notöğri qöllandi");
+                }
+            }
+            // soya (blur 0, siljişsiz) element ostida körinmaydi
+            let fs = Fb { ptr: rb.as_mut_ptr() as usize, w: bw, h: bh, noclip: true };
+            rb.fill(bg);
+            box_shadow_on(&fs, 4, 3, w, h, r, 0, 0, 0, 0, 0x000000, 160);
+            round_box_on(&fs, 4, 3, w, h, 0, r, BoxFill::Solid(fg), t, bc, 255);
+            if rb != buf {
+                return Err("4 radius: soya burçakda quti ostidan körindi");
+            }
+            if t > 0 {
+                rb.fill(bg);
+                buf.fill(bg);
+                round_box_on(&fs, 4, 3, w, h, 0, r, BoxFill::Solid(fg), t, fg, 255);
+                round_rect_on(&f, 4, 3, w, h, r, fg, 255);
+                if rb != buf {
+                    return Err("4 radius: fon+çegara bir xil rangda oddiy qutidan farq qiladi");
+                }
+            }
+            n += 1;
+        }
+    }
     Ok(n)
 }
 
@@ -728,10 +909,10 @@ fn self_test_round_frac() -> Result<usize, &'static str> {
                 }
                 let f = Fb { ptr: b.as_mut_ptr() as usize, w: bw, h: bh, noclip: true };
                 if with_shadow {
-                    box_shadow_on(&f, x as i32, y as i32, w, h, r, 0, 0, blur, spread, sc, 160);
+                    box_shadow_on(&f, x as i32, y as i32, w, h, circ([r; 4]), 0, 0, blur, spread, sc, 160);
                 }
                 if with_box {
-                    round_box_on(&f, x, y, w, h, 0, r, r, BoxFill::Solid(fg), t, bc, 255);
+                    round_box_on(&f, x, y, w, h, 0, circ([r; 4]), BoxFill::Solid(fg), t, bc, 255);
                 }
             };
             draw(&mut buf, true, true);
@@ -746,10 +927,7 @@ fn self_test_round_frac() -> Result<usize, &'static str> {
                     let cov = if !inside {
                         0
                     } else {
-                        match corner_at(px - x, py - y, w, h, rr, rr) {
-                            Some((ox, oy, rc)) => corner_cov(ox, oy, rc),
-                            None => 255,
-                        }
+                        rr_cov(px - x, py - y, w, h, &circ([rr; 4]))
                     };
                     let (p, s0) = (lum(buf[i]), lum(shad[i]));
                     if cov == 0 && p + 3 < lum(bg).min(s0) {
@@ -804,7 +982,7 @@ fn self_test_round_box() -> Result<usize, &'static str> {
                     if kind == 0 {
                         round_ring(&f, 3, 2, w, h, r, r, t, bc);
                     } else {
-                        round_box_on(&f, 3, 2, w, h, 0, r, r, fill, t, bc, 255);
+                        round_box_on(&f, 3, 2, w, h, 0, circ([r; 4]), fill, t, bc, 255);
                     }
                     let min = lum(bg).min(lum(bc)).min(fmin);
                     // +8: butun sonli aralaştiriş (3 bosqiç) yaxlitlaşi
@@ -822,9 +1000,9 @@ fn self_test_round_box() -> Result<usize, &'static str> {
                     let skip = (r + t) / 2 + 1;
                     ref_buf.fill(bg);
                     if kind == 0 {
-                        round_box_on(&fr, 3, 2, w, h, skip, r, r, BoxFill::None, t, bc, 255);
+                        round_box_on(&fr, 3, 2, w, h, skip, circ([r; 4]), BoxFill::None, t, bc, 255);
                     } else {
-                        round_box_on(&fr, 3, 2, w, h, skip, r, r, fill, t, bc, 255);
+                        round_box_on(&fr, 3, 2, w, h, skip, circ([r; 4]), fill, t, bc, 255);
                     }
                     for yy in 2..2 + h - skip {
                         if ref_buf[yy * bw..(yy + 1) * bw] != buf[(yy + skip) * bw..(yy + skip + 1) * bw] {
@@ -836,9 +1014,9 @@ fn self_test_round_box() -> Result<usize, &'static str> {
                 // (2) çegara rangi = fon rangi → oddiy töldirilgan quti bilan aynan bir xil
                 let c = 0x3a7bd5;
                 buf.fill(bg);
-                round_box_on(&f, 3, 2, 2 * r + 4, 2 * r + 2, 0, r, r, BoxFill::Solid(c), t, c, 255);
+                round_box_on(&f, 3, 2, 2 * r + 4, 2 * r + 2, 0, circ([r; 4]), BoxFill::Solid(c), t, c, 255);
                 ref_buf.fill(bg);
-                round_rect_on(&fr, 3, 2, 2 * r + 4, 2 * r + 2, r, r, c, 255);
+                round_rect_on(&fr, 3, 2, 2 * r + 4, 2 * r + 2, circ([r; 4]), c, 255);
                 if buf != ref_buf {
                     return Err("fon+çegara bir xil rangda oddiy qutidan farq qiladi");
                 }
@@ -870,9 +1048,9 @@ fn self_test_round_alpha() -> Result<usize, &'static str> {
                 let min = lum(bg).min(lum(mid)).min(lum(fg));
                 // (3) bir rangli: ikki yöl bir xil
                 buf.fill(bg);
-                round_rect_on(&f, 3, 2, w, h, r, r, fg, a);
+                round_rect_on(&f, 3, 2, w, h, circ([r; 4]), fg, a);
                 ref_buf.fill(bg);
-                round_box_on(&fr, 3, 2, w, h, 0, r, r, BoxFill::Solid(fg), 0, fg, a);
+                round_box_on(&fr, 3, 2, w, h, 0, circ([r; 4]), BoxFill::Solid(fg), 0, fg, a);
                 if buf != ref_buf {
                     return Err("opacity: fill_round_rect_a va round_box farq qiladi");
                 }
@@ -892,7 +1070,7 @@ fn self_test_round_alpha() -> Result<usize, &'static str> {
                 for t in 1..=3usize {
                     let bc = 0x3a7bd5;
                     buf.fill(bg);
-                    round_box_on(&f, 3, 2, w, h, 0, r, r, BoxFill::Solid(fg), t, bc, a);
+                    round_box_on(&f, 3, 2, w, h, 0, circ([r; 4]), BoxFill::Solid(fg), t, bc, a);
                     let min2 = min.min(lum(mix_rgb(bg, bc, a)));
                     if buf.iter().any(|&p| lum(p) + 8 < min2) {
                         return Err("opacity: çegarali burçakda töq piksel");
@@ -900,7 +1078,7 @@ fn self_test_round_alpha() -> Result<usize, &'static str> {
                     // (4) aylantirilgan
                     let skip = (r + t) / 2 + 1;
                     ref_buf.fill(bg);
-                    round_box_on(&fr, 3, 2, w, h, skip, r, r, BoxFill::Solid(fg), t, bc, a);
+                    round_box_on(&fr, 3, 2, w, h, skip, circ([r; 4]), BoxFill::Solid(fg), t, bc, a);
                     for yy in 2..2 + h - skip {
                         if ref_buf[yy * bw..(yy + 1) * bw] != buf[(yy + skip) * bw..(yy + skip + 1) * bw] {
                             return Err("opacity: aylantirilgan quti töliq qutidan farq qiladi");

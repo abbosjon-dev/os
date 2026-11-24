@@ -152,12 +152,111 @@ def check(img, area, verbose=False, strict=False):
                       f"lum {reg.min()} < ruxsat {allowed}")
             if strict:
                 bad += strict_corner(page, lum, bgl, (x0, y0, x1, y1), (cx, cy, sx, sy), min(ref), (px0, py0))
+            # katta / alohida radiusli burçak (50% doira, 60 px dan katta): butun yoy böylab
+            nb, nw = arc_corner(page, lum, (x0, y0, x1, y1), (cx, cy, sx, sy), min(min(ref), min(out)), (px0, py0), verbose)
+            bad += nb
+            ARC_N[0] += nw
     sn = f", qat'iy: {STRICT_N[0]}" if strict else ""
-    print(f"fon #{bg:06x}, bloklar: {len(boxes)}, burchaklar: {checked}{sn}, nuqsonli: {bad}")
+    print(f"fon #{bg:06x}, bloklar: {len(boxes)}, burchaklar: {checked}{sn}, yoy piksellari: {ARC_N[0]}, nuqsonli: {bad}")
     return bad, checked
 
 
 STRICT_N = [0]  # qat'iy tekşirilgan burçaklar soni
+ARC_N = [0]     # yoy böylab tekşirilgan piksellar soni
+ARC_MAX = 120   # yoy zonasi eng katta ölçami (px)
+
+
+def arc_corner(page, lum, box, corner, ref_lum, off, verbose):
+    """Yumaloq burçak yoyi böylab "tişça" tekşiruvi (har qanday radius: alohida burçaklar,
+    50% doira, 60 px dan katta). Burçak radiusi bbox qirralari böylab taşqi rangdagi
+    piksellar soni bilan baholanadi (rx — yuqori/pastki qator, ry — çap/öng ustun). Keyin
+    zona (rx × ry) içidagi har qator va ustun bbox çetidan içkariga yuriladi: taşqi fon
+    (soya) piksellari, AA çeti va şakl içidagi dastlabki 3 piksel tekşiriladi — hech biri
+    blokning içki rangi (qirra örtasidagi çegara/fon), taşqi fon va burçak yaqinidagi
+    ranglarning eng to'qidan TOL dan ko'proq to'q bölmasligi şart. Matn (şakl içida,
+    çekiniş ortida) yurişga tuşmaydi. Qaytaradi: (nuqsonlar, tekşirilgan piksellar)."""
+    x0, y0, x1, y1 = box
+    cx, cy, sx, sy = corner
+    H, W = lum.shape
+    if x1 - x0 < 30 or y1 - y0 < 18:
+        return 0, 0
+    # taşqi namuna: burçakdan diagonal taşqarida (sahifa çetida bölsa — tekşirilmaydi)
+    ox, oy = cx - sx, cy - sy
+    if not (0 <= ox < W and 0 <= oy < H):
+        return 0, 0
+    outc = page[oy, ox].astype(int)
+
+    def outside(x, y, ref):
+        return int(np.abs(page[y, x].astype(int) - ref).max()) <= 10
+
+    def run(x, y, dx, dy, lim):
+        k = 0
+        ref = page[y - dy, x - dx].astype(int) if 0 <= y - dy < H and 0 <= x - dx < W else outc
+        while k < lim and 0 <= x + dx * k < W and 0 <= y + dy * k < H and outside(x + dx * k, y + dy * k, ref):
+            k += 1
+        return k
+    half_w, half_h = (x1 - x0 + 1) // 2, (y1 - y0 + 1) // 2
+    rx = run(cx, cy, sx, 0, min(ARC_MAX, half_w))
+    ry = run(cx, cy, 0, sy, min(ARC_MAX, half_h))
+    if rx < 6 or ry < 6:
+        return 0, 0   # kiçik radius — 6x6 va qat'iy tekşiruvlar qamraydi
+    # içki rang: qirralar örtasida, bbox çetidan 1..4 px içkarida (çegara yoki fon)
+    mids = [lum[y0 + k, (x0 + x1) // 2] for k in range(1, 5)] + [lum[y1 - k, (x0 + x1) // 2] for k in range(1, 5)] + \
+           [lum[(y0 + y1) // 2, x0 + k] for k in range(1, 5)] + [lum[(y0 + y1) // 2, x1 - k] for k in range(1, 5)]
+    outs = [int(outc.sum())]
+    bad = 0
+    n = 0
+    worst = None
+    zx, zy = min(rx + 2, half_w), min(ry + 2, half_h)
+    lines = [(cx, cy + sy * j, sx, 0, zx) for j in range(zy)] + [(cx + sx * j, cy, 0, sy, zy) for j in range(zx)]
+    for (lx, ly, dx, dy, lim) in lines:
+        if not (0 <= lx < W and 0 <= ly < H):
+            continue
+        ref = page[ly - dy, lx - dx].astype(int) if 0 <= ly - dy < H and 0 <= lx - dx < W else outc
+        outs.append(int(ref.sum()))
+        inside = 0
+        seen = []     # (x, y, lum) — çet (AA) va şakl içidagi dastlabki piksellar
+        first = None  # şakl içiga kirgan birinçi qadam
+        for k in range(lim):
+            x, y = lx + dx * k, ly + dy * k
+            if not (0 <= x < W and 0 <= y < H):
+                break
+            v = int(lum[y, x])
+            if outside(x, y, ref):
+                outs.append(v)
+                inside = 0
+                continue
+            first = k if first is None else first
+            seen.append((x, y, v))
+            inside += 1
+            if inside >= 3:
+                break
+        if not seen:
+            continue
+        # şaklning shu joydagi içki rangi (gradient bölsa — mahalliy): 4..7 px içkarida
+        fill = []
+        for k in range(first + 4, first + 8):
+            x, y = lx + dx * k, ly + dy * k
+            if 0 <= x < W and 0 <= y < H:
+                fill.append(int(lum[y, x]))
+        allowed = min([ref_lum, min(mids), min(outs)] + fill) - TOL
+        for (x, y, v) in seen:
+            n += 1
+            if v < allowed and (worst is None or v - allowed < worst[0]):
+                worst = (v - allowed, x, y, v, allowed)
+    if worst is not None:
+        bad = 1
+        print(f"NUQSON (yoy): blok ({x0+off[0]},{y0+off[1]})-({x1+off[0]},{y1+off[1]}) burçak ({cx+off[0]},{cy+off[1]}) "
+              f"r≈{rx}x{ry}: piksel ({worst[1]+off[0]},{worst[2]+off[1]}) lum {worst[3]} < ruxsat {worst[4]}")
+    if verbose:
+        # yoyning diagonal nuqtasi (o'z-o'zini sinaş uçun): burçakdan diagonal böylab birinçi
+        # taşqi bölmagan piksel
+        for k in range(min(rx, ry) + 2):
+            x, y = cx + sx * k * rx // max(rx, ry), cy + sy * k * ry // max(rx, ry)
+            if 0 <= x < W and 0 <= y < H and not outside(x, y, outc):
+                print(f"YOY {x+off[0]} {y+off[1]} {rx} {ry}")
+                break
+    return bad, n
 DARK_TOL = 8   # burçakning taşqi pikseli va taşqi fon orasidagi ruxsat (kanal böyiça)
 
 

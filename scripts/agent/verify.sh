@@ -461,9 +461,11 @@ echo "[ok] terminal ranglari: $(echo "$TRES" | grep -c '^pixcheck') piksel tekş
 CDIR="$LOG_DIR/corners"; mkdir -p "$CDIR" /tmp/claude-0; rm -f "$CDIR"/*.png "$CDIR"/*.txt
 M="m,@park;w,1"
 # 1280x800: brauzer (dok) → kattalaştiriş → zamin://matn (boşi, yarim aylantirilgan) → zamin://bezak → zamin://inline → zamin://overflow
-CLICKS="@browser;w,2;@max;w,1;u,zamin://matn;$M;snap,matn;m,@center;wd,8;$M;snap,matn2;u,zamin://bezak;$M;snap,bezak;u,zamin://inline;$M;snap,inline;u,zamin://overflow;$M" \
+CLICKS="@browser;w,2;@max;w,1;u,zamin://matn;$M;snap,matn;m,@center;wd,8;$M;snap,matn2;m,@center;wd,40;$M;snap,matn3;u,zamin://bezak;$M;snap,bezak;m,@center;wd,12;$M;snap,bezak2;u,zamin://inline;$M;snap,inline;u,zamin://overflow;$M" \
     timeout 300 python3 scripts/agent/shot.py "$KERNEL" "$CDIR/overflow.png" fresh >"$CDIR/shot.log" 2>&1
-SHOTS=("$CDIR/overflow_matn.png" "$CDIR/overflow_matn2.png" "$CDIR/overflow_bezak.png" "$CDIR/overflow_inline.png" "$CDIR/overflow.png")
+# matn3 / bezak2 — sahifalar oxiri: har burçak alohida radius, 50% doira avatar, 0 radius bilan aralaş,
+# qalin çegara + katta (80 px) radius, qorong'i fonli blok (T56)
+SHOTS=("$CDIR/overflow_matn.png" "$CDIR/overflow_matn2.png" "$CDIR/overflow_matn3.png" "$CDIR/overflow_bezak.png" "$CDIR/overflow_bezak2.png" "$CDIR/overflow_inline.png" "$CDIR/overflow.png")
 # boşqa ölçamlar va VPS yöli: zamin://matn (boşi va yarim aylantirilgan)
 CM="@browser;w,2;@max;w,1;u,zamin://matn;$M;snap,top;m,@center;wd,8;$M"
 VPS_FW=""
@@ -510,6 +512,22 @@ PY
     python3 scripts/agent/check_corners.py "$CDIR/selftest.png" >"$CDIR/selftest.txt" 2>&1; st=$?
     [ $st -eq 1 ] || { echo "FAIL burçaklar: qora pikselli surat ($(basename "$src")) tekşiruvdan ötib ketdi (kod $st, check_corners.py buzilgan)"; exit 1; }
 done
+# o'z-o'zini sinaş (yoy): katta radiusli burçak (50% doira avatar, r >= 20) yoyi örtasiga bitta qora
+# piksel — u 6x6 burçak hududidan uzoqda, faqat yoy böylab tekşiruv (arc_corner) uni topadi
+python3 - "$CDIR/overflow_bezak2.png" "$CDIR/selftest-yoy.png" <<'PY' || { echo "FAIL burçaklar: yoy o'z-o'zini sinaş surati yasalmadi (katta radiusli burçak topilmadi)"; exit 1; }
+import subprocess, sys
+from PIL import Image
+out = subprocess.run([sys.executable, "scripts/agent/check_corners.py", sys.argv[1], "-v"], capture_output=True, text=True).stdout
+ln = next(l for l in out.splitlines() if l.startswith("YOY") and min(map(int, l.split()[3:5])) >= 20)
+x, y = map(int, ln.split()[1:3])
+im = Image.open(sys.argv[1]).convert("RGB")
+im.putpixel((x, y), (0, 0, 0))
+im.save(sys.argv[2])
+PY
+python3 scripts/agent/check_corners.py "$CDIR/selftest-yoy.png" >"$CDIR/selftest-yoy.txt" 2>&1; st=$?
+{ [ $st -eq 1 ] && grep -q "NUQSON (yoy)" "$CDIR/selftest-yoy.txt"; } || { echo "FAIL burçaklar: yoyga qöyilgan qora piksel topilmadi (kod $st, arc_corner buzilgan)"; exit 1; }
+[ -s "$CDIR/overflow_bezak2.png" ] && cp "$CDIR/overflow_bezak2.png" docs/web-radius.png
+[ -s "$CDIR/overflow_matn3.png" ] && cp "$CDIR/overflow_matn3.png" docs/web-radius-matn.png
 echo "[ok] burchaklar: ${#SHOTS[@]} surat toza (1280x800, 1024x768, 1920x1080$([ -n "$VPS_FW" ] && echo ", VPS UEFI+ACPI+GICv3 1920x1080"))"
 
 # --- Yumaloq burçaklar: qorong'i holat (T49). Zamin paneli orqali mavzu rangi almaştiriladi,
@@ -518,9 +536,9 @@ echo "[ok] burchaklar: ${#SHOTS[@]} surat toza (1280x800, 1024x768, 1920x1080$([
 #     check_corners.py --strict: burçakdagi 3x3 piksel sahifa foni va blok rangidan to'q emas,
 #     yumaloq burçakning çetki pikseli taşqi fondan 8 birlikdan köp farq qilmaydi ---
 DDIR="$LOG_DIR/corners-dark"; mkdir -p "$DDIR"; rm -f "$DDIR"/*.png "$DDIR"/*.txt
-CLICKS="w,2;@spk;w,1;@qacc4;w,1;snap,panel;kp,esc;w,1;@browser;w,2;@max;w,1;u,zamin://matn?fon=111;$M;snap,qmatn;m,@center;wd,26;$M;snap,qmatn2;u,zamin://bezak?fon=111;$M;snap,qbezak;u,zamin://matn?fon=fff;m,@center;wd,26;$M;snap,omatn2;u,zamin://bezak;$M" \
+CLICKS="w,2;@spk;w,1;@qacc4;w,1;snap,panel;kp,esc;w,1;@browser;w,2;@max;w,1;u,zamin://matn?fon=111;$M;snap,qmatn;m,@center;wd,26;$M;snap,qmatn2;u,zamin://bezak?fon=111;$M;snap,qbezak;m,@center;wd,12;$M;snap,qbezak2;w,2;u,zamin://matn?fon=fff;m,@center;wd,26;$M;snap,omatn2;u,zamin://bezak;$M" \
     timeout 400 python3 scripts/agent/shot.py "$KERNEL" "$DDIR/obezak.png" fresh >"$DDIR/shot.log" 2>&1
-DSHOTS=("$DDIR/obezak_qmatn.png:qorong'i" "$DDIR/obezak_qmatn2.png:qorong'i" "$DDIR/obezak_qbezak.png:qorong'i"
+DSHOTS=("$DDIR/obezak_qmatn.png:qorong'i" "$DDIR/obezak_qmatn2.png:qorong'i" "$DDIR/obezak_qbezak.png:qorong'i" "$DDIR/obezak_qbezak2.png:qorong'i"
         "$DDIR/obezak_omatn2.png:och" "$DDIR/obezak.png:och")
 NBAD=0; NDARK=0
 for e in "${DSHOTS[@]}"; do

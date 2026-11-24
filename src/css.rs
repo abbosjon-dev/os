@@ -27,7 +27,7 @@ pub struct Sty {
     pub pad: f32,                     // padding (bir xil)
     pub bw: f32,                      // border kengligi
     pub bc: Option<u32>,              // border rangi
-    pub radius: f32,                  // border-radius
+    pub radius: [f32; 4],             // border-*-radius: TL, TR, BR, BL (CSS px; manfiy — foiz, -50 = 50%)
     pub maxw: Option<(f32, bool)>,    // width / max-width: (qiymat, foizmi)
     pub center: bool,                 // margin: auto — markazlaş
     // Joylaşuv (flex / grid)
@@ -93,7 +93,7 @@ impl Sty {
     pub const fn root() -> Sty {
         Sty {
             color: None, bg: None, size: 16.0, bold: false, italic: false, align: 0, rtl: false, hidden: false, underline: None, strike: false, block: None,
-            mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
+            mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: [0.0; 4], maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
             pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None,
             h: None, minh: None, lh: 0.0, tt: 0, ws: 0, ovf: 0, ellip: false, opacity: 1.0, wpx: 0.0, cw: 0.0, ib: false, valign: 0, invis: false,
@@ -102,7 +102,7 @@ impl Sty {
     /// Meros: rang, ölçam, qalinlik, tekislaş, yaşiriş — bolaga ötadi; fon — ötmaydi.
     pub fn inherit(&self) -> Sty {
         Sty {
-            bg: None, block: None, mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
+            bg: None, block: None, mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: [0.0; 4], maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
             pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None, h: None, minh: None,
             ovf: 0, ellip: false, opacity: 1.0, wpx: 0.0, ib: false, valign: 0,
@@ -1271,6 +1271,72 @@ fn length(v: &str, fsize: f32) -> Option<f32> {
     })
 }
 
+/// Bitta burçak radiusi: uzunlik (CSS px, 0..4000) yoki foiz (manfiy son: 50% → -50.0).
+fn radius_val(x: &str, fsize: f32) -> Option<f32> {
+    match x.trim().strip_suffix('%') {
+        Some(p) => parse_f(p).map(|f| -f.clamp(0.0, 100.0)).map(|f| if f == 0.0 { 0.0 } else { f }),
+        None => length(x, fsize).map(|f| f.clamp(0.0, 4000.0)),
+    }
+}
+
+/// Burçak radiuslari (TL, TR, BR, BL; musbat — piksel, manfiy — foiz) → w×h qutidagi butun
+/// piksel radiuslar [gorizontal, vertikal]. Foiz CSS kabi: gorizontal — qutining enidan,
+/// vertikal — böyidan (kvadratda 50% — doira, nokvadratda — ellips). Bir tomondagi ikki
+/// radius yiğindisi tomondan oşsa, CSS qoidasi böyiça hamma radius bir xil
+/// f = min(tomon / yiğindi) koeffitsiyentga kiçraytiriladi (gfx::fit_radii).
+pub fn radius_px(r: [f32; 4], w: usize, h: usize) -> crate::gfx::Radii {
+    let v = r.map(|x| if x < 0.0 { [-x * w as f32 / 100.0, -x * h as f32 / 100.0] } else { [x, x] });
+    crate::gfx::fit_radii(v, w, h)
+}
+
+/// border-radius tekşiruvi: 1/2/3/4 qiymatli yozuv, alohida burçak xossalari, foiz va
+/// yiğindi tomondan oşganda proporsional kiçraytiriş.
+pub fn self_test_radius() -> Result<usize, &'static str> {
+    let root = Sty::root();
+    let st = |d: &str| compute(&root, &[], &ElRef { tag: "div", ..ElRef::default() }, &[], Some(d)).radius;
+    let mut n = 0;
+    for (d, want) in [
+        ("border-radius: 8px", [8.0, 8.0, 8.0, 8.0]),
+        ("border-radius: 10px 4px", [10.0, 4.0, 10.0, 4.0]),
+        ("border-radius: 10px 4px 2px", [10.0, 4.0, 2.0, 4.0]),
+        ("border-radius: 10px 0 20px 5px", [10.0, 0.0, 20.0, 5.0]),
+        ("border-radius: 1em 2px 3px 4px / 9px", [16.0, 2.0, 3.0, 4.0]),
+        ("border-radius: 50%", [-50.0, -50.0, -50.0, -50.0]),
+        ("border-radius: 120px", [120.0, 120.0, 120.0, 120.0]),
+        ("border-radius: 6px; border-top-right-radius: 0; border-bottom-left-radius: 25%", [6.0, 0.0, 6.0, -25.0]),
+        ("border-top-left-radius: 12px 30px", [12.0, 0.0, 0.0, 0.0]),
+    ] {
+        if st(d) != want {
+            return Err("border-radius: qiymatlar tahlili xato");
+        }
+        n += 1;
+    }
+    for (r, w, h, want) in [
+        ([8.0, 8.0, 8.0, 8.0], 100, 50, [[8, 8]; 4]),
+        ([-50.0; 4], 64, 64, [[32, 32]; 4]),         // 50% kvadratda — doira
+        ([-50.0; 4], 200, 40, [[100, 20]; 4]),       // nokvadratda — ellips (CSS kabi)
+        ([-10.0, 0.0, -10.0, 0.0], 200, 100, [[20, 10], [0, 0], [20, 10], [0, 0]]),
+        ([200.0; 4], 100, 60, [[30, 30]; 4]),        // yiğindi oşdi: f = 60/400
+        ([60.0, 20.0, 0.0, 0.0], 40, 100, [[30, 30], [10, 10], [0, 0], [0, 0]]), // yuqori: f = 40/80
+        ([90.0, 0.0, 90.0, 0.0], 100, 100, [[90, 90], [0, 0], [90, 90], [0, 0]]), // qarama-qarşi kiçraymaydi
+        ([999.0; 4], 300, 40, [[20, 20]; 4]),        // "tabletka": f = 40/1998
+    ] {
+        if radius_px(r, w, h) != want {
+            return Err("border-radius: piksel / foiz / kiçraytiriş xato");
+        }
+        n += 1;
+    }
+    // aniq "padding: 0" — -0.0 (doira avatar uçun maket çekiniş qöşmaydi), boşqalari — oddiy
+    let el = ElRef { tag: "div", ..ElRef::default() };
+    let pd = |d: &str| compute(&root, &[], &el, &[], Some(d)).pad;
+    if !pd("padding: 0").is_sign_negative() || !pd("padding: 0 0").is_sign_negative() || pd("padding: 0 4px").is_sign_negative() || pd("padding: 0 4px") != 0.0
+        || pd("padding-left: 0").is_sign_negative() || pd("").is_sign_negative() || pd("padding: 6px") != 6.0 {
+        return Err("padding: 0 (aniq nol) belgisi xato");
+    }
+    n += 1;
+    Ok(n)
+}
+
 /// Bitta e'lonni uslubga qöllaydi. `parent` — ota shrift ölçami.
 pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
     let low = val.to_ascii_lowercase();
@@ -1430,6 +1496,11 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
             if let Some(v) = low.split_whitespace().next().and_then(|x| lenp(x, s.size)) {
                 s.pad = s.pad.max(v.clamp(0.0, 80.0));
             }
+            // aniq "padding: 0" (hamma qiymat 0) — -0.0 (arifmetikada 0 ga teng): maket fonli
+            // qutiga qöşadigan eng kiçik ichki çekinişni qöşmaydi (masalan, 50% doira avatar)
+            if prop == "padding" && s.pad == 0.0 && low.split_whitespace().all(|x| lenp(x, s.size) == Some(0.0)) {
+                s.pad = -0.0;
+            }
         }
         "border" | "border-top" | "border-bottom" => {
             if low == "none" || low == "0" {
@@ -1453,7 +1524,28 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
         }
         "border-width" => s.bw = length(&low, s.size).unwrap_or(1.0).clamp(0.0, 12.0),
         "border-color" => s.bc = parse_color(val),
-        "border-radius" => s.radius = low.split_whitespace().next().and_then(|x| length(x, s.size)).unwrap_or(0.0).clamp(0.0, 60.0),
+        "border-radius" => {
+            // 1–4 qiymat (TL TR BR BL tartibida, CSS kabi); "/" dan keyingi (elliptik
+            // vertikal) qism e'tiborga olinmaydi — burçaklar doiraviy çiziladi
+            let h = low.split('/').next().unwrap_or("");
+            let v: Vec<f32> = h.split_whitespace().map(|x| radius_val(x, s.size).unwrap_or(0.0)).take(4).collect();
+            s.radius = match v.len() {
+                0 => [0.0; 4],
+                1 => [v[0]; 4],
+                2 => [v[0], v[1], v[0], v[1]],
+                3 => [v[0], v[1], v[2], v[1]],
+                _ => [v[0], v[1], v[2], v[3]],
+            };
+        }
+        "border-top-left-radius" | "border-top-right-radius" | "border-bottom-right-radius" | "border-bottom-left-radius" => {
+            let i = match prop {
+                "border-top-left-radius" => 0,
+                "border-top-right-radius" => 1,
+                "border-bottom-right-radius" => 2,
+                _ => 3,
+            };
+            s.radius[i] = low.split(|c: char| c.is_whitespace() || c == '/').find(|x| !x.is_empty()).and_then(|x| radius_val(x, s.size)).unwrap_or(0.0);
+        }
         "width" | "max-width" => {
             if let Some(p) = low.strip_suffix('%') {
                 if let Some(f) = parse_f(p) {

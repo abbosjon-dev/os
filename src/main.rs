@@ -697,7 +697,7 @@ fn self_tests() {
         Err(e) => panic!("CSS position/float tekşiruvi yiqildi: {}", e),
     }
     match gfx::self_test_round() {
-        Ok(n) => println!("  [ok] yumaloq burçaklar: qamrov (r=1..30), çegara 1..4 px, gradient, opacity 128, kasr x=10.5 + toq r=7 + soya — yorugʻ/töq fonda töq piksel yöq ({} sinov)", n),
+        Ok(n) => println!("  [ok] yumaloq burçaklar: qamrov (r=1..30), çegara 1..4 px, gradient, opacity 128, kasr x=10.5 + toq r=7 + soya, har burçak alohida radius (0 bilan aralaş, >60 px, 50% doira/ellips) — yorugʻ/töq fonda töq piksel yöq ({} sinov)", n),
         Err(e) => panic!("yumaloq burçak tekşiruvi yiqildi: {}", e),
     }
     match html::self_test_dir() {
@@ -731,6 +731,10 @@ fn self_tests() {
     match html::self_test_overflow() {
         Ok(n) => println!("  [ok] CSS overflow, white-space, text-overflow: ellipsis va opacity ({} sinov)", n),
         Err(e) => panic!("CSS overflow/white-space/opacity tekşiruvi yiqildi: {}", e),
+    }
+    match css::self_test_radius() {
+        Ok(n) => println!("  [ok] CSS radius: border-radius 1/2/3/4 qiymatli, border-*-*-radius, % (50% doira) va yiğindi oşganda proporsional kiçraytiriş ({} sinov)", n),
+        Err(e) => panic!("CSS radius tekşiruvi yiqildi: {}", e),
     }
     match css::self_test_inline() {
         Ok(n) => println!("  [ok] CSS display: inline-block, vertical-align va visibility: hidden (joy saqlanadi, meros) ({} sinov)", n),
