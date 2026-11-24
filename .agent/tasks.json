@@ -337,9 +337,45 @@
       "status": "done",
       "done_at": "2026-11-24T00:54:48",
       "note": "o'tkazib yuborildi: T41 bilan takror (versiya allaqachon 0.0.32)"
+    },
+    {
+      "id": "T43",
+      "title": "Yumaloq burchaklar: zamin://matn ni UEFI GOP framebuffer (ramfb, BGRX/RGBX) yo'lida va -cpu neoverse-n1 da qayta tekshirish va qolgan tishch",
+      "detail": "Nima uchun: GOP zaxira ekrani (0.0.32) burchaklar oxirgi marta tekshirilgandan keyin qo'shilgan. Uning chizish yo'lida (src/drivers/fb.rs, src/gfx/mod.rs: BGRX/RGBX piksel almashtirish, qator qadami stride != width*4) blok chetlarida qora 'tishchalar' qaytib chiqishi mumkin. Fayllar: scripts/agent/check_corners.py (GOP rejimi qo'shiladi: QEMU -device ramfb, virtio-gpu yo'q, vps_gop.py dagi kabi UEFI), scripts/agent/vps_gop.py, src/drivers/fb.rs, src/gfx/mod.rs (burchak qamrovi va alfa aralashtirish). Agar stride yoki bayt tartibi tufayli chetda to'q piksel chiqsa, chizish yo'lini tuzating. Qabul mezoni: check_corners.py --gop zamin://matn, zamin://bezak va zamin://overflow sahifalarida 1280×800 va 1024×768 ekranda yumaloq burchak atrofida to'q piksel 0 ta. Bu holat verify.sh full ga ulanadi; UEFI firmware bo'lmasa SKIP. Skrinshot: docs/web-corners-gop.png.",
+      "batch": 7
+    },
+    {
+      "id": "T44",
+      "title": "VPS: ACPI/UEFI yo'lida haqiqiy sana va vaqt (UEFI GetTime → RTC zaxirasi)",
+      "detail": "Muammo: src/time.rs faqat PL031 ni ishlatadi, PL031 esa DTB dan topiladi. Netcup da ACPI yo'lida DTB yashirilgan, shuning uchun soat 1970 yoki 0 bo'lib qolishi mumkin. Shu sababli fayl vaqtlari, TLS sertifikat muddati va panel soati noto'g'ri chiqadi. Fayllar: src/efi.rs (ExitBootServices dan oldin RuntimeServices->GetTime ni chaqirib, EFI_TIME ni Unix soniyalarga o'tkazish va saqlash), src/time.rs (manba tartibi: PL031 (DTB) → UEFI vaqti + ARM taymer hisoblagichi bilan o'sish → 0), src/acpi.rs (kerak bo'lsa). Yadro jurnaliga 'Vaqt manbai: UEFI|PL031' yoziladi. Qabul mezoni: verify.sh vps (ACPI, GICv3) va acpi=off loglarida 'Vaqt manbai:' qatori va yili ≥ 2025 bo'lgan sana bor. Self-test: EFI_TIME → Unix aylantirish 3 ta ma'lum sanada (kabisa yil, 2038 dan keyin, oy oxiri) to'g'ri natija beradi va [ok] bilan verify.sh full da o'tadi.",
+      "batch": 7
+    },
+    {
+      "id": "T45",
+      "title": "VPS: virtio-scsi-pci disk drayveri (Netcup SCP dagi 'SCSI' disk kontrolleri)",
+      "detail": "Nima uchun: Netcup SCP da disk kontrollerini virtio yoki SCSI qilib tanlash mumkin. SCSI tanlanganda QEMU virtio-scsi-pci + scsi-hd beradi, Zamin esa hozir faqat virtio-blk ni taniydi, shuning uchun tizim diski topilmay qoladi. Fayllar: yangi src/drivers/virtio_scsi.rs (virtio 1.x modern PCI, controlq/eventq/requestq, SCSI CDB: INQUIRY, TEST UNIT READY, READ CAPACITY(10/16), READ(10/16), WRITE(10/16), SYNCHRONIZE CACHE; LUN 0 dan boshlab skanerlash), src/drivers/pci.rs (vendor 0x1af4 qurilma 0x1048/0x1004), src/drivers/mod.rs. Disk bir xil blok qurilma interfeysi orqali GPT/ZaminFS va FAT ga beriladi. scripts/agent/verify.sh vps ga yangi holat qo'shiladi: -device virtio-scsi-pci,id=scsi0 -device scsi-hd,drive=sys (ESP esa virtio-blk-pci yoki u ham scsi-hd), scripts/vps/README.md ga eslatma. Qabul mezoni: verify.sh vps logida 'virtio-scsi: LUN 0, N sektor' chiqadi, GPT bo'limi topiladi, sozlash ustasi diskka yozadi va qayta yuklanishda o'qiydi, panic yo'q. Self-test: CDB yasash (READ(10)/(16) LBA va uzunlik maydonlari) [ok].",
+      "batch": 7
+    },
+    {
+      "id": "T46",
+      "title": "Terminal: fayl buyruqlari nusxa/köçir/qidir/bosh/oxir/hajm (cp, mv, grep, head, tail, wc)",
+      "detail": "Yo'l xaritasining 10-bandi. Grafik terminalda fayllar bilan ishlash uchun eng zarur buyruqlar yetishmaydi. Fayllar: user/src/bin/terminal.rs (BUILTINS ro'yxatiga uch tilli nomlar va yordam matni: nusxa/копировать/cp, köçir/переместить/mv (aliaslar nusxa, kochir), qidir/искать/grep [-i] [-n] naqsh fayl, bosh/начало/head [-n N], oxir/конец/tail [-n N], hajm/счёт/wc). Mavjud fayl syscall'laridan (open/read/write/rename) foydalaniladi, ruxsatlar hurmat qilinadi, xatolar foydalanuvchi tilida chiqadi. Tab bilan to'ldirish yangi buyruqlarni ham taniydi. src/shell.rs dagi seriya qobiqqa ham shu buyruqlar qo'shiladi. README 'Zamin terminali' bo'limi yangilanadi. Qabul mezoni: verify.sh full dagi seriya qobiq sinovida 'yoz /tmp/a.txt ...' → 'nusxa /tmp/a.txt /tmp/b.txt' → 'qidir -n zamin /tmp/b.txt' → 'bosh -n 1' → 'oxir -n 1' → 'hajm' (qator/so'z/bayt) kutilgan natijani beradi. 'köçir' dan keyin manba fayl yo'qoladi. Skrinshot docs/terminal-buyruqlar.png (shot.py).",
+      "batch": 7
+    },
+    {
+      "id": "T47",
+      "title": "Zamin paneli: yuqori menyudagi holat belgilaridan tezkor sozlamalar oynasi (ovoz, tarmoq, yorug'lik/mavzu, quvvat)",
+      "detail": "Yo'l xaritasining 10-bandi (Zamin paneli). Fayllar: src/gui.rs (yuqori menyudagi tarmoq/ovoz belgilariga bosish → ochiladigan panel: ovoz balandligi slayderi va ovozsiz rejim tugmasi; ular Sozlamalar → Ovoz bilan bir xil holatni ishlatadi va diskka saqlanadi; tarmoq holati: IP, DHCP yoki statik, shlyuz; 'Tarmoq sozlamalari…' havolasi Sozlamalar → Tarmoq ni ochadi; Qulflash / Qayta yuklash / O'chirish tugmalari tasdiq bilan). Panel tashqariga bosganda yoki Esc da yopiladi, klaviatura bilan ham boshqariladi. Burchaklari yumaloq va tishchasiz bo'lishi kerak. UI matnlari uch tilli, o'zbekchasi yangi alifboda. Qabul mezoni: shot.py CLICKS bilan ovoz belgisini bosib, slayderni 30% ga surish → Sozlamalar → Ovoz ni ochganda ham 30% ko'rinadi. Skrinshot docs/panel-tezkor.png, panel qirralarida to'q piksel yo'q (check_corners zgeom yordamchisi bilan tekshiriladi). verify.sh full o'tadi.",
+      "batch": 7
+    },
+    {
+      "id": "T48",
+      "batch": 7,
+      "title": "Bosqich yakuni: versiyani oshirish (VPS mustahkamligi va ish muhiti: GOP ekranda burchaklar, UEFI soati, virtio-scsi disk, terminal buyr)",
+      "detail": "Shu to'plamda (batch 7) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz."
     }
   ],
-  "batch": 6,
+  "batch": 7,
   "plan_notes": [
     "Ma'lum nuqson: zamin://matn sahifasida bloklar chetida kichik qora 'tishchalar' (yumaloq burchak chizish xatosi) — birinchi navbatda tuzat.",
     "Har to'plamda kamida bitta vazifa veb/brauzerdan tashqari bo'lsin (ilovalar, terminal, fayl menejeri, sozlamalar, yadro).",
