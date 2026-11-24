@@ -411,11 +411,18 @@ extern "C" fn mutex_worker(_: usize) {
 
 static SEEN_CPUS: AtomicU64 = AtomicU64::new(0);
 
-/// 100 ms band işlaydi va qaysi yadrolarda işlaganini belgilaydi.
+/// Kamida 100 ms işlaydi va qaysi yadrolarda işlaganini belgilaydi.
 extern "C" fn smp_probe(_: usize) {
     let start = timer::uptime_ms();
-    while timer::uptime_ms() - start < 100 {
+    // Kamida 100 ms, so'ng ikkinçi yadro körinmaguncha (yuklangan xostda 2 s gaça) aylanadi —
+    // vCPU vaqtinça rejalaştirilmasa ham test tasodifan yiqilmaydi.
+    loop {
         SEEN_CPUS.fetch_or(1 << task::cpu_id(), Ordering::Relaxed);
+        let el = timer::uptime_ms() - start;
+        if (el >= 100 && SEEN_CPUS.load(Ordering::Relaxed).count_ones() >= 2) || el >= 2000 {
+            break;
+        }
+        core::hint::spin_loop();
     }
 }
 

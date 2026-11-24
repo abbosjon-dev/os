@@ -374,7 +374,9 @@
       "id": "T47",
       "title": "Zamin paneli: yuqori menyudagi holat belgilaridan tezkor sozlamalar oynasi (ovoz, tarmoq, yorug'lik/mavzu, quvvat)",
       "detail": "Yo'l xaritasining 10-bandi (Zamin paneli). Fayllar: src/gui.rs (yuqori menyudagi tarmoq/ovoz belgilariga bosish → ochiladigan panel: ovoz balandligi slayderi va ovozsiz rejim tugmasi; ular Sozlamalar → Ovoz bilan bir xil holatni ishlatadi va diskka saqlanadi; tarmoq holati: IP, DHCP yoki statik, shlyuz; 'Tarmoq sozlamalari…' havolasi Sozlamalar → Tarmoq ni ochadi; Qulflash / Qayta yuklash / O'chirish tugmalari tasdiq bilan). Panel tashqariga bosganda yoki Esc da yopiladi, klaviatura bilan ham boshqariladi. Burchaklari yumaloq va tishchasiz bo'lishi kerak. UI matnlari uch tilli, o'zbekchasi yangi alifboda. Qabul mezoni: shot.py CLICKS bilan ovoz belgisini bosib, slayderni 30% ga surish → Sozlamalar → Ovoz ni ochganda ham 30% ko'rinadi. Skrinshot docs/panel-tezkor.png, panel qirralarida to'q piksel yo'q (check_corners zgeom yordamchisi bilan tekshiriladi). verify.sh full o'tadi.",
-      "batch": 7
+      "batch": 7,
+      "status": "done",
+      "done_at": "2026-11-24 06:12:14"
     },
     {
       "id": "T48",

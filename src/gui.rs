@@ -1438,7 +1438,7 @@ pub extern "C" fn run(_: usize) {
     }
     // Hali kirilmagan bölsa — grafik parol ekrani
     if accounts::current().is_none() {
-        login_screen();
+        login_screen(false);
     }
     desktop();
 }
@@ -1551,10 +1551,14 @@ fn login_geom(multi: bool) -> LoginGeom {
     }
 }
 
-/// Grafik kiriş ekrani: foydalanuvçini tanlab, parol kiritadi.
-fn login_screen() {
+/// Grafik kiriş ekrani: foydalanuvçini tanlab, parol kiritadi. `lock` — ekran qulfi
+/// (Zamin paneli → Qulflaş): faqat joriy foydalanuvçi, parol tekşiriladi, sessiya saqlanadi.
+fn login_screen(lock: bool) {
     let (sw, sh) = gfx::size();
-    let accts = accounts::all();
+    let accts = match accounts::current() {
+        Some(a) if lock => alloc::vec![a],
+        _ => accounts::all(),
+    };
     let multi = accts.len() > 1;
     let mut sel = 0usize;
     let mut pass = String::new();
@@ -1615,7 +1619,16 @@ fn login_screen() {
 
         if submit && !pass.is_empty() {
             let acct = &accts[sel];
-            if let Some(key) = accounts::unlock(acct, &pass) {
+            if lock && accounts::verify(acct, &pass) {
+                accounts::forget(core::mem::take(&mut pass));
+                return;
+            } else if lock {
+                err = true;
+                accounts::forget(core::mem::take(&mut pass));
+                draw_login(&accts, sel, 0, err, cx, cy, &bg);
+                gfx::flush();
+                task::sleep_ms(500);
+            } else if let Some(key) = accounts::unlock(acct, &pass) {
                 accounts::forget(core::mem::take(&mut pass));
                 crate::setup::apply_login(acct, key);
                 return;
@@ -1770,6 +1783,7 @@ fn desktop() {
         toasts: Vec::new(),
         history: Vec::new(),
         notif_open: false,
+        quick: None,
         search: None,
         ctx: None,
         fclip: None,
@@ -1902,6 +1916,19 @@ fn desktop() {
             }
         }
         for e in input::poll() {
+            // Zamin paneli oçiq: klaviatura unga tegişli
+            if e.typ == input::EV_KEY && e.code != input::BTN_LEFT && e.code != BTN_RIGHT && desk.quick.is_some() {
+                match e.code {
+                    42 | 54 => shift = e.value != 0,
+                    56 => alt = e.value != 0,
+                    29 | 97 => ctrl = e.value != 0,
+                    100 => ALTGR.store(e.value != 0, Ordering::Relaxed),
+                    _ if e.value == 0 => {}
+                    code => quick_key(&mut desk, &mut windows, code, shift, &mut opened),
+                }
+                changed = true;
+                continue;
+            }
             // Qidiruv oçiq: klaviatura unga tegişli
             if e.typ == input::EV_KEY && e.code != input::BTN_LEFT && desk.search.is_some() {
                 match e.code {
@@ -1969,6 +1996,7 @@ fn desktop() {
                         }
                         if !ctx_click(&mut desk, &mut windows, cx, cy, &mut opened)
                             && !search_click(&mut desk, &mut windows, cx, cy, &mut opened)
+                            && !quick_click(&mut desk, &mut windows, cx, cy, &mut opened)
                             && !notif_click(&mut desk, cx, cy)
                             && !menu_click(&mut desk, &mut windows, cx, cy, &mut opened)
                             && !handle_click(&mut windows, cx, cy, sh, &mut drag, &mut opened, &mut desk.anim)
@@ -1984,8 +2012,12 @@ fn desktop() {
                         }
                         *FDRAG_PENDING.lock() = None;
                         ED_DRAG.store(false, Ordering::Relaxed);
-                        if VOL_DRAG.swap(false, Ordering::Relaxed) {
+                        let qd = QUICK_DRAG.swap(false, Ordering::Relaxed);
+                        if VOL_DRAG.swap(false, Ordering::Relaxed) | qd {
                             let _ = crate::config::save_current();
+                        }
+                        if qd {
+                            crate::println!("  [panel] övoz balandligi: {}%", crate::audio::sound::volume());
                         }
                         TERM_DRAG.store(false, Ordering::Relaxed);
                         for w in windows.iter_mut() {
@@ -2012,6 +2044,7 @@ fn desktop() {
                     if e.value == 1 {
                         desk.menu = None;
                         desk.notif_open = false;
+                        desk.quick = None;
                         desk.ctx = build_ctx(&windows, &desk, cx, cy);
                         changed = true;
                     }
@@ -2034,6 +2067,14 @@ fn desktop() {
                 }
                 (input::EV_KEY, 57) if e.value == 1 && alt => {
                     open_search(&mut desk); // Alt+Space — tezkor qidiruv
+                    changed = true;
+                }
+                (input::EV_KEY, 16) if e.value == 1 && alt => {
+                    // Alt+Q — Zamin paneli (tezkor sozlamalar), fokus birinçi elementda
+                    quick_open(&mut desk);
+                    if let Some(q) = desk.quick.as_mut() {
+                        q.focus = Some(0);
+                    }
                     changed = true;
                 }
                 (input::EV_KEY, 15) if e.value == 1 && alt => {
@@ -2254,6 +2295,13 @@ fn desktop() {
                     changed = true;
                 }
             }
+            // Zamin paneli övoz slayderi
+            if QUICK_DRAG.load(Ordering::Relaxed) {
+                if let Some(q) = &desk.quick {
+                    quick_vol_from(&quick_geo(q), cx);
+                    changed = true;
+                }
+            }
             // Övoz slayderi
             if VOL_DRAG.load(Ordering::Relaxed) {
                 if let Some(w) = windows.last().filter(|w| w.kind == Kind::Settings && !w.hidden) {
@@ -2346,6 +2394,17 @@ fn desktop() {
                 last_play_draw = now;
                 changed = true;
             }
+        }
+        if LOCK_REQ.swap(false, Ordering::Relaxed) {
+            // Zamin paneli → Qulflaş: parol kiritilguncha qulf ekrani (oynalar saqlanadi)
+            let _ = fs::commit();
+            login_screen(true);
+            pressed = false;
+            shift = false;
+            alt = false;
+            ctrl = false;
+            QUICK_DRAG.store(false, Ordering::Relaxed);
+            changed = true;
         }
         if SHOT_REQ.swap(false, Ordering::Relaxed) {
             desk.menu = None;
@@ -2791,6 +2850,7 @@ fn draw(windows: &[Window], cx: usize, cy: usize, wp: &Option<crate::image::Imag
     if desk.notif_open {
         draw_notif_panel(desk);
     }
+    draw_quick(desk);
     if let Some(m) = desk.menu {
         draw_menu(m, cx, cy);
     }
@@ -2868,20 +2928,13 @@ fn draw_menubar(w: usize, open: Option<usize>) {
     let dw = gfx::text_width(&date, small());
     let rx = w.saturating_sub(dw + body());
     gfx::draw_text(rx, ty, &date, 0xeaf0f8, small());
-    // belgilar (sana çapida)
-    let mut sx = rx.saturating_sub(body());
+    // belgilar (sana uçun ajratilgan qat'iy joydan çapda — vaqt özgarsa siljimaydi)
     let cy2 = mb / 2;
-    // batareya
-    sx = sx.saturating_sub(small() * 3 / 2);
-    status_battery(sx, cy2, small());
-    sx = sx.saturating_sub(small() * 3 / 2);
-    status_speaker(sx, cy2, small(), crate::audio::sound::muted() || crate::audio::sound::volume() == 0);
-    sx = sx.saturating_sub(small() * 3 / 2);
-    status_wifi(sx, cy2, small());
-    sx = sx.saturating_sub(small() * 3 / 2);
-    status_bell(sx, cy2, small());
-    sx = sx.saturating_sub(small() * 3 / 2);
-    status_search(sx, cy2, small());
+    status_battery(status_x(w, 0), cy2, small());
+    status_speaker(status_x(w, 1), cy2, small(), crate::audio::sound::muted() || crate::audio::sound::volume() == 0);
+    status_wifi(status_x(w, 2), cy2, small());
+    status_bell(status_x(w, 3), cy2, small());
+    status_search(status_x(w, 4), cy2, small());
 }
 
 /// Menyu logosi — yashil olmos-yulduz.
@@ -2999,6 +3052,7 @@ struct Desk {
     toasts: Vec<Toast>,         // ekrandagi bildirişnomalar
     history: Vec<(String, String, Color, String)>, // (sarlavha, matn, rang, vaqt)
     notif_open: bool,           // bildirişnomalar paneli oçiqmi
+    quick: Option<Quick>,       // Zamin paneli (tezkor sozlamalar)
     search: Option<Search>,     // tezkor qidiruv (Alt+Space)
     ctx: Option<Ctx>,           // öng tugma menyusi
     fclip: Option<(String, bool)>, // fayl buferi: (yöl, kesilganmi)
@@ -3593,6 +3647,7 @@ fn search_exec(act: SAct, windows: &mut Vec<Window>, opened: &mut usize) {
 fn open_search(desk: &mut Desk) {
     desk.menu = None;
     desk.notif_open = false;
+    desk.quick = None;
     desk.search = Some(Search { q: String::new(), sel: 0, res: search_results("") });
 }
 
@@ -3658,24 +3713,25 @@ fn draw_toasts(desk: &Desk) {
     }
 }
 
-/// Qoʻngʻiroq belgisi markazi (menyu panelida, sanadan çapda).
-fn bell_pos(sw: usize) -> (usize, usize) {
-    let t = time::now();
-    let date = alloc::format!(
-        "{}, {}-{} {:02}:{:02}",
-        weekday_short(t.year, t.month, t.day),
-        t.day,
-        month_name(t.month),
-        t.hour,
-        t.minute
-    );
-    let rx = sw.saturating_sub(gfx::text_width(&date, small()) + body());
-    (rx.saturating_sub(body() + small() * 6), menubar_h() / 2)
+/// Menyu panelida sana uçun ajratilgan joyning çap çeti: eng keng sana
+/// ("<hafta kuni>, 28-<oy> 00:00") kengligi — holat belgilari vaqtga qarab siljimaydi
+/// (scripts/agent/zgeom.py dagi status_rx bilan bir xil).
+fn status_rx(sw: usize) -> usize {
+    let px = small();
+    let wd = (0..7).map(|i| gfx::text_width(["Duş", "Seş", "Çor", "Pay", "Jum", "Şan", "Yak"][i], px)).max().unwrap_or(0);
+    let mn = (1..=12).map(|m| gfx::text_width(month_name(m), px)).max().unwrap_or(0);
+    let slot = wd + mn + gfx::text_width(", 28- 00:00", px);
+    sw.saturating_sub(slot + body())
 }
 
-/// Menyu panelidagi karnay belgisi markazi (x).
-fn speaker_x(sw: usize) -> usize {
-    bell_pos(sw).0 + small() * 3
+/// Holat belgisi markazi (x): 0 — batareya, 1 — karnay, 2 — Wi‑Fi, 3 — qoʻngʻiroq, 4 — lupa.
+fn status_x(sw: usize, k: usize) -> usize {
+    status_rx(sw).saturating_sub(body() + (k + 1) * (small() * 3 / 2))
+}
+
+/// Qoʻngʻiroq belgisi markazi (menyu panelida, sanadan çapda).
+fn bell_pos(sw: usize) -> (usize, usize) {
+    (status_x(sw, 3), menubar_h() / 2)
 }
 
 fn notif_panel_geo(sw: usize, n: usize) -> (usize, usize, usize, usize) {
@@ -3764,14 +3820,7 @@ fn notif_click(desk: &mut Desk, cx: usize, cy: usize) -> bool {
         let _ = by;
         desk.notif_open = true;
         desk.menu = None;
-        return true;
-    }
-    let spx = speaker_x(sw);
-    if cy < menubar_h() && cx + small() * 2 / 3 >= spx && cx <= spx + small() * 2 / 3 {
-        let m = !crate::audio::sound::muted();
-        crate::audio::sound::set_muted(m);
-        let _ = crate::config::save_current();
-        notify("Övoz", if m { "Övozsiz rejim yoqildi" } else { "Övoz yoqildi" }, 0xff375f);
+        desk.quick = None;
         return true;
     }
     for k in 0..desk.toasts.len() {
@@ -3782,6 +3831,458 @@ fn notif_click(desk: &mut Desk, cx: usize, cy: usize) -> bool {
         }
     }
     false
+}
+
+// ---------------- Zamin paneli: tezkor sozlamalar (holat belgilaridan) ----------------
+
+type T3 = crate::i18n::Text;
+fn tr(t: &T3) -> &'static str {
+    crate::i18n::pick(t)
+}
+
+const Q_TITLE: T3 = ["Tezkor sozlamalar", "Быстрые настройки", "Quick settings"];
+const Q_SOUND: T3 = ["Övoz", "Звук", "Sound"];
+const Q_MUTED: T3 = ["Övozsiz", "Без звука", "Muted"];
+const Q_NET: T3 = ["Tarmoq", "Сеть", "Network"];
+const Q_IP: T3 = ["IP manzil", "IP-адрес", "IP address"];
+const Q_MODE: T3 = ["Rejim", "Режим", "Mode"];
+const Q_STATIC: T3 = ["Statik", "Статический", "Static"];
+const Q_GW: T3 = ["Şlyuz", "Шлюз", "Gateway"];
+const Q_NONET: T3 = ["Ulanmagan", "Не подключено", "Not connected"];
+const Q_NETSET: T3 = ["Tarmoq sozlamalari…", "Настройки сети…", "Network settings…"];
+const Q_THEME: T3 = ["Mavzu rangi", "Цвет темы", "Accent color"];
+const Q_LOCK: T3 = ["Qulflaş", "Блокировать", "Lock"];
+const Q_REBOOT: T3 = ["Qayta yuklaş", "Перезагрузка", "Restart"];
+const Q_OFF: T3 = ["Öçiriş", "Выключить", "Shut down"];
+const Q_ASK_LOCK: T3 = ["Ekran qulflansinmi?", "Заблокировать экран?", "Lock the screen?"];
+const Q_ASK_REBOOT: T3 = ["Kompyuter qayta yuklansinmi?", "Перезагрузить компьютер?", "Restart the computer?"];
+const Q_ASK_OFF: T3 = ["Kompyuter öçirilsinmi?", "Выключить компьютер?", "Shut down the computer?"];
+const Q_CANCEL: T3 = ["Bekor qiliş", "Отмена", "Cancel"];
+const Q_HINT: T3 = ["Tab — keyingi · Enter — tanlaş · Esc — yopiş", "Tab — далее · Enter — выбор · Esc — закрыть", "Tab — next · Enter — select · Esc — close"];
+
+/// Panel elementlari (klaviatura fokusi şu tartibda yuradi).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QItem {
+    Mute,
+    Slider,
+    NetLink,
+    Accent(usize),
+    Lock,
+    Reboot,
+    Off,
+    Cancel,
+    Confirm,
+}
+
+/// Oçiq panel holati: klaviatura fokusi (elementlar röyxatidagi indeks) va tasdiq kutilayotgan amal.
+struct Quick {
+    focus: Option<usize>,
+    confirm: Option<QItem>,
+}
+
+/// Panel geometriyasi (scripts/agent/zgeom.py dagi quick_geo bilan bir xil).
+struct QGeo {
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+    sound_y: usize,
+    net_y: usize,
+    theme_y: usize,
+    power_y: usize,
+    items: Vec<(QItem, (usize, usize, usize, usize))>,
+}
+
+/// Qulf ekranini oçiş söralgan (asosiy tsikl bajaradi).
+static LOCK_REQ: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// Panel övoz slayderi sudralayotganmi.
+static QUICK_DRAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+fn quick_geo(q: &Quick) -> QGeo {
+    let (sw, _) = gfx::size();
+    let u = body();
+    let pw = (u * 19).min(sw.saturating_sub(u));
+    let x = sw.saturating_sub(pw + u / 2);
+    let y = menubar_h() + 3;
+    let pad = u;
+    let iw = pw - pad * 2;
+    let mut items = Vec::new();
+    // sarlavha
+    let sound_y = y + u / 2 + small() + u * 2 / 3;
+    // Övoz: [karnay tugmasi] [slayder] [foiz]
+    let ry = sound_y + small() * 9 / 10 + u / 3;
+    let bh = u * 3 / 2;
+    items.push((QItem::Mute, (x + pad, ry, bh, bh)));
+    let kr = u * 2 / 3;
+    let pctw = gfx::text_width("100%", small()) + u / 2;
+    let tx = x + pad + bh + u * 2 / 3 + kr;
+    let tw = (x + pw - pad).saturating_sub(pctw + kr + tx);
+    items.push((QItem::Slider, (tx, ry, tw, bh)));
+    // Tarmoq: sarlavha + 3 qator + havola
+    let net_y = ry + bh + u * 2 / 3 + u / 2;
+    let row = small() * 9 / 10 + u / 3;
+    let ly = net_y + small() + u / 2 + row * 3 + u / 4;
+    items.push((QItem::NetLink, (x + pad, ly, iw, u * 3 / 2)));
+    // Mavzu rangi: 6 ta namuna
+    let theme_y = ly + u * 3 / 2 + u * 2 / 3 + u / 2;
+    let sy = theme_y + small() + u / 2;
+    let d = u * 5 / 4;
+    let gap = iw.saturating_sub(d * ACCENTS.len()) / (ACCENTS.len() - 1);
+    for i in 0..ACCENTS.len() {
+        items.push((QItem::Accent(i), (x + pad + i * (d + gap), sy, d, d)));
+    }
+    // Quvvat: uç tugma yoki tasdiq (savol + Bekor / Ha)
+    let power_y = sy + d + u * 2 / 3 + u / 2;
+    let mut yy = power_y;
+    if q.confirm.is_some() {
+        yy += small() + u / 2;
+        let bw = (iw - u / 2) / 2;
+        items.push((QItem::Cancel, (x + pad, yy, bw, u * 3 / 2)));
+        items.push((QItem::Confirm, (x + pad + bw + u / 2, yy, bw, u * 3 / 2)));
+        yy += u * 3 / 2;
+    } else {
+        let g = u / 2;
+        let bw = (iw - g * 2) / 3;
+        for (k, it) in [QItem::Lock, QItem::Reboot, QItem::Off].iter().enumerate() {
+            items.push((*it, (x + pad + k * (bw + g), yy, bw, u * 3)));
+        }
+        yy += u * 3;
+    }
+    let h = yy + u / 2 + small() * 4 / 5 + u / 2 - y;
+    QGeo { x, y, w: pw, h, sound_y, net_y, theme_y, power_y, items }
+}
+
+/// Holat belgilaridan biri (batareya, karnay, Wi‑Fi) bosildimi?
+fn quick_icon_at(cx: usize, cy: usize) -> bool {
+    let (sw, _) = gfx::size();
+    let r = small() * 2 / 3;
+    cy < menubar_h() && (0..3).any(|k| {
+        let ix = status_x(sw, k);
+        cx + r >= ix && cx <= ix + r
+    })
+}
+
+fn quick_open(desk: &mut Desk) {
+    desk.quick = Some(Quick { focus: None, confirm: None });
+    desk.notif_open = false;
+    desk.menu = None;
+    desk.search = None;
+    desk.ctx = None;
+}
+
+/// Kursor x boʻyiça övoz balandligi (panel slayderi).
+fn quick_vol_from(g: &QGeo, cx: usize) {
+    if let Some((_, (tx, _, tw, _))) = g.items.iter().find(|it| it.0 == QItem::Slider) {
+        let v = (cx.saturating_sub(*tx) * 100 + tw / 2) / (*tw).max(1);
+        crate::audio::sound::set_volume(v.min(100) as u8);
+    }
+}
+
+/// Panelga oid bosiş. Bosildi — true (taşqarisiga bosiş panelni yopadi).
+fn quick_click(desk: &mut Desk, windows: &mut Vec<Window>, cx: usize, cy: usize, opened: &mut usize) -> bool {
+    let Some(q) = &desk.quick else {
+        if quick_icon_at(cx, cy) {
+            quick_open(desk);
+            return true;
+        }
+        return false;
+    };
+    let g = quick_geo(q);
+    if cx >= g.x && cx < g.x + g.w && cy >= g.y && cy < g.y + g.h {
+        let hit = g.items.iter().position(|(it, (x, y, w, h))| {
+            let m = if *it == QItem::Slider { body() * 2 / 3 } else { 0 };
+            cx + m >= *x && cx < x + w + m && cy >= *y && cy < y + h
+        });
+        if let Some(k) = hit {
+            let it = g.items[k].0;
+            if it == QItem::Slider {
+                quick_vol_from(&g, cx);
+                QUICK_DRAG.store(true, Ordering::Relaxed);
+            } else {
+                quick_activate(desk, windows, it, opened, false);
+            }
+        }
+        return true;
+    }
+    desk.quick = None; // taşqariga (yoki belgining özini qayta) bosiş — yopiladi
+    true
+}
+
+/// Element amalini bajaradi (siçqon yoki Enter/Space).
+fn quick_activate(desk: &mut Desk, windows: &mut Vec<Window>, it: QItem, opened: &mut usize, kbd: bool) {
+    let Some(q) = desk.quick.as_mut() else { return };
+    match it {
+        QItem::Mute => {
+            crate::audio::sound::set_muted(!crate::audio::sound::muted());
+            let _ = crate::config::save_current();
+        }
+        QItem::Slider => {}
+        QItem::Accent(i) => {
+            crate::config::UI_ACCENT.store(i as u8, Ordering::Relaxed);
+            let _ = crate::config::save_current();
+        }
+        QItem::NetLink => {
+            desk.quick = None;
+            // Sozlamalar oçiq bölsa — old planga, aks holda yangi oyna; Tarmoq bölimi
+            let mut w = match windows.iter().rposition(|w| w.kind == Kind::Settings) {
+                Some(i) => windows.remove(i),
+                None => {
+                    *opened += 1;
+                    new_window(Kind::Settings, *opened - 1)
+                }
+            };
+            w.hidden = false;
+            w.tab = 3;
+            w.udlg = None;
+            windows.push(w);
+        }
+        QItem::Lock | QItem::Reboot | QItem::Off => {
+            q.confirm = Some(it);
+            // klaviaturada fokus xavfsiz "Bekor qiliş" ga tuşadi
+            q.focus = if kbd { Some(quick_geo(q).items.iter().position(|e| e.0 == QItem::Cancel).unwrap_or(0)) } else { None };
+        }
+        QItem::Cancel => {
+            let back = q.confirm.take();
+            q.focus = if kbd { back.and_then(|b| quick_geo(q).items.iter().position(|e| e.0 == b)) } else { None };
+        }
+        QItem::Confirm => match q.confirm.take() {
+            Some(QItem::Lock) => {
+                desk.quick = None;
+                LOCK_REQ.store(true, Ordering::Relaxed);
+            }
+            Some(QItem::Reboot) => {
+                desk.quick = None;
+                let _ = crate::config::save_current();
+                menu_act(MAct::Reboot, windows, opened);
+            }
+            Some(QItem::Off) => {
+                desk.quick = None;
+                let _ = crate::config::save_current();
+                menu_act(MAct::Shutdown, windows, opened);
+            }
+            _ => {}
+        },
+    }
+}
+
+/// Panel oçiqligida klaviatura: Tab/Shift+Tab, ↑↓ — fokus, ←→ — övoz (slayderda) yoki
+/// qöşni element, Enter/Space — tanlaş, Esc — tasdiqni bekor qiliş yoki panelni yopiş.
+fn quick_key(desk: &mut Desk, windows: &mut Vec<Window>, code: u16, shift: bool, opened: &mut usize) {
+    let Some(q) = desk.quick.as_mut() else { return };
+    let n = quick_geo(q).items.len();
+    let cur = q.focus;
+    let item = cur.and_then(|f| quick_geo(q).items.get(f).map(|e| e.0));
+    let step = |back: bool| -> Option<usize> {
+        Some(match cur {
+            None if back => n - 1,
+            None => 0,
+            Some(f) if back => (f + n - 1) % n,
+            Some(f) => (f + 1) % n,
+        })
+    };
+    match code {
+        1 => {
+            if q.confirm.is_some() {
+                quick_activate(desk, windows, QItem::Cancel, opened, true);
+            } else {
+                desk.quick = None;
+            }
+        }
+        15 => q.focus = step(shift),
+        103 => q.focus = step(true),
+        108 => q.focus = step(false),
+        105 | 106 if item == Some(QItem::Slider) => {
+            let v = crate::audio::sound::volume() as i32 + if code == 105 { -5 } else { 5 };
+            crate::audio::sound::set_volume(v.clamp(0, 100) as u8);
+            let _ = crate::config::save_current();
+        }
+        105 => q.focus = step(true),
+        106 => q.focus = step(false),
+        28 | 57 => {
+            if let Some(it) = item {
+                quick_activate(desk, windows, it, opened, true);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Quvvat tugmasi belgisi (qulf / qayta yuklaş / öçiriş), markaz (cx, cy), ölçam s.
+fn quick_power_icon(it: QItem, cx: usize, cy: usize, s: usize, col: Color) {
+    let t = (s / 9).max(2);
+    match it {
+        QItem::Lock => {
+            let bw = s * 2 / 3;
+            let bh = s / 2;
+            gfx::round_outline(cx - bw / 3, cy - s / 2, bw * 2 / 3, s * 2 / 3, bw / 3, t, col);
+            gfx::fill_round_rect(cx - bw / 2, cy - s / 10, bw, bh, s / 8, col);
+        }
+        QItem::Reboot => {
+            let r = s * 2 / 5;
+            gfx::round_outline(cx - r, cy - r, r * 2, r * 2, r, t, col);
+            // yoy uçidagi strelka: çiziq ustini fon rangida ochiq qoldirib, uçburçak
+            let q = s as f32;
+            let (ax, ay) = (cx as f32 + q * 0.12, cy as f32 - r as f32);
+            gfx::fill_poly(&[(ax - q * 0.02, ay - q * 0.2), (ax + q * 0.24, ay), (ax - q * 0.02, ay + q * 0.2)], col);
+        }
+        _ => {
+            let r = s * 2 / 5;
+            gfx::round_outline(cx - r, cy - r, r * 2, r * 2, r, t, col);
+            gfx::fill_round_rect(cx - t, cy - r - t, t * 2 + t / 2, r + t, t, 0x1b2333);
+            gfx::fill_round_rect(cx - t / 2, cy - r - t / 2, t, r + t / 2, t / 2, col);
+        }
+    }
+}
+
+/// Zamin paneli (tezkor sozlamalar) ni çizadi.
+fn draw_quick(desk: &Desk) {
+    let Some(q) = &desk.quick else { return };
+    let g = quick_geo(q);
+    let u = body();
+    let (x, y, w, h) = (g.x, g.y, g.w, g.h);
+    let r = u * 3 / 4;
+    gfx::shadow(x, y, w, h, r, 12);
+    fill_round_rect_a(x, y, w, h, r, 0x151c2a, 255);
+    gfx::round_outline(x, y, w, h, r, 1, 0x34405a);
+    let pad = u;
+    let lpx = small() * 9 / 10;
+    gfx::draw_text(x + pad, y + u / 2, tr(&Q_TITLE), OQ, small());
+    let sep = |yy: usize| fill_rect(x + pad, yy, w - pad * 2, 1, 0x2a3448);
+    let focus = q.focus.and_then(|f| g.items.get(f).map(|e| e.0));
+    let ring_at = |it: QItem, (bx, by, bw, bh): (usize, usize, usize, usize), rr: usize| {
+        if focus == Some(it) {
+            gfx::round_outline(bx.saturating_sub(3), by.saturating_sub(3), bw + 6, bh + 6, rr + 3, 2, accent());
+        }
+    };
+    let vol = crate::audio::sound::volume() as usize;
+    let muted = crate::audio::sound::muted();
+    // Övoz
+    gfx::draw_text(x + pad, g.sound_y, tr(&Q_SOUND), 0x9fb0c3, lpx);
+    for &(it, rc) in g.items.iter() {
+        let (bx, by, bw, bh) = rc;
+        match it {
+            QItem::Mute => {
+                if muted {
+                    gfx::fill_round_rect(bx, by, bw, bh, bh / 2, 0xff453a);
+                } else {
+                    fill_round_rect_a(bx, by, bw, bh, bh / 2, 0xffffff, 30);
+                }
+                status_speaker(bx + bw / 2 + small() / 10, by + bh / 2, small(), muted || vol == 0);
+                ring_at(it, rc, bh / 2);
+            }
+            QItem::Slider => {
+                let th = (u / 3).max(4);
+                let ty = by + (bh - th) / 2;
+                gfx::fill_round_rect(bx, ty, bw, th, th / 2, 0x2a3346);
+                let fw = bw * vol / 100;
+                let on = if muted { 0x5a6578 } else { accent() };
+                if fw > 0 {
+                    gfx::fill_round_rect(bx, ty, fw.max(th), th, th / 2, on);
+                }
+                let kr = u * 2 / 3;
+                if focus == Some(it) {
+                    gfx::fill_circle(bx + fw, ty + th / 2, kr + 3, accent());
+                }
+                gfx::fill_circle(bx + fw, ty + th / 2, kr, OQ);
+                gfx::fill_circle(bx + fw, ty + th / 2, kr / 3, on);
+                let pct = alloc::format!("{}%", vol);
+                gfx::draw_text(bx + bw + kr + u / 3, by + (bh - small()) / 2, &pct, if muted { 0x6f7f95 } else { OQ }, small());
+                if muted {
+                    let mw = gfx::text_width(tr(&Q_MUTED), small() * 4 / 5);
+                    gfx::draw_text((x + w - pad).saturating_sub(mw), g.sound_y, tr(&Q_MUTED), 0xff6b60, small() * 4 / 5);
+                }
+            }
+            QItem::NetLink => {
+                if focus == Some(it) {
+                    fill_round_rect_a(bx, by, bw, bh, bh / 2, accent(), 60);
+                } else {
+                    fill_round_rect_a(bx, by, bw, bh, bh / 2, 0xffffff, 18);
+                }
+                gfx::draw_text(bx + u * 2 / 3, by + (bh - lpx) / 2, tr(&Q_NETSET), 0x63a8ff, lpx);
+                ring_at(it, rc, bh / 2);
+            }
+            QItem::Accent(i) => {
+                let rr = bw / 2;
+                let (ccx, ccy) = (bx + rr, by + rr);
+                if accent() == ACCENTS[i] {
+                    gfx::fill_circle(ccx, ccy, rr, OQ);
+                    gfx::fill_circle(ccx, ccy, rr.saturating_sub(3), ACCENTS[i]);
+                } else {
+                    gfx::fill_circle(ccx, ccy, rr.saturating_sub(2), ACCENTS[i]);
+                }
+                ring_at(it, rc, rr);
+            }
+            QItem::Lock | QItem::Reboot | QItem::Off => {
+                fill_round_rect_a(bx, by, bw, bh, u / 2, 0xffffff, if focus == Some(it) { 40 } else { 20 });
+                let col = if it == QItem::Off { 0xff6b60 } else { 0xdbe4f0 };
+                quick_power_icon(it, bx + bw / 2, by + bh * 2 / 5, small(), col);
+                let lbl = match it {
+                    QItem::Lock => tr(&Q_LOCK),
+                    QItem::Reboot => tr(&Q_REBOOT),
+                    _ => tr(&Q_OFF),
+                };
+                let fpx = small() * 4 / 5;
+                let l = fit_text(lbl, bw.saturating_sub(u / 3), fpx);
+                gfx::draw_text_centered(bx + bw / 2, by + bh - fpx - u / 3, &l, 0xdbe4f0, fpx);
+                ring_at(it, rc, u / 2);
+            }
+            QItem::Cancel => {
+                fill_round_rect_a(bx, by, bw, bh, bh / 2, 0xffffff, 26);
+                gfx::draw_text_centered(bx + bw / 2, by + (bh - lpx) / 2, &fit_text(tr(&Q_CANCEL), bw, lpx), OQ, lpx);
+                ring_at(it, rc, bh / 2);
+            }
+            QItem::Confirm => {
+                let (lbl, col) = match q.confirm {
+                    Some(QItem::Lock) => (tr(&Q_LOCK), accent()),
+                    Some(QItem::Reboot) => (tr(&Q_REBOOT), 0xff9f0a),
+                    _ => (tr(&Q_OFF), 0xff453a),
+                };
+                gfx::fill_round_rect(bx, by, bw, bh, bh / 2, col);
+                gfx::draw_text_centered(bx + bw / 2, by + (bh - lpx) / 2, &fit_text(lbl, bw, lpx), OQ, lpx);
+                ring_at(it, rc, bh / 2);
+            }
+        }
+    }
+    // Tarmoq holati
+    sep(g.net_y - u / 2);
+    let cfg = crate::net::is_configured();
+    gfx::draw_text(x + pad, g.net_y, tr(&Q_NET), 0x9fb0c3, lpx);
+    let (st, scol) = if !cfg {
+        (tr(&Q_NONET), 0xff9f0a)
+    } else if crate::net::is_static_active() {
+        (tr(&Q_STATIC), 0x30d158)
+    } else {
+        ("DHCP", 0x30d158)
+    };
+    let row = lpx + u / 3;
+    let ry0 = g.net_y + small() + u / 2;
+    let dash = || String::from("—");
+    let rows = [
+        (tr(&Q_IP), if cfg { alloc::format!("{}/{}", ip_str(crate::net::our_ip()), crate::net::ipcfg::mask_prefix(crate::net::netmask()).unwrap_or(32)) } else { dash() }),
+        (tr(&Q_MODE), String::from(st)),
+        (tr(&Q_GW), if cfg { ip_str(crate::net::gateway()) } else { dash() }),
+    ];
+    for (k, (lb, val)) in rows.iter().enumerate() {
+        let yy = ry0 + k * row;
+        gfx::draw_text(x + pad, yy, lb, 0x8a9ab0, lpx);
+        let vw = gfx::text_width(val, lpx);
+        gfx::draw_text((x + w - pad).saturating_sub(vw), yy, val, if k == 1 { scol } else { 0xe1e8f2 }, lpx);
+    }
+    // Mavzu
+    sep(g.theme_y - u / 2);
+    gfx::draw_text(x + pad, g.theme_y, tr(&Q_THEME), 0x9fb0c3, lpx);
+    // Quvvat / tasdiq
+    sep(g.power_y - u / 2);
+    if let Some(c) = q.confirm {
+        let ask = match c {
+            QItem::Lock => tr(&Q_ASK_LOCK),
+            QItem::Reboot => tr(&Q_ASK_REBOOT),
+            _ => tr(&Q_ASK_OFF),
+        };
+        gfx::draw_text(x + pad, g.power_y, &fit_text(ask, w - pad * 2, small()), OQ, small());
+    }
+    let hp = small() * 4 / 5;
+    gfx::draw_text(x + pad, y + h - u / 2 - hp, &fit_text(tr(&Q_HINT), w - pad * 2, hp), 0x6f7f95, hp);
 }
 
 // ---------------- Ilova almaştirgiç (Alt+Tab) va yorliqlar ----------------
@@ -4351,6 +4852,7 @@ fn menu_click(desk: &mut Desk, windows: &mut Vec<Window>, cx: usize, cy: usize, 
     if let Some(t) = menubar_title_at(cx, cy) {
         desk.menu = Some(t);
         desk.notif_open = false;
+        desk.quick = None;
         return true;
     }
     false

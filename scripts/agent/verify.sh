@@ -338,6 +338,39 @@ PY
     cp "$d/qollash.png" docs/settings-network.png
     echo "OK tarmoq: GUI → statik 10.0.2.15/24 → diskka → qayta yuklanişda DHCP siz qöllandi, ping şlyuz$(grep -qaE 'tarmoq: DNS zamin' "$l2" && echo ' + DNS')"
 }
+# --- Zamin paneli (tezkor sozlamalar): karnay belgisi → slayder 30% → Sozlamalar → Övoz da ham 30%,
+#     diskka saqlanadi (qayta yuklanişda 30%), klaviatura (Alt+Q, Tab, ←) bilan 20%, panel burçaklari toza ---
+panel_test() {
+    local kernel=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel
+    local d=$LOG_DIR/panel; mkdir -p "$d" /tmp/claude-0; rm -f "$d"/*.png "$d"/*.log "$d"/*.txt
+    # özbekça (SETUP_LANG=1): panel matnlari yangi alifboda — docs/panel-tezkor.png
+    SETUP_LANG=1 CLICKS="w,2;@spk;w,1;@qvol30;m,@park;w,1;snap,panel;kp,esc;w,1;@settings;w,2;@set_tab2;w,1;m,@park" \
+        timeout 300 python3 scripts/agent/shot.py "$kernel" "$d/sozlama.png" fresh >"$d/shot1.log" 2>&1
+    local l1=$d/sozlama.png.log
+    [ -s "$d/sozlama.png" ] && [ -s "$d/sozlama_panel.png" ] || { echo "FAIL panel: surat olinmadi (qarang $d/shot1.log)"; return 1; }
+    grep -qaiE 'panic|yiqildi' "$l1" && { echo "FAIL panel: $(grep -aiE -m1 'panic|yiqildi' "$l1" | cut -c1-200)"; return 1; }
+    grep -qaE '\[panel\] övoz balandligi: 30%' "$l1" || { echo "FAIL panel: slayder 30% ga surilmadi (qarang $l1)"; return 1; }
+    python3 scripts/agent/check_corners.py --quick "$d/sozlama_panel.png" >"$d/burchak.txt" 2>&1 || {
+        echo "FAIL panel: burçak/qirrada to'q piksel: $(grep -m2 NUQSON "$d/burchak.txt" | tr '\n' ' ')"; return 1; }
+    python3 scripts/agent/panel_vol.py "$d/sozlama.png" 30 >"$d/vol1.txt" 2>&1 || { echo "FAIL panel: Sozlamalar → Övoz 30% emas: $(cat "$d/vol1.txt")"; return 1; }
+    grep -qa "^ovoz=30" <(head -c 8704 /tmp/claude-0/shot-disk.img | tail -c 8192 | tr '\0' '\n') || { echo "FAIL panel: övoz diskka saqlanmadi"; return 1; }
+    # 2-yuklaniş: şu disk — 30% tiklanadi; Alt+Q → Tab (slayder) → ← ← (20%) → Esc
+    CLICKS="t,pass1234;kp,ret;w,4;@settings;w,2;@set_tab2;w,1;m,@park;snap,qayta;kd,alt;kp,q;ku,alt;kp,tab;kp,left;kp,left;w,1;snap,klav;kp,esc;w,1" \
+        timeout 300 python3 scripts/agent/shot.py "$kernel" "$d/klav.png" >"$d/shot2.log" 2>&1
+    local l2=$d/klav.png.log
+    [ -s "$d/klav.png" ] && [ -s "$d/klav_qayta.png" ] || { echo "FAIL panel: 2-yuklaniş surati olinmadi (qarang $d/shot2.log)"; return 1; }
+    grep -qaiE 'panic|yiqildi' "$l2" && { echo "FAIL panel (2): $(grep -aiE -m1 'panic|yiqildi' "$l2" | cut -c1-200)"; return 1; }
+    python3 scripts/agent/panel_vol.py "$d/klav_qayta.png" 30 >"$d/vol2.txt" 2>&1 || { echo "FAIL panel: qayta yuklanişda övoz 30% emas: $(cat "$d/vol2.txt")"; return 1; }
+    python3 scripts/agent/panel_vol.py "$d/klav.png" 20 >"$d/vol3.txt" 2>&1 || { echo "FAIL panel: klaviatura (←) bilan 20% bölmadi: $(cat "$d/vol3.txt")"; return 1; }
+    python3 scripts/agent/check_corners.py --quick "$d/klav_klav.png" >"$d/burchak2.txt" 2>&1 || {
+        echo "FAIL panel: klaviatura suratida burçak nuqsoni: $(grep -m2 NUQSON "$d/burchak2.txt" | tr '\n' ' ')"; return 1; }
+    grep -qa "^ovoz=20" <(head -c 8704 /tmp/claude-0/shot-disk.img | tail -c 8192 | tr '\0' '\n') || { echo "FAIL panel: klaviatura bilan özgargan övoz diskka saqlanmadi"; return 1; }
+    cp "$d/sozlama_panel.png" docs/panel-tezkor.png
+    echo "OK panel: karnay → slayder 30% → Sozlamalar → Övoz 30% → diskka → qayta yuklanişda 30%, Alt+Q/Tab/← → 20%, burçaklar toza"
+}
+if [ "$MODE" = "panel" ]; then
+    panel_test; exit $?
+fi
 if [ "$MODE" = "tarmoq" ]; then
     net_test; exit $?
 fi
@@ -445,6 +478,9 @@ python3 scripts/agent/check_corners.py --gop "$KERNEL" "$GDIR" >"$GDIR.txt" 2>&1
 tail -1 "$GDIR.txt"
 [ $rc -eq 0 ] || { grep -m3 -E "NUQSON|FAIL" "$GDIR.txt"; exit 1; }
 [ -s "$GDIR/gop-1280x800_bezak.png" ] && cp "$GDIR/gop-1280x800_bezak.png" docs/web-corners-gop.png
+
+# --- Zamin paneli (tezkor sozlamalar) ---
+panel_test || exit 1
 
 # --- Statik IPv4 (Sozlamalar → Tarmoq) ---
 net_test || exit 1

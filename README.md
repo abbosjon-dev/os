@@ -93,7 +93,7 @@ virtio-sound ga yuborilişidan oldin PCM namunalarini şu darajaga köpaytiradi
 (Q16 fixed-point, yaxlitlab, i16 çegarasida qirqiladi). Daraja har bir davr (period)
 uçun qayta öqiladi, şuning uçun ijro paytida ham darhol eşitiladi. Yuqori menyu
 panelida karnay belgisi bor (daraja böyiça 1–3 tölqin; övozsiz bölsa ustidan qizil
-çiziq) — unga bosiş övozsiz rejimni yoqadi/öçiradi. Sozlama diskka saqlanadi
+çiziq) — unga bosiş **Zamin paneli**ni oçadi (pastga qarang). Sozlama diskka saqlanadi
 (`ovoz=`, `ovozsiz=`) va qayta yuklaşda tiklanadi. Self-test: `[ok] övoz balandligi`
 (100 % da özgarmaydi, 50 % da ±1 aniqlikda yarmi, 0 % va övozsizda nol, toşiş yöq).
 
@@ -650,6 +650,7 @@ pastda "2 / 4". Video oynasida **ijro/pauza** tugmasi (`Space`), kadrlar böyiç
 | Yorliq | Amal |
 |---|---|
 | `Alt+Space` | Tezkor qidiruv (ilova, fayl, hisob) |
+| `Alt+Q` | Zamin paneli (tezkor sozlamalar: övoz, tarmoq, rang, quvvat) |
 | `Alt+Tab` / `Alt+Shift+Tab` | Ilova almaştirgiç — Alt qoʻyib yuborilganda tanlangan oyna faollaşadi (yashirilgani ham) |
 | `Alt+W` | Faol oynani yopiş |
 | `Alt+M` | Faol oynani dokka yashiriş |
@@ -662,7 +663,7 @@ pastda "2 / 4". Video oynasida **ijro/pauza** tugmasi (`Space`), kadrlar böyiç
 | `Alt+K` | Matn muharririda qidiruv (`Enter` — keyingisi, `Esc` — yopiş) |
 | `PrtSc` | Ekran rasmi (PNG, ~/Rasmlar) |
 | `AltGr` + s/c/o/g/' | ş ç ö ğ ʼ |
-| `Esc` | Menyu, bildirişnomalar paneli va almaştirgiçni yopiş |
+| `Esc` | Menyu, bildirişnomalar paneli, Zamin paneli va almaştirgiçni yopiş |
 | `Ctrl+C` | Grafik terminalda: oldingi plandagi dasturni töxtatiş (`^C`); dastur yöq bölsa — kiriş qatorini bekor qiliş va yangi taklif |
 | `Ctrl+L` / `Ctrl+U` | Grafik terminalda: ekranni tozalaş (tarix yuqoriga aylantirib körinadi) / kiriş qatorini öçiriş |
 | `Ctrl+D` | Grafik terminalda böş qatorda — terminal oynasini yopiş |
@@ -671,6 +672,38 @@ pastda "2 / 4". Video oynasida **ijro/pauza** tugmasi (`Space`), kadrlar böyiç
 panelidagi qoʻngʻiroq — oxirgi xabarlar tarixi ("Tozalaş" bilan). Yadroning istalgan
 joyidan `gui::notify(sarlavha, matn, rang)` bilan yuboriladi. Hozir: kiriş, fayl
 saqlaş, övoz qurilmasi yöqligi haqida.
+
+### Zamin paneli (tezkor sozlamalar)
+
+<img src="docs/panel-tezkor.png" width="640">
+
+Yuqori menyu panelidagi **karnay**, **Wi‑Fi** yoki **batareya** belgisiga bosilganda
+(yoki `Alt+Q`) öng yuqorida yumaloq burçakli panel oçiladi:
+
+- **Övoz** — balandlik slayderi (sudraş yoki bosiş, foiz körsatkiçi) va övozsiz rejim
+  tugmasi. Sozlamalar → **Övoz** bilan *bir xil* global holat işlatiladi va diskka
+  saqlanadi (`ovoz=`, `ovozsiz=`): panelda 30 % qilinsa, Sozlamalarda ham, qayta
+  yuklanişdan keyin ham 30 %.
+- **Tarmoq** — IP manzil (`/prefiks` bilan), rejim (DHCP yoki statik; ulanmagan bölsa —
+  sariq "Ulanmagan") va şlyuz; **"Tarmoq sozlamalari…"** Sozlamalar → **Tarmoq** ni oçadi
+  (Sozlamalar oçiq bölsa — old planga çiqarib, şu bölimga ötadi).
+- **Mavzu rangi** — 6 ta asosiy rang (Sozlamalar → Ekran bilan bir xil, saqlanadi).
+- **Qulflaş / Qayta yuklaş / Öçiriş** — har biri tasdiq söraydi ("Bekor qiliş" yoki
+  amal tugmasi). Qulflaş — qulf ekrani (faqat joriy foydalanuvçi, parol tekşiriladi),
+  oçilgandan keyin oynalar va sessiya joyida qoladi.
+
+Panel taşqarisiga bosilganda yoki `Esc` da yopiladi. Klaviatura: `Tab`/`Shift+Tab`,
+`↑`/`↓` — elementlar böyiça fokus, slayderda `←`/`→` — övoz ±5 %, `Enter`/`Space` —
+tanlaş, tasdiqda `Esc` — bekor qiliş. Matnlar uç tilli (tizim tili böyiça: özbekça
+yangi alifboda, русский, English).
+
+Holat belgilari endi sana uçun ajratilgan qat'iy joydan (eng keng sana kengligi) çapda
+turadi — vaqt özgarganda siljimaydi; `scripts/agent/zgeom.py` ularni (va panel
+geometriyasini) `src/gfx_font.rs` dagi şrift kengliklari orqali aniq hisoblaydi.
+Sinov (`verify.sh panel`, `full` ning bir qismi): karnay belgisi → slayder 30 % →
+Sozlamalar → Övoz da tugmaça 30 % joyida (`panel_vol.py`), diskda `ovoz=30`, qayta
+yuklanişda 30 %, `Alt+Q` → `Tab` → `←←` bilan 20 %, panel qirralari va burçaklarida
+töq piksel yöq (`check_corners.py --quick`).
 
 ### Qulf ekrani
 

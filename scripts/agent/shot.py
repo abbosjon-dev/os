@@ -71,13 +71,14 @@ def waitfor(subs,t=50):
 def send(x): os.write(fd,x.encode()); time.sleep(0.2)
 if FRESH:
     waitfor(["Choose your language"],150 if VPS else 70)
-    send("3\n"); waitfor(["full name"],25)
-    send("Test User\n"); waitfor(["Username","sername","Login:"],25)
-    send("test\n"); waitfor(["Password:"],25)
-    send("pass1234\n"); waitfor(["Repeat","epeat"],25)
+    # SETUP_LANG: 1 — özbekça, 2 — русский, 3 — English (standart)
+    send(os.environ.get("SETUP_LANG","3")+"\n"); waitfor(["full name","ismingiz"],25)
+    send("Test User\n"); waitfor(["Username","sername","Login:","login"],25)
+    send("test\n"); waitfor(["Password:","Parol:"],25)
+    send("pass1234\n"); waitfor(["Repeat","epeat","takrorlang"],25)
     send("pass1234\n")
 else:
-    if waitfor(["Password","assword"],150 if VPS else 70): send("pass1234\n")
+    if waitfor(["Password","assword","Parol"],150 if VPS else 70): send("pass1234\n")
 # give GUI time to render
 for _ in range(60): pump(0.25)
 time.sleep(6)
@@ -91,8 +92,8 @@ def qcmd(c):
     qf.write(json.dumps(c)+"\n"); qf.flush(); return qf.readline()
 def move(x,y):
     qcmd({"execute":"input-send-event","arguments":{"events":[
-      {"type":"abs","data":{"axis":"x","value":int(x*32768/SW)}},
-      {"type":"abs","data":{"axis":"y","value":int(y*32768/SH)}}]}})
+      {"type":"abs","data":{"axis":"x","value":min((int(x)*32768+SW-1)//SW,32767)}},
+      {"type":"abs","data":{"axis":"y","value":min((int(y)*32768+SH-1)//SH,32767)}}]}})
 def click(x,y):
     move(x,y); time.sleep(0.3)
     qcmd({"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":True,"button":"left"}}]}})

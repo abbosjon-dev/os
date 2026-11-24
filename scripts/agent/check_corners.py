@@ -21,6 +21,10 @@ check_corners.py --gop KERNEL CHIQISH_PAPKA [-v]
   yarim aylantirilgan), zamin://bezak va zamin://overflow — 1280x800 (ramfb fw_cfg orqali qayta
   sozlangan: qator qadami 1344 piksel, RGBX) va 1024x768 (EDK2 ning o'z ramfb rejimi, BGRX,
   -cpu neoverse-n1) ekranlarida suratga olinadi va tekshiriladi. UEFI firmware bo'lmasa — SKIP (0).
+check_corners.py --quick surat.png [-v]
+  Zamin paneli (tezkor sozlamalar, gui.rs quick_geo): panel tö'g'ri to'rtburçagi zgeom.py dan
+  ("quick"), radius u*3/4. Har burçak yoyi va qirralar böylab AA piksellar içkaridagi panel
+  foni va taşqaridagi (soya bilan) fon rangidan to'qroq bölmasligi tekşiriladi.
 Chiqish kodi 0 — toza; 1 — nuqson topildi (yoki birorta burchak tekshirilmadi).
 """
 import os
@@ -210,7 +214,70 @@ def gop_main(args, verbose):
     return 0
 
 
+def quick_main(path, verbose):
+    """Zamin paneli qirralari va burçaklarida to'q (tişça) piksel yöqligini tekşiradi."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import zgeom
+    im = np.asarray(Image.open(path).convert("RGB")).astype(int)
+    H, W = im.shape[:2]
+    lum = im.sum(axis=2)
+    g = zgeom.metrics(W, H)
+    x, y, w, h = g["quick"]
+    r = g["u"] * 3 // 4
+    x1, y1 = x + w - 1, y + h - 1
+    if x1 >= W or y1 >= H:
+        print("NUQSON: panel ekrandan taşqarida", (x, y, w, h))
+        return 1
+    panel = int(np.median(lum[y + r:y + r * 2, x + r:x + r * 2]))
+    if panel > 200:
+        print("NUQSON: panel topilmadi (foni yorug': %d)" % panel)
+        return 1
+    bad = []
+
+    def lv(px, py):
+        return lum[min(max(py, 0), H - 1), min(max(px, 0), W - 1)]
+
+    def test(px, py, ox, oy, ix, iy):
+        # (px,py) — qirra pikseli; (ox,oy) — taşqaridagi, (ix,iy) — içkaridagi namuna
+        lo = min(lv(ox, oy), lv(ix, iy), panel) - 3 * TOL
+        if lum[py, px] < lo:
+            bad.append((px, py, int(lum[py, px]), int(lo)))
+
+    n = 0
+    # burçaklar: yoy markazi (ccx, ccy), yönalişi (sx, sy)
+    for (ccx, ccy, sx, sy) in ((x + r, y + r, -1, -1), (x1 - r, y + r, 1, -1), (x + r, y1 - r, -1, 1), (x1 - r, y1 - r, 1, 1)):
+        for dy in range(0, r + 3):
+            for dx in range(0, r + 3):
+                px, py = ccx + sx * dx, ccy + sy * dy
+                d = (dx * dx + dy * dy) ** 0.5
+                if not (r - 2.5 <= d <= r + 1.0) or d == 0:
+                    continue
+                ux, uy = dx / d, dy / d
+                ox, oy = int(round(ccx + sx * ux * (r + 3))), int(round(ccy + sy * uy * (r + 3)))
+                ix, iy = int(round(ccx + sx * ux * (r - 4))), int(round(ccy + sy * uy * (r - 4)))
+                test(px, py, ox, oy, ix, iy)
+                n += 1
+        if verbose:
+            print("BURCHAK", ccx + sx * r, ccy + sy * r, -sx, -sy)
+    # tög'ri qirralar (burçaklar orasida)
+    for px in range(x + r, x1 - r + 1, 2):
+        test(px, y, px, y - 3, px, y + 4)
+        test(px, y1, px, y1 + 3, px, y1 - 4)
+        n += 2
+    for py in range(y + r, y1 - r + 1, 2):
+        test(x, py, x - 3, py, x + 4, py)
+        test(x1, py, x1 + 3, py, x1 - 4, py)
+        n += 2
+    for b in bad[:10]:
+        print("NUQSON: to'q piksel (%d,%d) yorug'lik %d < %d" % b)
+    print("panel %s, fon %d, tekşirilgan piksellar: %d, nuqsonli: %d" % ((x, y, w, h), panel, n, len(bad)))
+    return 1 if bad else 0
+
+
 def main():
+    if "--quick" in sys.argv[1:]:
+        args = [a for a in sys.argv[1:] if a not in ("-v", "--quick")]
+        sys.exit(quick_main(args[0], "-v" in sys.argv[1:]))
     if "--gop" in sys.argv[1:]:
         args = [a for a in sys.argv[1:] if a not in ("-v", "--gop")]
         sys.exit(gop_main(args, "-v" in sys.argv[1:]))
