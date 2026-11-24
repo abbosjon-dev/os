@@ -48,6 +48,9 @@ pub struct AcpiInfo {
     pub ntables: u32,
     pub bad_checksum: u32,
     pub sigs: [[u8; 4]; MAX_TABLES],
+    /// Ildiz jadval (XSDT/RSDT) OEM ID si ("BOCHS " — QEMU).
+    pub oem: [u8; 6],
+    pub _pad2: [u8; 2],
 }
 
 impl AcpiInfo {
@@ -73,6 +76,8 @@ impl AcpiInfo {
         ntables: 0,
         bad_checksum: 0,
         sigs: [[0; 4]; MAX_TABLES],
+        oem: [0; 6],
+        _pad2: [0; 2],
     };
 
     pub fn has(&self, sig: &[u8; 4]) -> bool {
@@ -130,6 +135,9 @@ pub fn scan(rsdp: usize) -> Option<AcpiInfo> {
     let (root, entry) = if xsdt != 0 { (xsdt, 8) } else { (rd_u32(rsdp + 16) as usize, 4) };
     a.xsdt = (entry == 8) as u8;
     let root_len = table_len(root)?;
+    for (k, b) in a.oem.iter_mut().enumerate() {
+        *b = rd_u8(root + 10 + k);
+    }
     if !checksum_ok(root, root_len) {
         a.bad_checksum += 1; // davom etamiz: ba'zi firmware lar xato checksum bilan keladi
     }

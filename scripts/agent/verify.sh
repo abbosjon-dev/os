@@ -411,6 +411,14 @@ PY
 done
 echo "[ok] burchaklar: ${#SHOTS[@]} surat toza (1280x800, 1024x768, 1920x1080$([ -n "$VPS_FW" ] && echo ", VPS UEFI+ACPI+GICv3 1920x1080"))"
 
+# --- Yumaloq burçaklar: UEFI GOP zaxira ekrani (ramfb, virtio-gpu yöq): 1280x800 (fw_cfg, qadam
+#     1344, RGBX) va 1024x768 (EDK2 ramfb, BGRX, -cpu neoverse-n1); firmware bölmasa — SKIP ---
+GDIR="$LOG_DIR/corners-gop"
+python3 scripts/agent/check_corners.py --gop "$KERNEL" "$GDIR" >"$GDIR.txt" 2>&1; rc=$?
+tail -1 "$GDIR.txt"
+[ $rc -eq 0 ] || { grep -m3 -E "NUQSON|FAIL" "$GDIR.txt"; exit 1; }
+[ -s "$GDIR/gop-1280x800_bezak.png" ] && cp "$GDIR/gop-1280x800_bezak.png" docs/web-corners-gop.png
+
 # --- Statik IPv4 (Sozlamalar → Tarmoq) ---
 net_test || exit 1
 

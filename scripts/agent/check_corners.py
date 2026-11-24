@@ -16,6 +16,11 @@ Bloklar qanday topiladi (rang ro'yxati sahifa bo'yicha avtomatik aniqlanadi):
 Foydalanish: check_corners.py surat.png [x0 y0 x1 y1] [-v]   (sahifa sohasi;
   berilmasa — surat ölçamiga qarab zgeom.py dan: 1024x768, 1280x800, 1920x1080, ...)
   -v — topilgan bloklar va tekshirilgan burchaklar ro'yxati ("BURCHAK x y sx sy").
+check_corners.py --gop KERNEL CHIQISH_PAPKA [-v]
+  UEFI GOP zaxira ekrani yo'li (virtio-gpu yo'q, QEMU -device ramfb): zamin://matn (boshi va
+  yarim aylantirilgan), zamin://bezak va zamin://overflow — 1280x800 (ramfb fw_cfg orqali qayta
+  sozlangan: qator qadami 1344 piksel, RGBX) va 1024x768 (EDK2 ning o'z ramfb rejimi, BGRX,
+  -cpu neoverse-n1) ekranlarida suratga olinadi va tekshiriladi. UEFI firmware bo'lmasa — SKIP (0).
 Chiqish kodi 0 — toza; 1 — nuqson topildi (yoki birorta burchak tekshirilmadi).
 """
 import os
@@ -145,7 +150,70 @@ def check(img, area, verbose=False):
     return bad, checked
 
 
+# GOP rejimi: (nom, shot.py --gop spetsifikatsiyasi, CPU)
+GOP_CFGS = [("gop-1280x800", "1280x800@1344:rgbx", "max"), ("gop-1024x768", "1024x768", "neoverse-n1")]
+GOP_FW = ("/usr/share/qemu-efi-aarch64/QEMU_EFI.fd", "/usr/share/AAVMF/AAVMF_CODE.fd")
+
+
+def gop_main(args, verbose):
+    import re
+    import subprocess
+    kernel, out = args[0], args[1]
+    if not any(os.path.exists(f) for f in GOP_FW):
+        print("SKIP burchaklar (GOP): UEFI firmware yöq")
+        return 0
+    os.makedirs(out, exist_ok=True)
+    here = os.path.dirname(os.path.abspath(__file__))
+    m = "m,@park;w,1"
+    clicks = (f"@browser;w,2;@max;w,1;u,zamin://matn;{m};snap,matn;m,@center;wd,8;{m};snap,matn2;"
+              f"u,zamin://bezak;{m};snap,bezak;u,zamin://overflow;{m}")
+    bad = total = 0
+    for name, spec, cpu in GOP_CFGS:
+        png = os.path.join(out, name + ".png")
+        for f in os.listdir(out):
+            if f.startswith(name):
+                os.remove(os.path.join(out, f))
+        env = dict(os.environ, CLICKS=clicks)
+        with open(os.path.join(out, f"shot-{name}.log"), "wb") as lf:
+            subprocess.run([sys.executable, os.path.join(here, "shot.py"), kernel, png, "fresh", f"--gop={spec}", f"--cpu={cpu}"],
+                           env=env, stdout=lf, stderr=subprocess.STDOUT, timeout=600)
+        log = open(png + ".log", "rb").read().decode("utf8", "replace") if os.path.exists(png + ".log") else ""
+        w, h = map(int, spec.split("@")[0].split(":")[0].split("x"))
+        if f"[gpu ] UEFI GOP: {w}x{h}" not in log or "virtio-gpu" in log:
+            print(f"FAIL burchaklar (GOP): {name} — ekran GOP framebufferida {w}x{h} ölçamda işga tuşmadi")
+            return 1
+        if ":" in spec and not re.search(rf"ramfb: qayta sozlandi {w}x{h}, format RGBX, qator \d+", log):
+            print(f"FAIL burchaklar (GOP): {name} — ramfb qayta sozlanmadi (fw_cfg)")
+            return 1
+        for f in (png.replace(".png", "_matn.png"), png.replace(".png", "_matn2.png"), png.replace(".png", "_bezak.png"), png):
+            if not os.path.exists(f):
+                print(f"FAIL burchaklar (GOP): surat olinmadi ({f})")
+                return 1
+            img = np.asarray(Image.open(f).convert("RGB")).astype(np.int32)
+            if (img.shape[1], img.shape[0]) != (w, h):
+                print(f"FAIL burchaklar (GOP): {os.path.basename(f)} ölçami {img.shape[1]}x{img.shape[0]} (kutilgan {w}x{h})")
+                return 1
+            sys.path.insert(0, here)
+            import zgeom
+            print(f"{os.path.basename(f)}: ", end="")
+            b, c = check(img, zgeom.metrics(w, h)["area"], verbose)
+            bad += b
+            total += c
+            if c == 0:
+                print(f"FAIL burchaklar (GOP): {os.path.basename(f)} — birorta burchak tekşirilmadi")
+                return 1
+    if bad:
+        print(f"FAIL burchaklar (GOP): {bad} ta nuqsonli burchak")
+        return 1
+    print(f"OK burchaklar (GOP): ramfb 1280x800 (qadam 1344, RGBX) va 1024x768 (BGRX, neoverse-n1) — "
+          f"matn/bezak/overflow, {total} burchak, to'q piksel 0")
+    return 0
+
+
 def main():
+    if "--gop" in sys.argv[1:]:
+        args = [a for a in sys.argv[1:] if a not in ("-v", "--gop")]
+        sys.exit(gop_main(args, "-v" in sys.argv[1:]))
     args = [a for a in sys.argv[1:] if a != "-v"]
     verbose = "-v" in sys.argv[1:]
     img = np.asarray(Image.open(args[0]).convert("RGB")).astype(np.int32)

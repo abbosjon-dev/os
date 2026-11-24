@@ -2,17 +2,25 @@ import os,sys,pty,time,select,socket,json,subprocess
 # Foydalanish: shot.py KERNEL OUT.png [fresh] [--size WxH] [--vps]
 #   --size WxH — virtio-gpu ekran ölçami (xres/yres; yadro GET_DISPLAY_INFO orqali oladi)
 #   --vps      — Netcup VPS yöli: UEFI (BOOTAA64.EFI) + ACPI + GICv3 + virtio-*-pci
+#   --cpu=NOM  — VPS yölida QEMU CPU modeli (masalan neoverse-n1)
+#   --gop[=WxH[@qadam][:rgbx]] — VPS yöli, lekin virtio-gpu örniga ramfb (UEFI GOP framebufferi)
 #   CLICKS dagi "@nom" (browser, max, addr, home, center, park) — zgeom.py dan, ekran ölçamiga qarab;
 #   "u,URL" — manzil satriga URL yozib öçiş; "t,MATN" — yoziş; "bs,N" — N marta Backspace;
 #   "kp,tab" — bitta tugma (QEMU qcode).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import zgeom
-argv=[]; SW,SH=1280,800; VPS=False
+argv=[]; SW,SH=1280,800; VPS=False; GOP=None; CPU="max"
 _a=iter(sys.argv[1:])
 for x in _a:
     if x=="--size": SW,SH=map(int,next(_a).lower().split("x"))
     elif x.startswith("--size="): SW,SH=map(int,x[7:].lower().split("x"))
     elif x=="--vps": VPS=True
+    elif x.startswith("--cpu="): CPU=x[6:]
+    elif x=="--gop" or x.startswith("--gop="):
+        # GOP zaxira ekrani: virtio-gpu yöq, -device ramfb (UEFI GOP); "=WxH[@qadam][:rgbx]" —
+        # yadro ramfb ni fw_cfg orqali şu ölçam / qator qadami / formatga qayta sozlaydi
+        VPS=True; GOP=x[6:] if x.startswith("--gop=") else "1024x768"
+        SW,SH=map(int,GOP.split("@")[0].split(":")[0].lower().split("x"))
     else: argv.append(x)
 KERNEL=os.path.abspath(argv[0]); OUT=argv[1]; FRESH=len(argv)>2 and argv[2]=="fresh"
 GEO=zgeom.metrics(SW,SH)
@@ -31,10 +39,11 @@ if VPS:
     esp="/tmp/claude-0/shot-esp.img"
     here=os.path.dirname(os.path.abspath(__file__))
     subprocess.run(["sh",os.path.join(here,"..","efi","mkesp.sh"),KERNEL,esp],check=True,stdout=subprocess.DEVNULL)
-    cmd=["qemu-system-aarch64","-machine","virt,gic-version=3","-cpu","max","-smp","4","-m","1G","-bios",fw,
+    cmd=["qemu-system-aarch64","-machine","virt,gic-version=3","-cpu",CPU,"-smp","4","-m","1G","-bios",fw,
       "-drive",f"file={esp},if=none,format=raw,id=esp","-device","virtio-blk-pci,drive=esp,bootindex=0",
       "-drive",f"file={disk},if=none,format=raw,id=s","-device","virtio-blk-pci,drive=s",
-      "-device",f"virtio-gpu-pci,{RES}","-device","virtio-keyboard-pci","-device","virtio-tablet-pci","-display","none",
+      *(["-device","ramfb","-fw_cfg",f"name=opt/zamin/ramfb,string={GOP}"] if GOP else ["-device",f"virtio-gpu-pci,{RES}"]),
+      "-device","virtio-keyboard-pci","-device","virtio-tablet-pci","-display","none",
       "-device","virtio-rng-pci","-nic","user,model=virtio-net-pci","-qmp",f"unix:{QMP},server,nowait",
       "-serial","mon:stdio"]
 else:

@@ -313,6 +313,24 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   ![Yumaloq burchaklar: zamin://matn](docs/web-text-align.png)
   ![zamin://matn, 1920×1080](docs/web-corners-1920.png)
 
+  **GOP zaxira ekrani yölida ham** (virtio-gpu yöq, QEMU `-device ramfb`, UEFI + ACPI):
+  `check_corners.py --gop KERNEL PAPKA` zamin://matn (boşi va yarim aylantirilgan),
+  zamin://bezak va zamin://overflow ni ikki ekranda suratga olib tekşiradi — **1280×800**,
+  qator qadami 1344 piksel (`stride != width`), **RGBX** bayt tartibi, `-cpu max`; va
+  **1024×768** (EDK2 ning öz ramfb rejimi), **BGRX**, `-cpu neoverse-n1`. EDK2 ramfb faqat
+  640×480 / 800×600 / 1024×768 beradi, şuning uçun QEMU ga `-fw_cfg
+  name=opt/zamin/ramfb,string=1280x800@1344:rgbx` berilsa yadro (`src/drivers/fwcfg.rs`)
+  ramfb ni fw_cfg DMA orqali (`etc/ramfb`, DRM `XB24`/`XR24`) öziga ajratilgan yangi buferga
+  qayta sozlaydi va GOP örniga uni işlatadi (jurnal: `ramfb: qayta sozlandi 1280x800, format
+  RGBX, qator 1344 piksel`). fw_cfg faqat DTB dagi `qemu,fw-cfg-mmio` yoki ACPI OEM ID
+  `BOCHS ` (QEMU) bölsa, "QEMU" imzosi va DMA imkoniyati tekşirilgandan keyin işlatiladi;
+  fayl bölmasa (haqiqiy VPS) hech narsa özgarmaydi. Natija: 232 burçak, to'q piksel 0 —
+  `fb.rs` dagi köçiriş (qator qadami, R/B almaştiriş) burçak AA piksellarini buzmaydi.
+  `verify.sh full` ga ulangan (UEFI firmware bölmasa — SKIP); spetsifikatsiya tahlili
+  self-testda (`[ok] ramfb spetsifikatsiyasi`).
+
+  ![GOP (ramfb) 1280×800, RGBX, qadam 1344: zamin://bezak](docs/web-corners-gop.png)
+
   ![Aylantirilgan holat: pastdan kesilgan flex/rtl bloklar](docs/web-round-scroll.png)
 - **Ichma-ich blok konteynerlari** — ota blokning foni, chegarasi, padding'i va soyasi endi bola
   bloklarni haqiqatan o'rab oladi (karta ichida karta, sidebar ichidagi bloklar). `html::Block`

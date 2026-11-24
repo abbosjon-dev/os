@@ -84,7 +84,18 @@ fn in_clip(x: usize, y: usize) -> bool {
 pub fn init(width: u32, height: u32) -> bool {
     let dev = gpu::init(width, height).or_else(|| {
         let e = crate::efi::boot_info()?;
-        crate::drivers::fb::init(e.gop()?, (e.ram_lo as usize, e.ram_hi as usize))
+        // QEMU sinovi: opt/zamin/ramfb bölsa — ramfb boşqa ölçam / qadam / formatda (fwcfg.rs)
+        let g = match crate::drivers::fwcfg::ramfb_override() {
+            Some(g) => {
+                crate::println!(
+                    "  ramfb: qayta sozlandi {}x{}, format {}, qator {} piksel, framebuffer {:#x}",
+                    g.width, g.height, if g.format == crate::efi::GOP_RGBX { "RGBX" } else { "BGRX" }, g.stride, g.base
+                );
+                g
+            }
+            None => *e.gop()?,
+        };
+        crate::drivers::fb::init(&g, (e.ram_lo as usize, e.ram_hi as usize))
     });
     match dev {
         Some((w, h, fb)) => {

@@ -133,6 +133,12 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
                 g.stride, g.base, g.size / 1024, g.mode, g.max_mode
             );
         }
+        // QEMU fw_cfg (sinov: ramfb ni boşqa ölçam / qator qadami / RGBX ga qayta sozlaş)
+        let fw = fdt.as_ref().and_then(|f| f.find_compatible("qemu,fw-cfg-mmio")).filter(|n| n.nreg > 0).map(|n| n.reg[0].0 as usize);
+        let fw = fw.or_else(|| e.acpi().filter(|a| &a.oem == b"BOCHS ").map(|_| drivers::fwcfg::VIRT_BASE));
+        if let Some(b) = fw {
+            drivers::fwcfg::configure(b);
+        }
         if let Some(a) = e.acpi() {
             acpi::report(a, |l| println!("{}", l));
             println!("  ACPI → DTB: taymer INTID {}, PSCI CPU_ON uçun {} ta MPIDR", timer::irq(), fdt.map_or(0, |f| f.cpus().1));
@@ -659,6 +665,10 @@ fn self_tests() {
     match css::self_test_vars() {
         Ok(n) => println!("  [ok] CSS maxsus xossalar var(--x) (zaxira, meros, sikl) va calc() ({} sinov)", n),
         Err(e) => panic!("CSS var()/calc() tekşiruvi yiqildi: {}", e),
+    }
+    match drivers::fwcfg::self_test() {
+        Ok(n) => println!("  [ok] ramfb spetsifikatsiyasi (WxH@qadam:format) tahlili ({} sinov)", n),
+        Err(e) => panic!("ramfb tekşiruvi yiqildi: {}", e),
     }
     match css::self_test_selectors() {
         Ok(n) => println!("  [ok] CSS tanlagiçlar: > + ~, [atribut], :nth-child(an+b), :last-child, :not(), specificity ({} sinov)", n),

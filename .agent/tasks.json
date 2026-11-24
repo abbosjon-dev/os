@@ -342,7 +342,9 @@
       "id": "T43",
       "title": "Yumaloq burchaklar: zamin://matn ni UEFI GOP framebuffer (ramfb, BGRX/RGBX) yo'lida va -cpu neoverse-n1 da qayta tekshirish va qolgan tishch",
       "detail": "Nima uchun: GOP zaxira ekrani (0.0.32) burchaklar oxirgi marta tekshirilgandan keyin qo'shilgan. Uning chizish yo'lida (src/drivers/fb.rs, src/gfx/mod.rs: BGRX/RGBX piksel almashtirish, qator qadami stride != width*4) blok chetlarida qora 'tishchalar' qaytib chiqishi mumkin. Fayllar: scripts/agent/check_corners.py (GOP rejimi qo'shiladi: QEMU -device ramfb, virtio-gpu yo'q, vps_gop.py dagi kabi UEFI), scripts/agent/vps_gop.py, src/drivers/fb.rs, src/gfx/mod.rs (burchak qamrovi va alfa aralashtirish). Agar stride yoki bayt tartibi tufayli chetda to'q piksel chiqsa, chizish yo'lini tuzating. Qabul mezoni: check_corners.py --gop zamin://matn, zamin://bezak va zamin://overflow sahifalarida 1280×800 va 1024×768 ekranda yumaloq burchak atrofida to'q piksel 0 ta. Bu holat verify.sh full ga ulanadi; UEFI firmware bo'lmasa SKIP. Skrinshot: docs/web-corners-gop.png.",
-      "batch": 7
+      "batch": 7,
+      "status": "done",
+      "done_at": "2026-11-24 01:32:41"
     },
     {
       "id": "T44",
