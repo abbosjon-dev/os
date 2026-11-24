@@ -9750,7 +9750,19 @@ fn web_bytes(url: &str, post: Option<&str>) -> Result<(Vec<u8>, String, String),
         return Ok((history_page().into_bytes(), String::from("text/html"), String::from(url)));
     }
     if let Some(src) = builtin_page(url) {
-        return Ok((Vec::from(src.as_bytes()), String::from("text/html"), String::from(url)));
+        let mut b = Vec::from(src.as_bytes());
+        // ?fon=RGB yoki ?fon=RRGGBB — sinov sahifasini boşqa sahifa foni ustida körsatiş
+        // (masalan, zamin://matn?fon=111 — qorong'i fondagi yumaloq burçaklar tekşiruvi)
+        if let Some(f) = url.split(['?', '&']).find_map(|p| p.strip_prefix("fon=")) {
+            let f = f.split('#').next().unwrap_or("");
+            if (f.len() == 3 || f.len() == 6) && f.bytes().all(|c| c.is_ascii_hexdigit()) {
+                let h = |i: usize| u32::from_str_radix(&f[i..i + 1], 16).unwrap_or(0);
+                let c = if f.len() == 3 { h(0) * 17 << 16 | h(1) * 17 << 8 | h(2) * 17 } else { u32::from_str_radix(f, 16).unwrap_or(0) };
+                let ink = if luma(c) < 128 { "e6e9ef" } else { "1a2233" };
+                b.extend_from_slice(alloc::format!("<style>body{{background:#{};color:#{}}}</style>", f, ink).as_bytes());
+            }
+        }
+        return Ok((b, String::from("text/html"), String::from(url)));
     }
     if url == "zamin://namuna.wav" {
         return Ok((Vec::from(crate::audio::SAMPLE_WAV), String::from("audio/wav"), String::from(url)));

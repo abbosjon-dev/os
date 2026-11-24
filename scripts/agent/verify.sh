@@ -471,6 +471,60 @@ PY
 done
 echo "[ok] burchaklar: ${#SHOTS[@]} surat toza (1280x800, 1024x768, 1920x1080$([ -n "$VPS_FW" ] && echo ", VPS UEFI+ACPI+GICv3 1920x1080"))"
 
+# --- Yumaloq burçaklar: qorong'i holat (T49). Zamin paneli orqali mavzu rangi almaştiriladi,
+#     keyin zamin://matn va zamin://bezak qorong'i sahifa fonida (?fon=111 → body{background:#111},
+#     gui.rs luma<128 yöli) va taqqoslaş uçun och fonda (?fon=fff, zamin://bezak) suratga olinadi.
+#     check_corners.py --strict: burçakdagi 3x3 piksel sahifa foni va blok rangidan to'q emas,
+#     yumaloq burçakning çetki pikseli taşqi fondan 8 birlikdan köp farq qilmaydi ---
+DDIR="$LOG_DIR/corners-dark"; mkdir -p "$DDIR"; rm -f "$DDIR"/*.png "$DDIR"/*.txt
+CLICKS="w,2;@spk;w,1;@qacc4;w,1;snap,panel;kp,esc;w,1;@browser;w,2;@max;w,1;u,zamin://matn?fon=111;$M;snap,qmatn;m,@center;wd,26;$M;snap,qmatn2;u,zamin://bezak?fon=111;$M;snap,qbezak;u,zamin://matn?fon=fff;m,@center;wd,26;$M;snap,omatn2;u,zamin://bezak;$M" \
+    timeout 400 python3 scripts/agent/shot.py "$KERNEL" "$DDIR/obezak.png" fresh >"$DDIR/shot.log" 2>&1
+DSHOTS=("$DDIR/obezak_qmatn.png:qorong'i" "$DDIR/obezak_qmatn2.png:qorong'i" "$DDIR/obezak_qbezak.png:qorong'i"
+        "$DDIR/obezak_omatn2.png:och" "$DDIR/obezak.png:och")
+NBAD=0; NDARK=0
+for e in "${DSHOTS[@]}"; do
+    f=${e%%:*}; kind=${e##*:}
+    [ -s "$f" ] || { echo "FAIL burçaklar (qorong'i): surat olinmadi ($f, qarang $DDIR/shot.log)"; exit 1; }
+    if ! python3 scripts/agent/check_corners.py --strict "$f" >"$f.txt" 2>&1; then
+        NBAD=$((NBAD + 1)); echo "  $(basename "$f") [$kind]: $(grep -m2 -E 'NUQSON|burchaklar' "$f.txt" | tr '\n' ' ')"
+    fi
+    # sahifa foni (check_corners.py: sahifa çap çetidagi eng köp rang) va qat'iy tekşirilgan burçaklar
+    if [ "$kind" = "qorong'i" ]; then
+        grep -q "^fon #111111," "$f.txt" || { echo "FAIL burçaklar (qorong'i): $(basename "$f") sahifa foni #111 emas ($(grep -m1 '^fon' "$f.txt"))"; exit 1; }
+        NDARK=$((NDARK + 1))
+    fi
+    grep -qE "qat'iy: [1-9]" "$f.txt" || { echo "FAIL burçaklar (qorong'i): $(basename "$f") — birorta burçak qat'iy tekşirilmadi"; exit 1; }
+done
+[ "$NBAD" -eq 0 ] || { echo "FAIL burçaklar (qorong'i): $NBAD surat nuqsonli (qarang $DDIR)"; exit 1; }
+# mavzu rangi haqiqatan almaştirilgan (panel surati: 5-namuna tanlangan, oq halqa)
+python3 - "$DDIR/obezak_panel.png" <<'PY' || { echo "FAIL burçaklar (qorong'i): Zamin panelida mavzu rangi tanlanmadi"; exit 1; }
+import sys; sys.path.insert(0, "scripts/agent")
+import zgeom
+from PIL import Image
+im = Image.open(sys.argv[1]).convert("RGB"); g = zgeom.metrics(*im.size)
+x, y = g["qacc4"]; r = g["u"] * 5 // 8
+ring = [im.getpixel((x + dx, y)) for dx in range(r - 3, r + 1)] + [im.getpixel((x - dx, y)) for dx in range(r - 3, r + 1)]
+sys.exit(0 if any(min(p) > 200 for p in ring) else 1)
+PY
+# o'z-o'zini sinaş: qorong'i suratdagi yumaloq burçakning çetki pikseli yarim aralaştiriladi —
+# qat'iy tekşiruv 1 qaytarişi şart
+python3 - "$DDIR/obezak_qbezak.png" "$DDIR/selftest.png" <<'PY' || { echo "FAIL burçaklar (qorong'i): o'z-o'zini sinaş surati yasalmadi"; exit 1; }
+import subprocess, sys
+from PIL import Image
+out = subprocess.run([sys.executable, "scripts/agent/check_corners.py", sys.argv[1], "-v"], capture_output=True, text=True).stdout
+ln = next(l for l in out.splitlines() if l.startswith("BURCHAK"))
+cx, cy, sx, sy = map(int, ln.split()[1:5])
+im = Image.open(sys.argv[1]).convert("RGB")
+a, b = im.getpixel((cx, cy)), im.getpixel((cx + 8 * sx, cy + 8 * sy))
+im.putpixel((cx, cy), tuple((p + q) // 2 for p, q in zip(a, b)))
+im.save(sys.argv[2])
+PY
+python3 scripts/agent/check_corners.py --strict "$DDIR/selftest.png" >"$DDIR/selftest.txt" 2>&1; st=$?
+[ $st -eq 1 ] || { echo "FAIL burçaklar (qorong'i): yarim aralaşgan burçak pikseli tekşiruvdan ötib ketdi (kod $st)"; exit 1; }
+cp "$DDIR/obezak_qmatn2.png" docs/corners-dark.png
+cp "$DDIR/obezak_omatn2.png" docs/corners-light.png
+echo "[ok] burchaklar (qorong'i): $NDARK qorong'i (#111, panel orqali mavzu rangi) + $((${#DSHOTS[@]} - NDARK)) och surat, qat'iy tekşiruv toza"
+
 # --- Yumaloq burçaklar: UEFI GOP zaxira ekrani (ramfb, virtio-gpu yöq): 1280x800 (fw_cfg, qadam
 #     1344, RGBX) va 1024x768 (EDK2 ramfb, BGRX, -cpu neoverse-n1); firmware bölmasa — SKIP ---
 GDIR="$LOG_DIR/corners-gop"

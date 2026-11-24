@@ -118,7 +118,7 @@ def drag(x1,y1,x2,y2):
         move(x1+(x2-x1)*k//12, y1+(y2-y1)*k//12); time.sleep(0.15)
     qcmd({"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":False,"button":"left"}}]}})
     time.sleep(1.2)
-QC={':':('semicolon',True),' ':'spc','\n':'ret','-':'minus','.':'dot','/':'slash','~':('grave_accent',True),'*':('8',True),'(':('9',True),')':('0',True),'+':('equal',True),'>':('dot',True)}
+QC={':':('semicolon',True),' ':'spc','\n':'ret','-':'minus','.':'dot','/':'slash','~':('grave_accent',True),'*':('8',True),'(':('9',True),')':('0',True),'+':('equal',True),'>':('dot',True),'?':('slash',True),'=':'equal','&':('7',True),'#':('3',True)}
 def key(code, shift=False):
     ev=[]
     if shift: ev.append({"type":"key","data":{"down":True,"key":{"type":"qcode","data":"shift"}}})

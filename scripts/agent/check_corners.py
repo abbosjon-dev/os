@@ -113,7 +113,7 @@ def find_boxes(page):
     return lum, bgl, bg, boxes
 
 
-def check(img, area, verbose=False):
+def check(img, area, verbose=False, strict=False):
     px0, py0, px1, py1 = area
     page = img[py0:py1, px0:px1]
     lum, bgl, bg, boxes = find_boxes(page)
@@ -150,8 +150,81 @@ def check(img, area, verbose=False):
                 bad += 1
                 print(f"NUQSON: blok ({x0+px0},{y0+py0})-({x1+px0},{y1+py0}) burchak ({cx+px0},{cy+py0}): "
                       f"lum {reg.min()} < ruxsat {allowed}")
-    print(f"fon #{bg:06x}, bloklar: {len(boxes)}, burchaklar: {checked}, nuqsonli: {bad}")
+            if strict:
+                bad += strict_corner(page, lum, bgl, (x0, y0, x1, y1), (cx, cy, sx, sy), min(ref), (px0, py0))
+    sn = f", qat'iy: {STRICT_N[0]}" if strict else ""
+    print(f"fon #{bg:06x}, bloklar: {len(boxes)}, burchaklar: {checked}{sn}, nuqsonli: {bad}")
     return bad, checked
+
+
+STRICT_N = [0]  # qat'iy tekşirilgan burçaklar soni
+DARK_TOL = 8   # burçakning taşqi pikseli va taşqi fon orasidagi ruxsat (kanal böyiça)
+
+
+def strict_corner(page, lum, bgl, box, corner, block_lum, off):
+    """Qat'iy (qorong'i holat) tekşiruvi bitta burçak uçun:
+      * burçakdagi 3x3 piksel sahifa (taşqi) foni va blok rangi orasida — ikkalasidan ham
+        to'qroq piksel yöq (qora/0 bilan aralaştiriş nuqsoni);
+      * yumaloq burçakda eng çetki piksel taşqi fondan DARK_TOL dan köp farq qilmaydi
+        (yarim aralaşgan "tişça" yöq); töğri burçakda u qirra rangiga teng.
+    Bir neçta niqob bloklarni topadi: çegarali qutining içki foni ham alohida blok bölib
+    çiqadi, şuning uçun burçak avval haqiqiy taşqi qirragaça (<= 5 px) aniqlaştiriladi.
+    Taşqi fon — burçakdan diagonal taşqaridagi piksel (soya bölsa, soya bilan)."""
+    x0, y0, x1, y1 = box
+    cx, cy, sx, sy = corner
+    H, W = lum.shape
+    d = min(12, (x1 - x0) // 2, (y1 - y0) // 2)
+
+    def px(x, y):
+        return page[y, x].astype(int) if 0 <= x < W and 0 <= y < H else None
+
+    def near(a, b, tol=DARK_TOL):
+        return a is not None and b is not None and int(np.abs(a - b).max()) <= tol
+
+    # haqiqiy qirra: qirra örtasidagi qator/ustun böylab taşqariga, taşqi namunaga teng bölguncha
+    def walk(fx, fy, ax, ay):
+        # (fx, fy) — bbox qirrasi pikseli, (ax, ay) — taşqariga qadam
+        out = px(fx + ax * 6, fy + ay * 6)
+        for k in range(0, 6):
+            if near(px(fx + ax * (k + 1), fy + ay * (k + 1)), out) and not near(px(fx + ax * k, fy + ay * k), out):
+                return k
+        return None
+    kx = walk(cx, cy + sy * d, -sx, 0)
+    ky = walk(cx + sx * d, cy, 0, -sy)
+    if kx is None or ky is None:
+        return 0
+    cx, cy = cx - sx * kx, cy - sy * ky
+    # quti emas (masalan, och matn harflari): ikkala qirra burçakdan d..d+10 oraliğida töğri va bir
+    # rangli bölişi şart (gradient sekin özgaradi — 24 birlik ruxsat)
+    for (ax, ay) in ((sx, 0), (0, sy)):
+        e0 = px(cx + ax * d, cy + ay * d)
+        if any(not near(px(cx + ax * (d + k), cy + ay * (d + k)), e0, 24) for k in range(1, 11)):
+            return 0
+    ox, oy = cx - sx, cy - sy
+    outp = px(ox, oy)
+    if outp is None:
+        return 0
+    STRICT_N[0] += 1
+    # blok rangi: içki fon va qirra (çegara bölsa — çegara rangi) — qaysi biri to'qroq
+    edge_l = [int(e.sum()) for e in (px(cx + sx * d, cy), px(cx, cy + sy * d)) if e is not None]
+    lo = min([int(lum[oy, ox]), bgl, int(block_lum)] + edge_l) - TOL
+    reg = lum[min(cy, cy + sy * 2):max(cy, cy + sy * 2) + 1, min(cx, cx + sx * 2):max(cx, cx + sx * 2) + 1]
+    n = 0
+    tag = f"blok ({x0+off[0]},{y0+off[1]})-({x1+off[0]},{y1+off[1]}) burçak ({cx+off[0]},{cy+off[1]})"
+    if reg.min() < lo:
+        n += 1
+        print(f"NUQSON (qat'iy): {tag} 3x3: lum {reg.min()} < {lo} (fon va blokdan to'q)")
+    # töğri burçak: çetki piksel qirra rangiga teng (qirra boyidagi eng taşqi qator/ustun)
+    cp = px(cx, cy)
+    square = near(cp, px(cx + sx * d, cy)) or near(cp, px(cx, cy + sy * d))
+    # kiçik radius (<= 3 px): çetki piksel qonuniy ravişda qisman qamrovli — faqat 3x3 tekşiruvi
+    small = near(px(cx + sx * 2, cy), px(cx + sx * d, cy), 24) or near(px(cx, cy + sy * 2), px(cx, cy + sy * d), 24)
+    diff = int(np.abs(cp - outp).max())
+    if not square and not small and diff > DARK_TOL:
+        n += 1
+        print(f"NUQSON (qat'iy): {tag}: çetki piksel {tuple(int(v) for v in cp)} taşqi fon "
+              f"{tuple(int(v) for v in outp)} dan {diff} farq qiladi")
+    return n
 
 
 # GOP rejimi: (nom, shot.py --gop spetsifikatsiyasi, CPU)
@@ -281,8 +354,9 @@ def main():
     if "--gop" in sys.argv[1:]:
         args = [a for a in sys.argv[1:] if a not in ("-v", "--gop")]
         sys.exit(gop_main(args, "-v" in sys.argv[1:]))
-    args = [a for a in sys.argv[1:] if a != "-v"]
+    args = [a for a in sys.argv[1:] if a not in ("-v", "--strict")]
     verbose = "-v" in sys.argv[1:]
+    strict = "--strict" in sys.argv[1:]
     img = np.asarray(Image.open(args[0]).convert("RGB")).astype(np.int32)
     if len(args) >= 5:
         area = tuple(map(int, args[1:5]))
@@ -291,7 +365,7 @@ def main():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import zgeom
         area = zgeom.metrics(img.shape[1], img.shape[0])["area"]
-    bad, checked = check(img, area, verbose)
+    bad, checked = check(img, area, verbose, strict)
     sys.exit(1 if bad or checked == 0 else 0)
 
 

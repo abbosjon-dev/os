@@ -142,6 +142,10 @@ def metrics(w, h):
     theme_y = ly + bh + u * 2 // 3 + u // 2
     sy2 = theme_y + sm + u // 2
     d = u * 5 // 4
+    iw = pw - u * 2
+    gap = max(iw - d * 6, 0) // 5
+    for i_ in range(6):  # mavzu rangi namunalari (gui.rs ACCENTS)
+        g["qacc%d" % i_] = (qx + u + i_ * (d + gap) + d // 2, sy2 + d // 2)
     power_y = sy2 + d + u * 2 // 3 + u // 2
     qh = power_y + u * 3 + u // 2 + sm * 4 // 5 + u // 2 - qy
     g["quick"] = (qx, qy, pw, qh)

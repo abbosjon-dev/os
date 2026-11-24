@@ -331,6 +331,22 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
 
   ![GOP (ramfb) 1280×800, RGBX, qadam 1344: zamin://bezak](docs/web-corners-gop.png)
 
+  **Qorong'i fonda va qorong'i mavzuda ham**: ichki sinov sahifalari `?fon=RGB` / `?fon=RRGGBB`
+  parametrini qabul qiladi (`zamin://matn?fon=111` → `body{background:#111}` va o'qiladigan
+  matn rangi), şunda bloklar `luma < 128` yölida çiziladi. `verify.sh full` avval Zamin paneli
+  orqali mavzu rangini almaştiradi, keyin zamin://matn (boşi va pastki bezak bölimi) va
+  zamin://bezak ni #111 fonda, taqqoslaş uçun esa och fonda (`?fon=fff`, zamin://bezak)
+  suratga oladi. `check_corners.py --strict` qat'iy tekşiruvi: har burçakdagi 3×3 piksel sahifa
+  foni va blok rangi (çegara bölsa — çegara) orasida, ikkalasidan ham to'qroq piksel yöq;
+  yumaloq burçakning eng çetki pikseli taşqi fondan (soya bölsa — soya bilan) 8 birlikdan köp
+  farq qilmaydi. Çegarali qutining içki foni alohida blok bölib topilganda burçak avval haqiqiy
+  taşqi qirragaça aniqlaştiriladi. Tekşiruvçining özi ham sinanadi: çetki pikseli yarim
+  aralaştirilgan surat 1 qaytarişi şart (`[ok] burchaklar (qorong'i)`). Natija: qorong'i va och
+  fonda tişça yöq.
+
+  ![Qorong'i fon (#111): zamin://matn bezak bölimi](docs/corners-dark.png)
+  ![Och fon (#fff): zamin://matn bezak bölimi](docs/corners-light.png)
+
   ![Aylantirilgan holat: pastdan kesilgan flex/rtl bloklar](docs/web-round-scroll.png)
 - **Ichma-ich blok konteynerlari** — ota blokning foni, chegarasi, padding'i va soyasi endi bola
   bloklarni haqiqatan o'rab oladi (karta ichida karta, sidebar ichidagi bloklar). `html::Block`

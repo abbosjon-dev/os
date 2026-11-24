@@ -390,7 +390,9 @@
       "id": "T49",
       "title": "Yumaloq burchaklar: zamin://matn ni qorong'i sahifa foni va qorong'i mavzuda qayta tekshirish, qolgan tishchalarni tuzatish",
       "detail": "Oldingi tekshiruvlar faqat och fonda o'tgan. Endi zamin://matn va zamin://bezak qorong'i fonda (body{background:#111}, luma<128 yo'li, src/gui.rs ~10429/10639) va Zamin paneli orqali yoqilgan qorong'i mavzuda chiziladi. Fayllar: src/gfx/mod.rs (fill_round_rect, alfa aralashtirish, burchak qamrovi: fon rangi bilan aralashtirish o'rniga qora/0 bilan aralashtirish hollari), src/gui.rs (veb bloklarini chizish: deco/dfill, bloklar foni + border + radius). scripts/agent/check_corners.py ga qorong'i holat qo'shiladi: har blok burchagidagi 3×3 piksellar sahifa foni va blok foni orasida bo'lishi kerak (ikkalasidan ham qoraroq piksel bo'lmasin). Burchakning tashqi tomonidagi piksel sahifa fonidan 8 birlikdan ko'p farq qilmasin. Qabul mezoni: `verify.sh full` da check_corners.py yangi 'qorong'i' holatlarida [ok]. Skrinshotlar: docs/corners-dark.png va och fondagi docs/corners-light.png, ikkalasida ham tishcha yo'q.",
-      "batch": 8
+      "batch": 8,
+      "status": "done",
+      "done_at": "2026-11-24 08:08:14"
     },
     {
       "id": "T50",
