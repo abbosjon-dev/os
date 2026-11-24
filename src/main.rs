@@ -727,6 +727,14 @@ fn self_tests() {
         Ok(n) => println!("  [ok] CSS overflow, white-space, text-overflow: ellipsis va opacity ({} sinov)", n),
         Err(e) => panic!("CSS overflow/white-space/opacity tekşiruvi yiqildi: {}", e),
     }
+    match css::self_test_inline() {
+        Ok(n) => println!("  [ok] CSS display: inline-block, vertical-align va visibility: hidden (joy saqlanadi, meros) ({} sinov)", n),
+        Err(e) => panic!("CSS inline-block/visibility tekşiruvi yiqildi: {}", e),
+    }
+    match gui::self_test_inline() {
+        Ok(n) => println!("  [ok] inline-block maketi: 3 quti bir qatorda (x o'sadi), 400 px da öraş, fon/radius, visibility: hidden joyi saqlanadi ({} sinov)", n),
+        Err(e) => panic!("inline-block maket tekşiruvi yiqildi: {}", e),
+    }
     match html::self_test_nested() {
         Ok(n) => println!("  [ok] Ichma-ich konteynerlar: ota foni, çegarasi va padding'i bolalarni o'rab oladi ({} sinov)", n),
         Err(e) => panic!("ichma-ich konteyner tekşiruvi yiqildi: {}", e),

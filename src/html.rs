@@ -44,6 +44,8 @@ pub const FX_SUB: u16 = 16;
 pub const FX_KBD: u16 = 32;
 pub const FX_MARK: u16 = 64;
 pub const FX_DOTTED: u16 = 128;
+/// visibility: hidden — joy egallaydi, lekin çizilmaydi (va bosilmaydi).
+pub const FX_INVIS: u16 = 256;
 
 #[derive(Clone)]
 pub struct Block {
@@ -88,6 +90,15 @@ pub struct Block {
     pub iw: u16,        // rasm: width/height atributlari (0 — yöq)
     pub ih: u16,
     pub rspan: u8,      // jadval katagi: rowspan (1 — oddiy)
+    // display: inline-block: guruh (ota element seriyasi; 0 — yöq), quti (inline-block elementning seriyasi),
+    // uning kengligi (width), calc() px bölagi, vertical-align (0 — baseline, 1 — middle, 2 — top, 3 — bottom)
+    // va ota text-align (0 — çap, 1 — markaz, 3 — öng)
+    pub ibg: u32,
+    pub ibc: u32,
+    pub ibw: Option<(f32, bool)>,
+    pub ibwpx: f32,
+    pub iva: u8,
+    pub ijust: u8,
     // position / float: oqimdan taşqari element (eng yaqin absolute/fixed/float ajdod)
     pub oser: u32,               // uning raqami (0 — yöq)
     pub okind: u8,               // 1 — float çap, 2 — float öng, 3 — absolute, 4 — fixed
@@ -609,6 +620,11 @@ impl Doc {
                     }
                     if st.size != base.size {
                         sp.size = st.size;
+                    }
+                    if st.invis {
+                        sp.fx |= FX_INVIS;
+                    } else {
+                        sp.fx &= !FX_INVIS;
                     }
                 }
             }
@@ -1188,11 +1204,30 @@ impl P {
         };
         // Quti: flex konteynerdan içkaridagisi (aks holda butun qator bitta qutiga tuşib qoladi)
         let fk = self.stack.iter().rposition(|o| o.sty.flex == 1 || o.sty.flex == 3).map(|k| k + 1).unwrap_or(0);
+        // display: inline-block — eng yaqin flex konteyner içidagi eng taşqi inline-block ajdod
+        // (flex bolasining özi — flex elementi, inline-block emas; ichma-ich inline-block — oddiy mazmun)
+        let ib = match self.stack.iter().enumerate().skip(if fk > 0 { fk + 1 } else { 1 }).find(|(_, o)| o.sty.ib) {
+            Some((k, o)) => {
+                let par = &self.stack[k - 1];
+                let just = match css::resolve_align(par.sty.align, par.sty.rtl) {
+                    1 => 1,
+                    2 => 3,
+                    _ => 0,
+                };
+                (par.serial, o.serial, o.sty.maxw, o.sty.wpx, o.sty.valign, just)
+            }
+            None => (0, 0, None, 0.0, 0, 0),
+        };
         let cont = self.stack[fk.min(self.stack.len())..].iter().rev().take_while(|o| o.tag != "body" && o.tag != "html").find(|o| o.sty.is_box());
-        let (bg, bgk, cs) = match cont {
+        let (bg, bgk, mut cs) = match cont {
             Some(o) => (o.sty.bg, o.serial, o.sty),
             None => (None, 0, Sty::root()),
         };
+        // visibility: hidden quti — joyi (padding + çegara) qoladi, fon / çegara / soya çizilmaydi
+        let bg = if cs.invis { None } else { bg };
+        if cs.invis {
+            (cs.pad, cs.bw, cs.grad, cs.shadow) = (cs.pad + cs.bw, 0.0, None, None);
+        }
         // taşqi quti ajdodlar (eng yaqin qutidan taşqarida, şu flex ustuni içida)
         let outer_open: Vec<&Open> = self.stack[fk.min(self.stack.len())..].iter().rev().take_while(|o| o.tag != "body" && o.tag != "html").filter(|o| o.sty.is_box() && o.serial < bgk).collect();
         // position / float
@@ -1255,7 +1290,10 @@ impl P {
                     dy += b;
                 }
                 let op = opq(self.stack.iter().filter(|o| o.serial <= c.serial).map(|o| o.sty.opacity).product());
-                let t = &c.sty;
+                let mut t = c.sty;
+                if t.invis {
+                    (t.bg, t.pad, t.bw, t.grad, t.shadow) = (None, t.pad + t.bw, 0.0, None, None);
+                }
                 Cbox { ser: c.serial, bg: t.bg, pad: t.pad, bw: t.bw, bc: t.bc, radius: t.radius, grad: t.grad, shadow: t.shadow, maxw: t.maxw, wpx: t.wpx, center: t.center, mt: t.mt, mb: t.mb, op, dx, dy }
             })
             .collect();
@@ -1265,6 +1303,7 @@ impl P {
             bmt: cs.mt, bmb: cs.mb,
             flex: fl.0, fcol: fl.1, fmode: fl.2, fgap: fl.3, gcols: fl.4, fjust: fl.5, fw: fl.6, fwpx: fl.9, fgrow: fl.7,
             mark: String::new(), det, summary, iw: 0, ih: 0, rspan: fl.8,
+            ibg: ib.0, ibc: ib.1, ibw: ib.2, ibwpx: ib.3, iva: ib.4, ijust: ib.5,
             oser, okind, ow, owpx, oins, pk, aser, rdx, rdy, bdx, bdy, clear: st.clear,
             hser, hmin, hfix, lh: line_factor(&st),
             ws: st.ws, clip, ellip, op, bop, outer,
@@ -1352,7 +1391,7 @@ impl P {
             blocks.push(Block { kind: Kind::P, spans: Vec::new(), ..tmpl.clone() });
         }
         for b in blocks.iter_mut() {
-            top = top.max(b.flex).max(b.fcol).max(b.oser).max(b.pk).max(b.aser).max(b.bgk).max(b.clip);
+            top = top.max(b.flex).max(b.fcol).max(b.oser).max(b.pk).max(b.aser).max(b.bgk).max(b.clip).max(b.ibg).max(b.ibc);
             b.clip = if b.clip == 0 { tmpl.clip } else { sh(b.clip) };
             b.el = remap(b.el);
             for sp in b.spans.iter_mut() {
@@ -1375,6 +1414,12 @@ impl P {
                 (b.flex, b.fcol) = (sh(b.flex), sh(b.fcol));
             }
             (b.oser, b.pk, b.aser) = (sh(b.oser), sh(b.pk), sh(b.aser));
+            if tmpl.ibg != 0 {
+                // iframe ning özi inline-block içida — ichki inline-block lar oddiy mazmun
+                (b.ibg, b.ibc, b.ibw, b.ibwpx, b.iva, b.ijust) = (tmpl.ibg, tmpl.ibc, tmpl.ibw, tmpl.ibwpx, tmpl.iva, tmpl.ijust);
+            } else {
+                (b.ibg, b.ibc) = (sh(b.ibg), sh(b.ibc));
+            }
             b.copy_pos(&tmpl);
             if b.color.is_none() {
                 b.color = Some(fcol);
@@ -1471,6 +1516,9 @@ impl P {
         }
         if st.underline == Some(true) {
             fx |= FX_UNDER;
+        }
+        if st.invis {
+            fx |= FX_INVIS;
         }
         let el = self.el();
         let b = self.cur.as_mut().unwrap();
@@ -2221,6 +2269,10 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc
                     }
                     _ => {}
                 }
+                // inline-block yopildi — keyingi mazmun yangi blokda (qöşni quti yoki ota matni)
+                if p.stack.iter().rev().find(|o| o.tag == name).is_some_and(|o| o.sty.ib) {
+                    p.flush();
+                }
                 p.close(&name);
                 continue;
             }
@@ -2708,6 +2760,7 @@ pub fn plain(text: &str) -> Doc {
         pad: 0.0, bw: 0.0, bc: None, radius: 0.0, grad: None, shadow: None, maxw: None, wpx: 0.0, center: false, mt: 0.0, mb: 0.0, bmt: 0.0, bmb: 0.0,
         flex: 0, fcol: 0, fmode: 0, fgap: 0.0, gcols: 0, fjust: 0, fw: None, fwpx: 0.0, fgrow: 0.0,
         mark: String::new(), det: NO_EL, summary: false, iw: 0, ih: 0, rspan: 1,
+        ibg: 0, ibc: 0, ibw: None, ibwpx: 0.0, iva: 0, ijust: 0,
         oser: 0, okind: 0, ow: None, owpx: 0.0, oins: [None; 4], pk: 0, aser: 0, rdx: 0.0, rdy: 0.0, bdx: 0.0, bdy: 0.0, clear: 0,
         hser: 0, hmin: 0.0, hfix: false, lh: 0.0,
         ws: 0, clip: 0, ellip: false, op: 255, bop: 255, outer: Vec::new(),

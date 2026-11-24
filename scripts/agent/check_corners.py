@@ -18,7 +18,7 @@ Foydalanish: check_corners.py surat.png [x0 y0 x1 y1] [-v]   (sahifa sohasi;
   -v — topilgan bloklar va tekshirilgan burchaklar ro'yxati ("BURCHAK x y sx sy").
 check_corners.py --gop KERNEL CHIQISH_PAPKA [-v]
   UEFI GOP zaxira ekrani yo'li (virtio-gpu yo'q, QEMU -device ramfb): zamin://matn (boshi va
-  yarim aylantirilgan), zamin://bezak va zamin://overflow — 1280x800 (ramfb fw_cfg orqali qayta
+  yarim aylantirilgan), zamin://bezak, zamin://inline va zamin://overflow — 1280x800 (ramfb fw_cfg orqali qayta
   sozlangan: qator qadami 1344 piksel, RGBX) va 1024x768 (EDK2 ning o'z ramfb rejimi, BGRX,
   -cpu neoverse-n1) ekranlarida suratga olinadi va tekshiriladi. UEFI firmware bo'lmasa — SKIP (0).
 check_corners.py --quick surat.png [-v]
@@ -243,7 +243,7 @@ def gop_main(args, verbose):
     here = os.path.dirname(os.path.abspath(__file__))
     m = "m,@park;w,1"
     clicks = (f"@browser;w,2;@max;w,1;u,zamin://matn;{m};snap,matn;m,@center;wd,8;{m};snap,matn2;"
-              f"u,zamin://bezak;{m};snap,bezak;u,zamin://overflow;{m}")
+              f"u,zamin://bezak;{m};snap,bezak;u,zamin://inline;{m};snap,inline;u,zamin://overflow;{m}")
     bad = total = 0
     for name, spec, cpu in GOP_CFGS:
         png = os.path.join(out, name + ".png")
@@ -262,7 +262,7 @@ def gop_main(args, verbose):
         if ":" in spec and not re.search(rf"ramfb: qayta sozlandi {w}x{h}, format RGBX, qator \d+", log):
             print(f"FAIL burchaklar (GOP): {name} — ramfb qayta sozlanmadi (fw_cfg)")
             return 1
-        for f in (png.replace(".png", "_matn.png"), png.replace(".png", "_matn2.png"), png.replace(".png", "_bezak.png"), png):
+        for f in (png.replace(".png", "_matn.png"), png.replace(".png", "_matn2.png"), png.replace(".png", "_bezak.png"), png.replace(".png", "_inline.png"), png):
             if not os.path.exists(f):
                 print(f"FAIL burchaklar (GOP): surat olinmadi ({f})")
                 return 1
@@ -283,7 +283,7 @@ def gop_main(args, verbose):
         print(f"FAIL burchaklar (GOP): {bad} ta nuqsonli burchak")
         return 1
     print(f"OK burchaklar (GOP): ramfb 1280x800 (qadam 1344, RGBX) va 1024x768 (BGRX, neoverse-n1) — "
-          f"matn/bezak/overflow, {total} burchak, to'q piksel 0")
+          f"matn/bezak/inline/overflow, {total} burchak, to'q piksel 0")
     return 0
 
 

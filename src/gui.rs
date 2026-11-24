@@ -854,6 +854,66 @@ fn fmt_mtime(unix: u64) -> String {
 
 /// Fayllar saralaş self-testi: nom/hajm/sana teskari tartibi, papkalar birinçi,
 /// human_size va sozlama kodlaşi. Qaytaradi — tekşiruvlar soni.
+/// O'z-özini tekşiruv: display: inline-block maketi (qatorda yonma-yon, tor oynada öraş,
+/// fon/radius qutisi) va visibility: hidden (joy saqlanadi, özi çizilmaydi).
+pub fn self_test_inline() -> Result<usize, &'static str> {
+    let mut n = 0;
+    let page = |hid: &str| {
+        alloc::format!(
+            "<style>.t{{display:inline-block;width:150px;padding:6px 10px;background:#2563eb;color:#fff;border-radius:8px}}.m{{vertical-align:middle;width:260px}}</style>\
+             <div><a class=t>Birinçi</a> <a class=t>Ikkinçi</a> <span class='t m'>Üçinçi <span style='visibility:{}'>Yaşirin</span> oxir</span></div><p>Keyin</p>",
+            hid
+        )
+    };
+    let run = |html: &str, width: usize| {
+        let mut w = web_new();
+        w.doc = crate::html::parse(html);
+        web_layout(&w, width)
+    };
+    let find = |items: &[WItem], t: &str| items.iter().find(|i| i.text.trim() == t).map(|i| (i.x, i.y, i.w));
+    let k = (small() * 11 / 10) as f32 / 16.0;
+    let bw = gfx::px_round(150.0 * k);
+    // 1) keng oyna: 3 quti bir qatorda — bir xil y, x o'sib boradi, har biri width enli fonli quti
+    let (it, deco, _) = run(&page("hidden"), 1000);
+    let (Some(a), Some(b), Some(c)) = (find(&it, "Birinçi"), find(&it, "Ikkinçi"), find(&it, "Üçinçi")) else {
+        return Err("inline-block matnlari topilmadi");
+    };
+    if a.1.abs_diff(b.1) > 1 || a.1.abs_diff(c.1) > 1 || !(a.0 < b.0 && b.0 < c.0) {
+        return Err("inline-block qutilar bir qatorda yonma-yon emas");
+    }
+    let boxes: Vec<&Deco> = deco.iter().filter(|d| d.fill == Some(0x2563eb)).collect();
+    let bw3 = gfx::px_round(260.0 * k);
+    if boxes.len() != 3 || boxes.iter().zip([bw, bw, bw3]).any(|(d, w)| d.w != w || d.radius == 0 || d.h == 0) || b.0 < boxes[0].x + bw {
+        return Err("inline-block qutisi: width / fon / border-radius xato");
+    }
+    n += 2;
+    // 2) visibility: hidden — matn çizilmaydi, lekin joyi qoladi (visible bilan bir xil x)
+    let (iv, _, _) = run(&page("visible"), 1000);
+    let (Some(o1), Some(o2), Some(yv)) = (find(&it, "oxir"), find(&iv, "oxir"), find(&iv, "Yaşirin")) else {
+        return Err("visibility sinov matni topilmadi");
+    };
+    if find(&it, "Yaşirin").is_some() || o1.0 != o2.0 || o1.0 < yv.0 + yv.2 {
+        return Err("visibility: hidden joyi saqlanmadi yoki element çizildi");
+    }
+    n += 2;
+    // 3) keyingi blok qutilar ostida
+    let kn = find(&it, "Keyin").ok_or("keyingi blok yöq")?;
+    if kn.1 <= c.1 || kn.0 >= b.0 {
+        return Err("inline-block qatoridan keyingi blok joyi xato");
+    }
+    n += 1;
+    // 4) tor oyna (400 px): sig'maganlari keyingi qatorga — çap çetdan
+    let (it4, _, _) = run(&page("hidden"), 400);
+    let (Some(a4), Some(c4)) = (find(&it4, "Birinçi"), find(&it4, "Üçinçi")) else {
+        return Err("tor oynada matn topilmadi");
+    };
+    if c4.1 <= a4.1 || c4.0 != a4.0 || it4.iter().any(|i| i.x + i.w > 400) {
+        return Err("tor oynada inline-block keyingi qatorga öralmadi");
+    }
+    n += 1;
+    Ok(n)
+}
+
 pub fn self_test_files_sort() -> Result<usize, &'static str> {
     let mk = |name: &str, is_dir: bool, size: usize, mtime: u64| fs::Entry {
         name: String::from(name),
@@ -9579,6 +9639,28 @@ body{background:#f3f5f9;color:#1a2233}
 <div class="x"><b>Yaroqsiz CSS</b><p>e'tiborsiz qoldirildi</p></div>
 </div>
 "##,
+        "zamin://inline" => r##"<title>CSS inline-block va visibility</title>
+<style>
+body{background:#f3f5f9;color:#1a2233}
+.nav{background:#ffffff;border:1px solid #c7ccd6;border-radius:10px;padding:8px}
+.btn{display:inline-block;width:150px;padding:8px 12px;background:#3a7bd5;color:#ffffff;border-radius:10px;text-align:center}
+.nis{display:inline-block;padding:2px 8px;background:#fde7c8;color:#b06a00;border-radius:8px}
+.mid{vertical-align:middle}
+.kat{display:inline-block;width:110px;height:60px;background:#1e3a8a;color:#ffffff;border-radius:8px;padding:6px}
+.yoq{visibility:hidden}
+</style>
+<h2>Uç inline-block tugma bir qatorda</h2>
+<p>Har biri width: 150px, padding, fon va border-radius bilan; oyna torayganda keyingi qatorga ötadi.</p>
+<div class="nav"><a class="btn" href="zamin://bosh">Bosh sahifa</a> <a class="btn" href="zamin://veb">Veb sinov</a> <span class="btn mid">Yaşirin: <span class="yoq">SIR</span> joyi bor</span></div>
+<h2>Nişonlar (mazmunga teng kenglik)</h2>
+<p>Holat: <span class="nis">yangi</span> <span class="nis">beta</span> <span class="nis">Zamin OS</span></p>
+<h2>vertical-align</h2>
+<div><span class="kat">baseline</span> <span class="kat mid" style="height:30px">middle</span> <span class="kat" style="vertical-align:top;height:24px">top</span> <span class="kat" style="vertical-align:bottom;height:24px">bottom</span></div>
+<h2>visibility: hidden va display: none</h2>
+<p>A <span class="yoq">[yaşirin, joyi saqlanadi]</span> B — oraliq bo'ş qoldi.</p>
+<p>A <span style="display:none">[olib taşlangan]</span> B — oraliq yöq.</p>
+<p><a href="zamin://bosh">Bosh sahifa</a></p>
+"##,
         "zamin://overflow" => r##"<title>CSS overflow, white-space va opacity</title>
 <style>
 body{background:#f3f5f9;color:#1a2233}
@@ -9724,6 +9806,7 @@ a[href$=".pdf"]{color:#dc2626}
 <li><a href="zamin://ramka">iframe: ichki hujjatlar sinovi</a></li>
 <li><a href="zamin://matn">text-align, dir=rtl, height, line-height va text-transform sinovi</a></li>
 <li><a href="zamin://bezak">CSS gradient va box-shadow sinovi</a></li>
+<li><a href="zamin://inline">CSS display: inline-block va visibility: hidden sinovi</a></li>
 <li><a href="zamin://overflow">CSS overflow, white-space, ellipsis va opacity sinovi</a></li>
 <li><a href="zamin://ozgaruvchi">CSS özgaruvçilar var(--x) va calc() sinovi</a></li>
 <li><a href="zamin://tanlagich">CSS tanlagiçlar: &gt; + ~, [atribut], :nth-child, :not() sinovi</a></li>
@@ -10559,6 +10642,8 @@ fn web_layout(web: &Web, width: usize) -> (Vec<WItem>, Vec<Deco>, usize) {
         .collect();
     let mut anc = alloc::vec![(0u32, u, u / 2, width.saturating_sub(u * 2))];
     let y = lay(web, &vis, u, width.saturating_sub(u * 2), u / 2, 0, &mut items, &mut deco, &mut anc);
+    // visibility: hidden — joyi hisoblangan, özi çizilmaydi va bosilmaydi
+    items.retain(|i| i.fx & crate::html::FX_INVIS == 0);
     // overflow: hidden — qirqiş sohasidan butunlay taşqaridagilar taşlanadi, içidagilar qirqişsiz
     let inside = |r: (usize, usize, usize, usize), c: (usize, usize, usize, usize)| rect_isect(r, c) == r;
     items.retain_mut(|i| match i.clip {
@@ -10640,6 +10725,43 @@ fn out_of_flow(run: &[&crate::html::Block]) -> Vec<crate::html::Block> {
             c
         })
         .collect()
+}
+
+/// Blokning joriy darajada oçiladigan konteynerlari: inline-block qatoridagi blok uçun —
+/// faqat inline-block elementdan taşqaridagi (ajdod) qutilar; qolganlari ustun içida oçiladi.
+fn lay_chain(b: &crate::html::Block) -> Vec<crate::html::Cbox> {
+    let mut c = b.chain();
+    if b.ibg != 0 && b.okind == 0 {
+        c.retain(|x| x.ser < b.ibc);
+    }
+    c
+}
+
+/// inline-block qatori: bloklarni qutilarga (ustunlarga) guruhlaydi; nusxalarda inline-block
+/// belgisi olib taşlanadi, taşqi (ajdod) qutilar — qatorda allaqaçon oçilgan, quti eni — ustun eni.
+fn ib_columns(run: &[&crate::html::Block]) -> Vec<(u32, Vec<crate::html::Block>)> {
+    let mut cols: Vec<(u32, Vec<crate::html::Block>)> = Vec::new();
+    for x in run {
+        let mut c = (*x).clone();
+        let s = c.ibc;
+        c.ibg = 0;
+        if c.bgk != 0 && c.bgk < s {
+            (c.bg, c.bgk, c.pad, c.bw, c.bc, c.radius) = (None, 0, 0.0, 0.0, None, 0.0);
+            (c.grad, c.shadow) = (None, None);
+        }
+        if c.bgk == s {
+            (c.maxw, c.center) = (None, false);
+        }
+        c.outer.retain(|o| o.ser >= s);
+        for o in c.outer.iter_mut().filter(|o| o.ser == s) {
+            (o.maxw, o.center) = (None, false);
+        }
+        match cols.iter_mut().find(|k| k.0 == s) {
+            Some(k) => k.1.push(c),
+            None => cols.push((s, alloc::vec![c])),
+        }
+    }
+    cols
 }
 
 /// x=0 dan joylangan elementlarning tabiiy kengligi (shrink-to-fit): matn öng çeti + çap içki çekiniş (padding).
@@ -10750,8 +10872,16 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
     let mut cgrp: Option<ClipGrp> = None;
     // opacity: oldingi blok elementlari (items boşi, deco boşi, alfa, fon)
     let mut fade: Option<(usize, usize, u8, Color)> = None;
+    // inline-block qatori joylandi — keyingi blok raqami
+    let mut skip_to: Option<usize> = None;
     let mut bi = 0;
     while bi < vis.len() {
+        if let Some(s) = skip_to.take() {
+            bi = s;
+            if bi >= vis.len() {
+                break;
+            }
+        }
         if let Some((i0, d0, dx, dy)) = pend.take() {
             shifts.push((i0, items.len(), d0, deco.len(), dx, dy));
         }
@@ -10775,7 +10905,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
         // float bilan torayişgan soha
         let (page_pad, full) = if lf.0 + rf.0 + u * 4 < full0 { (page_pad0 + lf.0, full0 - lf.0 - rf.0) } else { (page_pad0, full0) };
         // Konteynerlar zanjiri va ochiq stek bilan umumiy qism
-        let chain = b.chain();
+        let chain = lay_chain(b);
         let keep = open_box.iter().zip(chain.iter()).take_while(|(o, c)| o.0 == c.ser).count();
         // overflow: hidden — guruh almaşdi: oldingisini qirqamiz, yangisini boşlaymiz
         if cgrp.map(|g| g.0) != Some(b.clip) {
@@ -10977,7 +11107,8 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
                 Some((v, false)) => lpx(v).min(pw),
                 None => pw,
             }
-            .max(u * 4);
+            // inline-block qutisi: eni — ustun eni (tor nişonlar kengaytirilmaydi)
+            .max(if c.ser == b.ibc { 1 } else { u * 4 });
             let cx = px + if c.center { pw.saturating_sub(cw) / 2 } else { 0 };
             let bwp = if c.bw > 0.0 { lpx(c.bw).max(1) } else { 0 };
             let padp = lpx(c.pad).max(if c.bg.is_some() || bwp > 0 { u / 2 } else { 0 });
@@ -10992,6 +11123,110 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
             open_box.push((c.ser, deco.len() - 1, inset, cx + inset, cw.saturating_sub(inset * 2), lpx(c.mb)));
         }
         let (bx, bwid) = open_box.last().map(|o| (o.3, o.4)).unwrap_or((page_pad, full));
+        // --- display: inline-block: ketma-ket qutilar qatorda yonma-yon, sig'masa keyingi qatorga ---
+        if b.ibg != 0 && b.okind == 0 {
+            let mut j = bi + 1;
+            while j < vis.len() && vis[j].ibg == b.ibg && vis[j].okind == 0 {
+                j += 1;
+            }
+            let cols = ib_columns(&vis[bi..j]);
+            let gap = gfx::text_width(" ", pxs(b.size)).max(2);
+            y += u / 8;
+            // kengliklar: width (px / %) yoki mazmunga teng (shrink-to-fit)
+            let widths: Vec<usize> = cols
+                .iter()
+                .map(|c| {
+                    let h = &c.1[0];
+                    match h.ibw {
+                        Some((v, true)) => pcw(bwid, v, h.ibwpx).min(bwid),
+                        Some((v, false)) => lpx(v).min(bwid),
+                        None => {
+                            let refs: Vec<&crate::html::Block> = c.1.iter().collect();
+                            let (mut ti, mut td, mut ta): (Vec<WItem>, Vec<Deco>, _) = (Vec::new(), Vec::new(), anc.clone());
+                            lay(web, &refs, 0, bwid, 0, skip, &mut ti, &mut td, &mut ta);
+                            items_right(&ti).clamp(u, bwid)
+                        }
+                    }
+                    .max(2)
+                })
+                .collect();
+            // qatorlarga bölaş: sig'magan quti keyingi qatorga
+            let mut rows: Vec<(usize, usize)> = Vec::new();
+            let (mut r0, mut used) = (0usize, 0usize);
+            for (k, w) in widths.iter().enumerate() {
+                let need = if k > r0 { used + gap + w } else { *w };
+                if k > r0 && need > bwid {
+                    rows.push((r0, k));
+                    (r0, used) = (k, *w);
+                } else {
+                    used = need;
+                }
+            }
+            rows.push((r0, cols.len()));
+            let mut first = true;
+            for &(a, e) in &rows {
+                if !first {
+                    y += u / 6;
+                }
+                first = false;
+                let row_w: usize = widths[a..e].iter().sum::<usize>() + gap * (e - a - 1);
+                let x0 = bx + match b.ijust {
+                    1 => bwid.saturating_sub(row_w) / 2,
+                    3 => bwid.saturating_sub(row_w),
+                    _ => 0,
+                };
+                // (items boşi, oxiri, deco boşi, oxiri, balandlik, birinçi matn qatori pastki çeti, vertical-align)
+                let mut laid: Vec<(usize, usize, usize, usize, usize, usize, u8)> = Vec::new();
+                let mut x = x0;
+                for k in a..e {
+                    let refs: Vec<&crate::html::Block> = cols[k].1.iter().collect();
+                    let (i0, d0) = (items.len(), deco.len());
+                    let cx = if b.rtl { (bx * 2 + bwid).saturating_sub(x + widths[k]) } else { x };
+                    let bot = lay(web, &refs, cx, widths[k], y, skip, items, deco, anc);
+                    let h = bot.saturating_sub(y);
+                    let base = items[i0..].iter().find(|i| i.img.is_none()).map(|i| (i.y + i.h).saturating_sub(y)).unwrap_or(h);
+                    laid.push((i0, items.len(), d0, deco.len(), h, base, cols[k].1[0].iva));
+                    x += widths[k] + gap;
+                }
+                // vertical-align: baseline — birinçi qator pastki çetlari bir çiziqda; middle / top / bottom — qator balandligida
+                let maxb = laid.iter().filter(|l| l.6 == 0).map(|l| l.5).max().unwrap_or(0);
+                let rowh = laid.iter().map(|l| if l.6 == 0 { l.4 + (maxb - l.5) } else { l.4 }).max().unwrap_or(0);
+                for l in &laid {
+                    let dy = match l.6 {
+                        0 => maxb - l.5,
+                        1 => rowh.saturating_sub(l.4) / 2,
+                        3 => rowh.saturating_sub(l.4),
+                        _ => 0,
+                    };
+                    if dy > 0 {
+                        for it in items[l.0..l.1].iter_mut() {
+                            it.y += dy;
+                        }
+                        for d in deco[l.2..l.3].iter_mut() {
+                            d.y += dy;
+                        }
+                    }
+                }
+                y += rowh;
+            }
+            y += u / 8;
+            // keyingi blok bilan umumiy bölmagan qutilar yopiladi
+            let nk = vis.get(j).map_or(0, |n| {
+                let nc = lay_chain(n);
+                open_box.iter().zip(nc.iter()).take_while(|(o, c)| o.0 == c.ser).count()
+            });
+            while open_box.len() > nk {
+                let (_, di, ins, _, _, mb) = open_box.pop().unwrap();
+                y += ins;
+                deco[di].h = y - deco[di].y;
+                y += mb;
+            }
+            for o in open_box.iter() {
+                deco[o.1].h = y - deco[o.1].y;
+            }
+            skip_to = Some(j);
+            continue;
+        }
         if b.op < 255 {
             // quti özi ham şaffof bölsa — matn uning ortidagi (sahifa) fon bilan aralaşadi
             let back = if b.bop < 255 { page_bg } else { b.bg.unwrap_or(page_bg) };
@@ -11024,7 +11259,7 @@ fn lay(web: &Web, vis: &[&crate::html::Block], page_pad0: usize, full0: usize, y
         let y_block = y;
         // keyingi blok bilan umumiy konteynerlar soni — qolganlari şu blokdan keyin yopiladi
         let next_keep = vis.get(bi + 1).map_or(0, |n| {
-            let nc = n.chain();
+            let nc = lay_chain(n);
             open_box.iter().zip(nc.iter()).take_while(|(o, c)| o.0 == c.ser).count()
         });
         let last_in_box = b.bgk != 0 && next_keep < open_box.len();

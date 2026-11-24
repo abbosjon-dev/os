@@ -59,6 +59,11 @@ pub struct Sty {
     pub wpx: f32,
     // Taxminiy konteyner kontent eni (CSS px; 0 — kö'riş maydoni) — margin/padding/width foizlari uçun (meros)
     pub cw: f32,
+    // display: inline-block (meros bölib ötmaydi) va vertical-align: 0 — baseline, 1 — middle, 2 — top, 3 — bottom
+    pub ib: bool,
+    pub valign: u8,
+    // visibility: hidden / collapse — joy saqlanadi, özi çizilmaydi (meros bölib ötadi; visible bilan qaytadi)
+    pub invis: bool,
 }
 
 /// Gradient rang töxtaşlari soni çegarasi.
@@ -91,7 +96,7 @@ impl Sty {
             mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
             pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None,
-            h: None, minh: None, lh: 0.0, tt: 0, ws: 0, ovf: 0, ellip: false, opacity: 1.0, wpx: 0.0, cw: 0.0,
+            h: None, minh: None, lh: 0.0, tt: 0, ws: 0, ovf: 0, ellip: false, opacity: 1.0, wpx: 0.0, cw: 0.0, ib: false, valign: 0, invis: false,
         }
     }
     /// Meros: rang, ölçam, qalinlik, tekislaş, yaşiriş — bolaga ötadi; fon — ötmaydi.
@@ -100,7 +105,7 @@ impl Sty {
             bg: None, block: None, mt: 0.0, mb: 0.0, pad: 0.0, bw: 0.0, bc: None, radius: 0.0, maxw: None, center: false,
             flex: 0, gap: 0.0, gcols: 0, justify: 0, grow: 0.0,
             pos: 0, ins: [None; 4], float: 0, clear: 0, grad: None, shadow: None, h: None, minh: None,
-            ovf: 0, ellip: false, opacity: 1.0, wpx: 0.0,
+            ovf: 0, ellip: false, opacity: 1.0, wpx: 0.0, ib: false, valign: 0,
             ..*self
         }
     }
@@ -1354,11 +1359,27 @@ pub fn apply(s: &mut Sty, prop: &str, val: &str, parent: f32) {
             };
             s.block = match low.as_str() {
                 "block" | "flex" | "grid" | "list-item" | "table" => Some(true),
-                "inline" | "inline-block" | "inline-flex" => Some(false),
+                "inline-block" => Some(true),
+                "inline" | "inline-flex" => Some(false),
                 _ => s.block,
             };
+            s.ib = low == "inline-block";
         }
-        "visibility" => s.hidden = low == "hidden" || low == "collapse",
+        "visibility" => {
+            if matches!(low.as_str(), "hidden" | "collapse") {
+                s.invis = true;
+            } else if low == "visible" {
+                s.invis = false;
+            }
+        }
+        "vertical-align" => {
+            s.valign = match low.as_str() {
+                "middle" => 1,
+                "top" | "text-top" => 2,
+                "bottom" | "text-bottom" => 3,
+                _ => 0,
+            }
+        }
         "flex-direction" => {
             if s.flex == 1 && low.starts_with("column") {
                 s.flex = 2;
@@ -2197,5 +2218,41 @@ pub fn self_test_selectors() -> Result<usize, &'static str> {
         return Err("HTML: input[type=password] uslubi qöllanmadi");
     }
     n += 5;
+    Ok(n)
+}
+
+/// O'z-özini tekşiruv: display: inline-block, vertical-align va visibility (joy saqlanadi, meros).
+pub fn self_test_inline() -> Result<usize, &'static str> {
+    let mut n = 0;
+    let rules = parse_sheet(".nav a { display: inline-block; width: 120px; padding: 6px; vertical-align: middle } .yoq { visibility: hidden }");
+    let none: [String; 0] = [];
+    let nav = [String::from("nav")];
+    let yoq = [String::from("yoq")];
+    fn mk<'a>(tag: &'a str, c: &'a [String]) -> ElRef<'a> {
+        ElRef { tag, id: "", classes: c, ..ElRef::default() }
+    }
+    let root = Sty::root();
+    // inline-block: blok kabi quti (o'lçamlari bilan), lekin qatorda
+    let a = compute(&root, &rules, &mk("a", &none), &[mk("div", &nav)], None);
+    if !a.ib || a.block != Some(true) || a.maxw != Some((120.0, false)) || a.pad != 6.0 || a.valign != 1 || a.hidden {
+        return Err("display: inline-block / width / padding / vertical-align xato");
+    }
+    n += 1;
+    // keyingi display qiymati inline-block ni bekor qiladi; inline-block meros bölmaydi
+    let b = compute(&root, &[], &mk("span", &none), &[], Some("display: inline-block; display: inline"));
+    let kid = compute(&a, &[], &mk("b", &none), &[], None);
+    if b.ib || b.block != Some(false) || kid.ib || kid.valign != 0 {
+        return Err("inline-block bekor qiliş yoki meros xato");
+    }
+    n += 1;
+    // visibility: hidden — display: none emas (joy qoladi), bolaga meros, visible bilan qaytadi
+    let h = compute(&root, &rules, &mk("span", &yoq), &[], None);
+    let hk = compute(&h, &[], &mk("i", &none), &[], None);
+    let hv = compute(&h, &[], &mk("i", &none), &[], Some("visibility: visible"));
+    let c = compute(&root, &[], &mk("span", &none), &[], Some("visibility: collapse"));
+    if !h.invis || h.hidden || !hk.invis || hv.invis || !c.invis || c.hidden {
+        return Err("visibility: hidden / collapse / visible xato");
+    }
+    n += 1;
     Ok(n)
 }

@@ -460,10 +460,10 @@ echo "[ok] terminal ranglari: $(echo "$TRES" | grep -c '^pixcheck') piksel tekş
 #   virtio-gpu-pci (1920x1080). Koordinatalar ("@browser", "@max", ...) zgeom.py dan.
 CDIR="$LOG_DIR/corners"; mkdir -p "$CDIR" /tmp/claude-0; rm -f "$CDIR"/*.png "$CDIR"/*.txt
 M="m,@park;w,1"
-# 1280x800: brauzer (dok) → kattalaştiriş → zamin://matn (boşi, yarim aylantirilgan) → zamin://bezak → zamin://overflow
-CLICKS="@browser;w,2;@max;w,1;u,zamin://matn;$M;snap,matn;m,@center;wd,8;$M;snap,matn2;u,zamin://bezak;$M;snap,bezak;u,zamin://overflow;$M" \
+# 1280x800: brauzer (dok) → kattalaştiriş → zamin://matn (boşi, yarim aylantirilgan) → zamin://bezak → zamin://inline → zamin://overflow
+CLICKS="@browser;w,2;@max;w,1;u,zamin://matn;$M;snap,matn;m,@center;wd,8;$M;snap,matn2;u,zamin://bezak;$M;snap,bezak;u,zamin://inline;$M;snap,inline;u,zamin://overflow;$M" \
     timeout 300 python3 scripts/agent/shot.py "$KERNEL" "$CDIR/overflow.png" fresh >"$CDIR/shot.log" 2>&1
-SHOTS=("$CDIR/overflow_matn.png" "$CDIR/overflow_matn2.png" "$CDIR/overflow_bezak.png" "$CDIR/overflow.png")
+SHOTS=("$CDIR/overflow_matn.png" "$CDIR/overflow_matn2.png" "$CDIR/overflow_bezak.png" "$CDIR/overflow_inline.png" "$CDIR/overflow.png")
 # boşqa ölçamlar va VPS yöli: zamin://matn (boşi va yarim aylantirilgan)
 CM="@browser;w,2;@max;w,1;u,zamin://matn;$M;snap,top;m,@center;wd,8;$M"
 VPS_FW=""
@@ -493,6 +493,7 @@ for f in "${SHOTS[@]}"; do
 done
 [ "$NBAD" -eq 0 ] || { echo "FAIL burçaklar: $NBAD surat nuqsonli (qarang $CDIR)"; exit 1; }
 [ -s "$CDIR/matn-1920x1080_top.png" ] && cp "$CDIR/matn-1920x1080_top.png" docs/web-corners-1920.png
+[ -s "$CDIR/overflow_inline.png" ] && cp "$CDIR/overflow_inline.png" docs/web-inline.png
 # o'z-o'zini sinaş: burçak yaqiniga bitta qora piksel — tekşiruvçi 1 qaytarişi şart (1280 va 1920 suratlarda)
 for src in "$CDIR/overflow_bezak.png" "$CDIR/matn-1920x1080_top.png"; do
     [ -s "$src" ] || continue

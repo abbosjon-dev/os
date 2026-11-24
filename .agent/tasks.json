@@ -422,7 +422,9 @@
       "id": "T53",
       "title": "Brauzer CSS: display: inline-block (qator ichida o'lchamli quti) va visibility: hidden (joy saqlanadi)",
       "detail": "src/css.rs:1357 da inline-block oddiy inline sifatida olinadi: navigatsiya menyulari, tugmalar va nishonlarning width/height/padding/foni/border-radius'i yo'qoladi. Bundan tashqari visibility:hidden display:none kabi joyni ham olib tashlaydi (1361-qator). Fayllar: src/css.rs (Style ga inline_block bayrog'i va visibility uchun alohida maydon), src/gui.rs (veb maketi: inline-block bola blok sifatida joylashadi, kengligi width yoki mazmunga teng, qatorda yonma-yon turadi, sig'masa keyingi qatorga o'tadi, vertical-align: baseline/middle, fon/border/radius chiziladi; visibility:hidden elementning joyi qoladi, o'zi chizilmaydi). Yangi zamin://inline sinov sahifasi: 3 ta inline-block 'tugma' bir qatorda, tor oynada keyingi qatorga o'tadi, ichida visibility:hidden span bor. Qabul mezoni: css self-test ([ok]) va gui maket self-testi (3 quti bir xil y da, x o'sib boradi; 400px da o'radi; hidden element kengligi saqlanadi). Skrinshot docs/web-inline.png. check_corners.py ga zamin://inline qo'shiladi.",
-      "batch": 8
+      "batch": 8,
+      "status": "done",
+      "done_at": "2026-11-24 12:22:49"
     },
     {
       "id": "T54",

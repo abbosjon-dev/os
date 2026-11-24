@@ -288,9 +288,9 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   va blok rangidan to'qroq piksel qidiradi. (Ichma-ich quti modeli endi bor — pastga qarang.)
 
   **Regressiya tekshiruvi:** `scripts/agent/verify.sh full` endi yuklanish sinovidan keyin
-  `shot.py` bilan brauzerni ochib, to'rtta surat oladi — `zamin://matn` (boshi va yarim
-  aylantirilgan holati), `zamin://bezak`, `zamin://overflow` — va har birini
-  `check_corners.py` dan o'tkazadi (`[ok] burchaklar: 4 surat toza`). Tekshiruvchi bloklarni
+  `shot.py` bilan brauzerni ochib, beshta surat oladi — `zamin://matn` (boshi va yarim
+  aylantirilgan holati), `zamin://bezak`, `zamin://inline`, `zamin://overflow` — va har birini
+  `check_corners.py` dan o'tkazadi. Tekshiruvchi bloklarni
   sahifa bo'yicha avtomatik taniydi: fon — sahifa chap chetidagi rang, qutilar — sahifada ko'p
   uchraydigan aniq ranglar (opacity bilan aralashganlari ham) va to'yingan piksellar
   (gradientli qutilar); `-v` bilan bloklar va burchaklar ro'yxatini chiqaradi. Tekshiruvchining
@@ -323,7 +323,7 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
 
   **GOP zaxira ekrani yölida ham** (virtio-gpu yöq, QEMU `-device ramfb`, UEFI + ACPI):
   `check_corners.py --gop KERNEL PAPKA` zamin://matn (boşi va yarim aylantirilgan),
-  zamin://bezak va zamin://overflow ni ikki ekranda suratga olib tekşiradi — **1280×800**,
+  zamin://bezak, zamin://inline va zamin://overflow ni ikki ekranda suratga olib tekşiradi — **1280×800**,
   qator qadami 1344 piksel (`stride != width`), **RGBX** bayt tartibi, `-cpu max`; va
   **1024×768** (EDK2 ning öz ramfb rejimi), **BGRX**, `-cpu neoverse-n1`. EDK2 ramfb faqat
   640×480 / 800×600 / 1024×768 beradi, şuning uçun QEMU ga `-fw_cfg
@@ -452,6 +452,23 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   `:not(.a)` specificity'si = `.a`, noto'g'ri tanlagichlar, HTML orqali zebra va `:last-child`).
 
   ![CSS tanlagichlar: zamin://tanlagich](docs/web-selectors.png)
+- **CSS `display: inline-block` va `visibility: hidden`** — inline-block element endi oddiy
+  qator elementi emas, balki **qatorda turadigan o'lchamli quti**: `width` (px / % / `calc()`) yoki
+  mazmunga teng kenglik (shrink-to-fit), `padding`, fon, chegara, `border-radius`, soya va `height`
+  saqlanadi. Ketma-ket inline-block qo'shnilar bir qatorda yonma-yon (oraliq — bitta bo'shliq
+  kengligi) joylashadi, sig'magani keyingi qatorga o'tadi; ota `text-align: center/right` qatorni
+  markazlaydi / o'ngga suradi; `vertical-align`: `baseline` (birinchi matn qatorlari bir chiziqda),
+  `middle`, `top`, `bottom`. Navigatsiya menyulari, tugmalar va nishonlar (`.badge`) shunday
+  chiziladi. `visibility: hidden` / `collapse` endi `display: none` emas: element **joyi saqlanadi**
+  (matn kengligi, quti padding'i va chegarasi), o'zi chizilmaydi va bosilmaydi; meros bo'lib o'tadi,
+  bolada `visibility: visible` bilan qaytadi (JS `classList` orqali ham). Sinov: `zamin://inline`
+  (uchta tugma, nishonlar, `vertical-align`, `visibility` va `display: none` taqqoslash);
+  yuklanish self-testlarida `css::self_test_inline` (inline-block / vertical-align / visibility
+  tahlili, meros) va `gui::self_test_inline` (maket: 3 quti bir xil `y` da, `x` o'sib boradi, fon va
+  radius, 400 px oynada keyingi qatorga o'raladi, yashirin element kengligi saqlanadi).
+  `verify.sh` bu sahifani ham suratga olib `check_corners.py` dan o'tkazadi (GOP yo'lida ham).
+
+  ![inline-block va visibility: zamin://inline](docs/web-inline.png)
 - **`<iframe>` — ichki hujjat haqiqiy chiziladi** — `srcdoc="…"` (belgilar bilan kodlangan yoki
   tirnoq ichida xom HTML) alohida hujjat sifatida **o'z CSS i bilan** tahlil qilinadi va ramka-quti
   ichida chiziladi: fon — ichki `body` foni (bo'lmasa oq), `width` (px yoki %) yoki CSS `width`,
