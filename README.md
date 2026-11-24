@@ -1462,7 +1462,7 @@ API kalit / apiKeyHelper / boşqa BASE_URL → rad etiladi, 3 ketma-ket tekşiru
 
 ## Versiyalaş
 
-Joriy versiya: **0.0.31**. Versiya har bir özgarişda emas, faqat işlaydigan
+Joriy versiya: **0.0.32**. Versiya har bir özgarişda emas, faqat işlaydigan
 bosqiç (etap) yakunlanganda kötariladi.
 - 0.0.2 — toʻliq grafik muhit (kiriş, oynada haqiqiy EL0 terminal, ilovalar)
   va backend mustahkamlaş (KASLR, FAT yoziş, X.509 tahlili).
@@ -1558,5 +1558,13 @@ bosqiç (etap) yakunlanganda kötariladi.
   Rescue tizimidan örnatiş skripti (`scripts/vps/yoz.sh`). Release yiğişi endi thin LTO bilan
   (töliq LTO JS çaqiruvi stekini ~4.5 KiB ga oşirib, `--release` obrazida self-test yiqilardi).
   Skrinşot: `docs/vps-0.0.31.png` (release obrazi, qayta yuklanişdan keyingi kiriş ekrani).
+- 0.0.32 — **VPS konsoli va iş muhiti**: yumaloq burçaklar VPS ekran ölçamlarida (1024×768,
+  1920×1080) va UEFI+ACPI yölida qayta tekşirildi; xHCI USB kontrolleri va USB HID
+  klaviatura/planşet (boot protokoli) — Netcup VNC kirişi uçun; virtio-gpu bölmasa UEFI GOP
+  framebuffer zaxira ekrani va `-cpu neoverse-n1` mosligi; Sozlamalar → Tarmoq: statik IPv4
+  (IP, niqob, şlyuz, DNS) yoki DHCP, diskka saqlanadi; CSS tanlagiçlar `>`, `+`, `~`,
+  `[atribut]`, `:first-child`, `:last-child`, `:nth-child(an+b)`, `:not()`. Skrinşotlar:
+  `docs/vps-usb.png`, `docs/vps-gop.png`, `docs/settings-network.png`, `docs/web-selectors.png`,
+  `docs/web-corners-1920.png`.
 
 Versiya `Cargo.toml` da saqlanadi va yadro işga tuşganda ekranga çiqadi.

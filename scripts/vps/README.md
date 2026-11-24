@@ -102,6 +102,14 @@ Bu usulda Zamin bölimi obraz hajmiça (2 GiB) qoladi — kattaroq kerak bölsa,
 - Ekran qora / `BdsDxe: failed to load` — obraz diskka töliq yozilganini tekşiring
   (`yoz.sh` dagi SHA-256 tekşiruvi), Rescue öçirilganini tasdiqlang.
 - Jurnal: seriya konsol (`PL011`) — QEMU sinovida `-serial stdio`.
+- **Klaviatura/sichqonça VNC da işlamasa** — Netcup VNC kirişi virtio emas, USB orqali
+  kelişi mumkin: yadro xHCI kontrollerini (PCI) topib, USB HID klaviatura va planşetni
+  (boot protokoli) özi ulaydi. Jurnalda `xHCI: 8 port, usb-kbd, usb-tablet` kabi qator çiqadi. QEMU da
+  sinaş: `-device qemu-xhci -device usb-kbd -device usb-tablet` (`verify.sh vps` buni
+  QMP `send-key` / `input-send-event` bilan tekşiradi, surat `docs/vps-usb.png`).
+- **virtio-gpu yöq bölsa** — yadro UEFI GOP framebuffer ini zaxira ekran sifatida işlatadi
+  (jurnalda `GOP: WxH, format …`). QEMU da: virtio-gpu-pci örniga `-device ramfb`
+  (surat `docs/vps-gop.png`). Netcup Ampere uçun `-cpu neoverse-n1` bilan ham sinalgan.
 - Ortga qaytiş: SCP → Media → **Images** dan istalgan rasmiy Linux obrazini qayta örnating.
 
 ## 5. Muqobil: Linux ustida (ornat.sh)

@@ -325,7 +325,9 @@
       "id": "T41",
       "title": "Bosqich yakuni: versiyani oshirish (VPS konsoli va ish muhiti: burchaklar, USB kiritish, GOP ekran, statik tarmoq, CSS tanlagichlar)",
       "detail": "Shu to'plamda (batch 6) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full (vps, obraz, USB va GOP konfiguratsiyalari bilan) va skrinshotlar (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. scripts/vps/obraz.sh --release bilan obraz qayta yasaladi va verify.sh obraz o'tadi. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. scripts/vps/README.md ga USB kiritish va GOP zaxira ekrani haqida qisqa eslatma qo'shiladi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz.",
-      "batch": 6
+      "batch": 6,
+      "status": "done",
+      "done_at": "2026-11-24 00:53:24"
     },
     {
       "id": "T42",
