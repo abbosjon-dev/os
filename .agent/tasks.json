@@ -385,9 +385,51 @@
       "detail": "Shu to'plamda (batch 7) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz.",
       "status": "done",
       "done_at": "2026-11-24 07:15:44"
+    },
+    {
+      "id": "T49",
+      "title": "Yumaloq burchaklar: zamin://matn ni qorong'i sahifa foni va qorong'i mavzuda qayta tekshirish, qolgan tishchalarni tuzatish",
+      "detail": "Oldingi tekshiruvlar faqat och fonda o'tgan. Endi zamin://matn va zamin://bezak qorong'i fonda (body{background:#111}, luma<128 yo'li, src/gui.rs ~10429/10639) va Zamin paneli orqali yoqilgan qorong'i mavzuda chiziladi. Fayllar: src/gfx/mod.rs (fill_round_rect, alfa aralashtirish, burchak qamrovi: fon rangi bilan aralashtirish o'rniga qora/0 bilan aralashtirish hollari), src/gui.rs (veb bloklarini chizish: deco/dfill, bloklar foni + border + radius). scripts/agent/check_corners.py ga qorong'i holat qo'shiladi: har blok burchagidagi 3×3 piksellar sahifa foni va blok foni orasida bo'lishi kerak (ikkalasidan ham qoraroq piksel bo'lmasin). Burchakning tashqi tomonidagi piksel sahifa fonidan 8 birlikdan ko'p farq qilmasin. Qabul mezoni: `verify.sh full` da check_corners.py yangi 'qorong'i' holatlarida [ok]. Skrinshotlar: docs/corners-dark.png va och fondagi docs/corners-light.png, ikkalasida ham tishcha yo'q.",
+      "batch": 8
+    },
+    {
+      "id": "T50",
+      "title": "VPS: ACPI quvvat tugmasi (GED / PL061 gpio-keys) orqali muloyim o'chirish — Netcup SCP 'ACPI shutdown'",
+      "detail": "Netcup SCP dagi 'Shutdown (ACPI)' va libvirt `virsh shutdown` QEMU virt da quvvat tugmasi hodisasini yuboradi. ACPI yo'lida bu Generic Event Device (DSDT dagi ACPI0013, MMIO + GSIV), DTB yo'lida PL061 GPIO dagi gpio-keys (KEY_POWER, gpio 3). Fayllar: src/acpi.rs (DSDT/AML dan GED MMIO va IRQ ni topish; murakkab bo'lsa QEMU virt ning ma'lum manzili zaxira), src/dtb.rs (arm,pl061 + gpio-keys), yangi src/drivers/pwrbtn.rs, src/power.rs (muloyim o'chirish: GUI ga 'O'chirilmoqda' bildirishnomasi, ZaminFS/sozlamalarni diskka yozish, keyin PSCI SYSTEM_OFF), src/irq.rs yoki src/gic.rs (uzilishni ulash). Jurnalga `Quvvat tugmasi: GED @0x…, GSIV N` yoziladi. Qabul mezoni: scripts/agent/ ga yangi vps_power.py (UEFI + ACPI + GICv3 va -kernel DTB yo'li). Yuklangandan keyin QMP `system_powerdown` yuboriladi, so'ng tekshiriladi: jurnalda 'Quvvat tugmasi bosildi', 'disk sinxronlandi' bor, QEMU 15 soniya ichida o'zi chiqadi (exit kodi 0) va qayta yuklanganda disk butun. verify.sh full uni ishga tushiradi.",
+      "batch": 8
+    },
+    {
+      "id": "T51",
+      "title": "VPS: IPv6 asosi — NDP, ICMPv6 echo, link-local + SLAAC va statik IPv6 (Netcup /64)",
+      "detail": "Netcup ARM VPS IPv4 ni DHCP bilan, IPv6 /64 ni esa statik beradi (shlyuz fe80::1). Fayllar: src/net/mod.rs (ETH_IPV6 0x86dd ni qabul qilish, handle_ipv6), yangi src/net/ipv6.rs (MAC dan EUI-64 bo'yicha link-local, Neighbor Solicitation/Advertisement, NDP keshi, Router Advertisement → SLAAC prefiksi va standart shlyuz, ICMPv6 echo so'rov/javob, ICMPv6 nazorat summasi psevdo-sarlavha bilan, MLD shart emas — solicited-node multicast MAC 33:33:ff:xx:xx:xx filtri). Sozlamalar → Tarmoq ga statik IPv6 manzil/prefiks/shlyuz maydonlari qo'shiladi va diskka saqlanadi (src/config.rs, src/gui.rs). user/src/bin/ping.rs IPv6 manzilni qabul qiladi. Qabul mezoni: self-test `[ok] IPv6: …` (EUI-64, solicited-node manzil, ICMPv6 summasi ma'lum vektorga teng, NA tahlili, RA prefiksi). QEMU `-nic user,ipv6=on` bilan verify.sh: jurnalda SLAAC manzili `fec0::…`, `ping fec0::2` javob oladi. Eski IPv4 sinovlari o'zgarishsiz o'tadi.",
+      "batch": 8
+    },
+    {
+      "id": "T52",
+      "title": "Grafik terminal: ANSI SGR ranglari (30–37, 90–97, 40–47, 1, 0, 39/49) va rangli ls / xato chiqishi",
+      "detail": "Hozir src/gui.rs (~1206–1213) da \\x1b[2J va \\x1b[K dan boshqa ketma-ketliklar e'tiborsiz qoladi, shuning uchun ranglar ekranga chiqmaydi. Fayllar: src/termbuf.rs (har katakka fg/bg/bold atributi; scrollback va qatorni o'rash atributlarni saqlaydi; CSI parametrlarini tahlil qiluvchi sof funksiya, bo'lingan ketma-ketlik keyingi o'qishda davom etadi), src/gui.rs (atributli chizish; tanlash/nusxa olish faqat matnni oladi), user/src/bin/terminal.rs (`ls` papkalarni ko'k qalin, bajariladigan fayllarni yashil ko'rsatadi; xato xabarlari qizil; `rang` buyrug'i 16 rangli jadval chiqaradi). Qabul mezoni: termbuf self-test `[ok] SGR: …` (\\x1b[1;31m, \\x1b[0m, \\x1b[92m, 2 o'qishga bo'lingan \\x1b[3 + 4m, noma'lum CSI e'tiborsiz). Skrinshot docs/terminal-rang.png — `ls /` va `rang` chiqishida rangli piksellar bor (shot.py da piksel tekshiruvi). verify.sh full o'tadi.",
+      "batch": 8
+    },
+    {
+      "id": "T53",
+      "title": "Brauzer CSS: display: inline-block (qator ichida o'lchamli quti) va visibility: hidden (joy saqlanadi)",
+      "detail": "src/css.rs:1357 da inline-block oddiy inline sifatida olinadi: navigatsiya menyulari, tugmalar va nishonlarning width/height/padding/foni/border-radius'i yo'qoladi. Bundan tashqari visibility:hidden display:none kabi joyni ham olib tashlaydi (1361-qator). Fayllar: src/css.rs (Style ga inline_block bayrog'i va visibility uchun alohida maydon), src/gui.rs (veb maketi: inline-block bola blok sifatida joylashadi, kengligi width yoki mazmunga teng, qatorda yonma-yon turadi, sig'masa keyingi qatorga o'tadi, vertical-align: baseline/middle, fon/border/radius chiziladi; visibility:hidden elementning joyi qoladi, o'zi chizilmaydi). Yangi zamin://inline sinov sahifasi: 3 ta inline-block 'tugma' bir qatorda, tor oynada keyingi qatorga o'tadi, ichida visibility:hidden span bor. Qabul mezoni: css self-test ([ok]) va gui maket self-testi (3 quti bir xil y da, x o'sib boradi; 400px da o'radi; hidden element kengligi saqlanadi). Skrinshot docs/web-inline.png. check_corners.py ga zamin://inline qo'shiladi.",
+      "batch": 8
+    },
+    {
+      "id": "T54",
+      "title": "Fayllar menejeri: 'Xususiyatlar' oynasi (hajm, tur, egasi, ruxsatlar, vaqtlar) va ruxsatlarni o'zgartirish",
+      "detail": "Fayllar menejerida fayl ma'lumotlarini ko'radigan va ruxsatni o'zgartiradigan joy yo'q (gui.rs da 'xususiyat' topilmadi). Fayllar: src/gui.rs (kontekst menyusiga 'Xususiyatlar' bandi va Alt+I yorlig'i; oynada nom, to'liq yo'l, tur, hajm — papka uchun rekursiv yig'indi va elementlar soni, egasi, rwx ruxsatlari belgilash katakchalari bilan, yaratilgan/o'zgartirilgan vaqt Toshkent vaqtida). Ruxsatni faqat egasi yoki admin o'zgartiradi, src/fs va src/security.rs orqali; ruxsat bo'lmasa katakchalar faol emas va bildirishnoma chiqadi. src/i18n.rs da 3 tilda matnlar. Qabul mezoni: self-test `[ok] Xususiyatlar: …` (papka hajmi yig'indisi, ruxsat qatorini formatlash 'rw-r--r--', begona foydalanuvchiga rad). Skrinshot docs/fayl-xususiyat.png (scripts/agent/shot.py bilan Fayllar → kontekst menyu → Xususiyatlar). verify.sh full o'tadi.",
+      "batch": 8
+    },
+    {
+      "id": "T55",
+      "batch": 8,
+      "title": "Bosqich yakuni: versiyani oshirish (VPS boshqaruvi va terminal ranglari: ACPI o'chirish, IPv6, ANSI SGR, inline-block, qorong'i fonda bu)",
+      "detail": "Shu to'plamda (batch 8) bajarilgan vazifalarni .agent/tasks.json dan ko'rib chiq. Ular haqiqatan ishlashini verify.sh full va skrinshot (scripts/agent/shot.py, docs/ ga) bilan tasdiqla. Keyin patch versiyani 1 ga oshir: Cargo.toml, README.md 'Joriy versiya' va versiyalar tarixiga yangi qator (o'zbekcha, yangi alifbo), src/gui.rs dagi zamin://malumot.json versiyasi. Agar biror vazifa ishlamasa — versiyani oshirma, TASK_BLOCKED yoz."
     }
   ],
-  "batch": 7,
+  "batch": 8,
   "plan_notes": [
     "Ma'lum nuqson: zamin://matn sahifasida bloklar chetida kichik qora 'tishchalar' (yumaloq burchak chizish xatosi) — birinchi navbatda tuzat.",
     "Har to'plamda kamida bitta vazifa veb/brauzerdan tashqari bo'lsin (ilovalar, terminal, fayl menejeri, sozlamalar, yadro).",
