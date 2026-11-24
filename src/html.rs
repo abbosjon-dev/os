@@ -4,6 +4,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use alloc::collections::BTreeMap;
 
 use crate::css::{self, ElRef, Rule, Sty};
 
@@ -175,6 +176,9 @@ pub struct Input {
     pub radio: bool,  // radio — bir guruhda (name) faqat bittasi
     pub min: f32,     // range / progress / meter
     pub max: f32,
+    pub bg: Option<u32>, // CSS: fon, ramka va matn rangi (input[type=password] { … })
+    pub bc: Option<u32>,
+    pub fg: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -194,6 +198,9 @@ pub struct ElInfo {
     pub parent: u16,
     pub label_for: String, // <label for="…">
     pub style: String,     // inline style="…" (qayta uslublaşda saqlanadi)
+    pub attrs: Vec<(String, String)>, // [atribut] tanlagiçlari uçun (faqat ular bölsa to'ldiriladi)
+    pub nth: u32,          // aka-ukalar orasidagi tartib raqami (1 dan; 0 — nomaʼlum)
+    pub after: u32,        // keyingi aka-ukalar soni
 }
 
 #[derive(Clone)]
@@ -212,6 +219,7 @@ pub struct Doc {
     pub inputs: Vec<Input>,
     pub forms: Vec<Form>,
     pub rules: Vec<Rule>, // classList özgarişida qayta uslublaş uçun
+    pub need: (bool, bool, bool), // css::needs(rules): atributlar, oldingi aka-ukalar, keyingilar soni
     pub svgs: Vec<String>,         // ichki <svg> belgilaşlari (src = "svg:N")
     pub details: Vec<bool>,        // <details> oçiqmi
     pub base: Option<String>,      // <base href>
@@ -227,7 +235,7 @@ pub const NO_EL: u16 = u16::MAX;
 
 impl Doc {
     pub fn empty() -> Doc {
-        Doc { title: String::new(), blocks: Vec::new(), elems: Vec::new(), scripts: Vec::new(), bg: None, color: None, inputs: Vec::new(), forms: Vec::new(), rules: Vec::new(), svgs: Vec::new(), details: Vec::new(), base: None, refresh: None, hovered: Vec::new(), media_on: Vec::new(), src: String::new(), extra_css: String::new(), canvases: Vec::new() }
+        Doc { title: String::new(), blocks: Vec::new(), elems: Vec::new(), scripts: Vec::new(), bg: None, color: None, inputs: Vec::new(), forms: Vec::new(), rules: Vec::new(), svgs: Vec::new(), details: Vec::new(), base: None, refresh: None, hovered: Vec::new(), media_on: Vec::new(), src: String::new(), extra_css: String::new(), canvases: Vec::new(), need: (false, false, false) }
     }
     /// <details> ni oçadi / yopadi.
     pub fn toggle_details(&mut self, d: u16) {
@@ -502,9 +510,28 @@ impl Doc {
         let mut parent = Sty::root();
         let mut pvars = css::no_vars();
         let mut anc: Vec<ElRef> = Vec::new();
-        for &k in &ch {
+        // oldingi aka-ukalar (faqat +, ~, :nth-of-type bölsa): bir xil otali, oldinroq ro'yxatga olinganlar
+        let prevs: Vec<Vec<ElRef>> = ch
+            .iter()
+            .map(|&k| {
+                if !self.need.1 {
+                    return Vec::new();
+                }
+                let par = self.elems[k].parent;
+                let mut v: Vec<ElRef> = self.elems[..k]
+                    .iter()
+                    .rev()
+                    .filter(|e| e.parent == par)
+                    .take(512)
+                    .map(|e| ElRef { tag: &e.tag, id: &e.id, classes: &e.classes, attrs: &e.attrs, ..ElRef::default() })
+                    .collect();
+                v.reverse();
+                v
+            })
+            .collect();
+        for (ci, &k) in ch.iter().enumerate() {
             let info = &self.elems[k];
-            let me = ElRef { tag: &info.tag, id: &info.id, classes: &info.classes, hover: self.hovered.contains(&(k as u16)) };
+            let me = ElRef { tag: &info.tag, id: &info.id, classes: &info.classes, hover: self.hovered.contains(&(k as u16)), attrs: &info.attrs, nth: info.nth, after: info.after, prev: &prevs[ci] };
             let inline = if info.style.is_empty() { None } else { Some(info.style.as_str()) };
             let (st, v) = css::compute_v(&parent, &pvars, &self.rules, &me, &anc, inline);
             if k == el {
@@ -968,6 +995,18 @@ struct Open {
     rspan: u8,
     nb: usize, // ochilganda doc.blocks soni (böş height li element uçun)
     vars: css::Vars, // maxsus xossalar (--nom), bolalarga meros
+    attrs: Vec<(String, String)>,
+    nth: u32,       // ota içidagi tartib raqami (1 dan)
+    after: u32,     // keyingi aka-ukalar soni (oldindan körib hisoblangan; u32::MAX — nomaʼlum)
+    kids: Vec<Sib>, // hozirgaça oçilgan bolalar (+, ~, :nth-of-type uçun)
+}
+
+/// Oçilgan bola element (tanlagiçlarda oldingi qöşni sifatida).
+struct Sib {
+    tag: String,
+    id: String,
+    classes: Vec<String>,
+    attrs: Vec<(String, String)>,
 }
 
 /// Blok darajasidagi element (height / min-height faqat şularga qöllanadi).
@@ -1049,9 +1088,57 @@ struct P {
     media: Option<(String, String, String, u16, u16)>, // <video>/<audio>: (turi, manba, poster, width, height)
     pic_src: String,                 // <picture><source srcset>
     depth: u8,                       // iframe ichma-ichligi
+    need: (bool, bool, bool),        // css::needs: atributlar, oldingi qöşnilar, keyingilar soni
+    root_kids: Vec<Sib>,             // ildiz darajasidagi elementlar
+    next_after: u32,                 // oçilayotgan elementdan keyingi aka-ukalar soni (oldindan körilgan)
 }
 
 impl P {
+    /// `lv` darajadagi (0 — ildiz, k — stack[k-1] ning) bolalar ro'yxati.
+    fn kids_of(&self, lv: usize) -> &Vec<Sib> {
+        if lv == 0 { &self.root_kids } else { &self.stack[lv - 1].kids }
+    }
+    fn kids_mut(&mut self) -> &mut Vec<Sib> {
+        match self.stack.last_mut() {
+            Some(o) => &mut o.kids,
+            None => &mut self.root_kids,
+        }
+    }
+    /// Böş / maxsus element (img, input, script…) ham aka-uka sifatida hisoblanadi.
+    fn note_child(&mut self, name: &str, tag: &str) {
+        let s = if self.need.1 {
+            let id = attr(tag, "id").unwrap_or_default();
+            let classes: Vec<String> = attr(tag, "class").map(|c| c.split_whitespace().map(String::from).collect()).unwrap_or_default();
+            Sib { tag: String::from(name), id, classes, attrs: if self.need.0 { all_attrs(tag) } else { Vec::new() } }
+        } else {
+            Sib { tag: String::from(name), id: String::new(), classes: Vec::new(), attrs: Vec::new() }
+        };
+        self.kids_mut().push(s);
+    }
+    /// Steqdagi ajdodlar, ularning va elementning oldingi aka-ukalari bilan uslub hisoblaş.
+    #[allow(clippy::too_many_arguments)]
+    fn style_for(&self, parent: &Sty, vars: &css::Vars, name: &str, id: &str, classes: &[String], attrs: &[(String, String)], style: Option<&str>) -> (Sty, css::Vars) {
+        let n = self.stack.len();
+        let prevs: Vec<Vec<ElRef>> = (0..=n)
+            .map(|lv| {
+                if !self.need.1 {
+                    return Vec::new();
+                }
+                let kids = self.kids_of(lv);
+                let upto = if lv < n { (self.stack[lv].nth as usize).saturating_sub(1).min(kids.len()) } else { kids.len() };
+                kids[upto.saturating_sub(512)..upto].iter().map(|s| ElRef { tag: &s.tag, id: &s.id, classes: &s.classes, attrs: &s.attrs, ..ElRef::default() }).collect()
+            })
+            .collect();
+        let anc: Vec<ElRef> = self
+            .stack
+            .iter()
+            .enumerate()
+            .map(|(k, o)| ElRef { tag: &o.tag, id: &o.id, classes: &o.classes, hover: false, attrs: &o.attrs, nth: o.nth, after: o.after, prev: &prevs[k] })
+            .collect();
+        let after = if self.need.2 { self.next_after } else { u32::MAX };
+        let me = ElRef { tag: name, id, classes, hover: false, attrs, nth: self.kids_of(n).len() as u32 + 1, after, prev: &prevs[n] };
+        css::compute_v(parent, vars, &self.rules, &me, &anc, style)
+    }
     fn top_vars(&self) -> css::Vars {
         self.stack.last().map(|o| o.vars.clone()).unwrap_or_else(css::no_vars)
     }
@@ -1187,11 +1274,8 @@ impl P {
     fn void_pos(&mut self, blk: &mut Block, name: &str, tag: &str) {
         let id = attr(tag, "id").unwrap_or_default();
         let classes: Vec<String> = attr(tag, "class").map(|c| c.split_whitespace().map(String::from).collect()).unwrap_or_default();
-        let st = {
-            let anc: Vec<ElRef> = self.stack.iter().map(|o| ElRef { tag: &o.tag, id: &o.id, classes: &o.classes, hover: false }).collect();
-            let me = ElRef { tag: name, id: &id, classes: &classes, hover: false };
-            css::compute_v(&self.top(), &self.top_vars(), &self.rules, &me, &anc, attr(tag, "style").as_deref()).0
-        };
+        let attrs = if self.need.0 { all_attrs(tag) } else { Vec::new() };
+        let st = self.style_for(&self.top(), &self.top_vars(), name, &id, &classes, &attrs, attr(tag, "style").as_deref()).0;
         let kind = match st.pos {
             2 => 3,
             3 => 4,
@@ -1242,7 +1326,7 @@ impl P {
             const KEEP: [&str; 5] = ["input", "textarea", "select", "button", "label"];
             let tag = if KEEP.contains(&e.tag.as_str()) { e.tag.clone() } else { String::from("#frame") };
             if keep {
-                self.doc.elems.push(ElInfo { id: String::new(), tag, onclick: None, classes: Vec::new(), parent: remap(e.parent), label_for: String::new(), style: String::new() });
+                self.doc.elems.push(ElInfo { id: String::new(), tag, onclick: None, classes: Vec::new(), parent: remap(e.parent), label_for: String::new(), style: String::new(), attrs: Vec::new(), nth: 0, after: u32::MAX });
             }
         }
         let ioff = self.doc.inputs.len() as u16;
@@ -1407,10 +1491,24 @@ impl P {
             let onclick = attr(tag, "onclick");
             let classes: Vec<String> = attr(tag, "class").map(|c| c.split_whitespace().map(String::from).collect()).unwrap_or_default();
             let parent = self.el();
-            self.doc.elems.push(ElInfo { id, tag: String::from("input"), onclick, classes, parent, label_for: String::new(), style: attr(tag, "style").unwrap_or_default() });
+            let attrs = if self.need.0 { all_attrs(tag) } else { Vec::new() };
+            self.doc.elems.push(ElInfo { id, tag: String::from("input"), onclick, classes, parent, label_for: String::new(), style: attr(tag, "style").unwrap_or_default(), attrs, nth: 0, after: u32::MAX });
             (self.doc.elems.len() - 1) as u16
         });
         let size = attr(tag, "size").and_then(|v| v.parse().ok()).unwrap_or(if kind == 0 || kind == 3 { 20 } else { 0 });
+        // CSS dan maydon ranglari (input[type=password], .forma input …)
+        let (mut bg, mut bc, mut fg) = (None, None, None);
+        if matches!(kind, 0 | 3) {
+            let tname = tag.split(|c: char| c.is_whitespace() || c == '/').next().unwrap_or("input").to_ascii_lowercase();
+            let id = attr(tag, "id").unwrap_or_default();
+            let classes: Vec<String> = attr(tag, "class").map(|c| c.split_whitespace().map(String::from).collect()).unwrap_or_default();
+            let attrs = if self.need.0 { all_attrs(tag) } else { Vec::new() };
+            let parent = self.top();
+            let st = self.style_for(&parent, &self.top_vars(), &tname, &id, &classes, &attrs, attr(tag, "style").as_deref()).0;
+            bg = st.bg;
+            bc = st.bc.filter(|_| st.bw > 0.0);
+            fg = st.color.filter(|c| Some(*c) != parent.color);
+        }
         self.doc.inputs.push(Input {
             kind,
             name: attr(tag, "name").unwrap_or_default(),
@@ -1424,6 +1522,9 @@ impl P {
             radio: false,
             min: attr(tag, "min").and_then(|v| v.trim().parse().ok()).unwrap_or(0.0),
             max: attr(tag, "max").and_then(|v| v.trim().parse().ok()).unwrap_or(if kind == 9 { 1.0 } else { 100.0 }),
+            bg,
+            bc,
+            fg,
         });
         (self.doc.inputs.len() - 1) as u16
     }
@@ -1497,11 +1598,14 @@ impl P {
             Some("ltr") => parent.rtl = false,
             _ => {}
         }
+        // Haqiqiy <html>/<body> tegi yaşirin elementning örnini egallaydi
+        if (name == "html" || name == "body") && self.kids_of(self.stack.len()).last().is_some_and(|k| k.tag == name) {
+            self.kids_mut().pop();
+        }
+        let attrs = if self.need.0 { all_attrs(tag) } else { Vec::new() };
         let (mut st, vars) = {
-            let anc: Vec<ElRef> = self.stack.iter().map(|o| ElRef { tag: &o.tag, id: &o.id, classes: &o.classes, hover: false }).collect();
-            let me = ElRef { tag: name, id: &id, classes: &classes, hover: false };
             let style = attr(tag, "style");
-            css::compute_v(&parent, &self.top_vars(), &self.rules, &me, &anc, style.as_deref())
+            self.style_for(&parent, &self.top_vars(), name, &id, &classes, &attrs, style.as_deref())
         };
         // Eski HTML atributlari
         if let Some(c) = attr(tag, "bgcolor").and_then(|c| css::parse_color(&c)) {
@@ -1563,7 +1667,7 @@ impl P {
         // Har bir element ro'yxatga olinadi (JS: querySelectorAll, classList, hodisalar qalqişi)
         let el = if self.doc.elems.len() < 60_000 {
             let label_for = if name == "label" { attr(tag, "for").unwrap_or_default() } else { String::new() };
-            self.doc.elems.push(ElInfo { id: id.clone(), tag: String::from(name), onclick, classes: classes.clone(), parent: self.el(), label_for, style: attr(tag, "style").unwrap_or_default() });
+            self.doc.elems.push(ElInfo { id: id.clone(), tag: String::from(name), onclick, classes: classes.clone(), parent: self.el(), label_for, style: attr(tag, "style").unwrap_or_default(), attrs: attrs.clone(), nth: 0, after: u32::MAX });
             (self.doc.elems.len() - 1) as u16
         } else {
             self.el()
@@ -1581,7 +1685,14 @@ impl P {
         let serial = self.serial;
         let rspan = if name == "td" || name == "th" { attr(tag, "rowspan").and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(1).clamp(1, 64) } else { 1 };
         let nb = self.doc.blocks.len();
-        self.stack.push(Open { tag: String::from(name), id, classes, sty: st, el, link, serial, input: NO_EL, rspan, nb, vars });
+        let nth = self.kids_of(self.stack.len()).len() as u32 + 1;
+        let after = if self.need.2 { self.next_after } else { u32::MAX };
+        if self.need.1 {
+            self.kids_mut().push(Sib { tag: String::from(name), id: id.clone(), classes: classes.clone(), attrs: attrs.clone() });
+        } else {
+            self.kids_mut().push(Sib { tag: String::from(name), id: String::new(), classes: Vec::new(), attrs: Vec::new() });
+        }
+        self.stack.push(Open { tag: String::from(name), id, classes, sty: st, el, link, serial, input: NO_EL, rspan, nb, vars, attrs, nth, after, kids: Vec::new() });
     }
     /// rowspan: joriy qatorda yuqoridan çozilgan kataklar uçun bo'ş joy egallovçi kataklar.
     /// `all` — qator oxiri (qolgan hamma ustunlar), aks holda faqat joriy ustundagilar.
@@ -1919,10 +2030,13 @@ pub fn parse_with(src: &str, extra_css: &str) -> Doc {
 }
 
 fn parse_doc(src: &str, extra_css: &str, depth: u8) -> Doc {
-    let mut sheet = String::from(UA_CSS);
-    sheet.push_str(extra_css);
+    let mut sheet = String::from(extra_css);
     sheet.push_str(&inline_css(src));
-    let rules = css::parse_sheet(&sheet);
+    let mut rules = css::parse_sheet(UA_CSS);
+    for r in &mut rules {
+        r.ua = true;
+    }
+    rules.extend(css::parse_sheet(&sheet));
     let mut d = parse_inner(src, &rules, true, depth);
     d.media_on = css::media_state(&rules);
     if !d.media_on.is_empty() {
@@ -1935,7 +2049,9 @@ fn parse_doc(src: &str, extra_css: &str, depth: u8) -> Doc {
 
 fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc {
     let rules: Vec<Rule> = rules.to_vec();
-    let mut p = P { doc: Doc::empty(), rules, stack: Vec::new(), cur: None, pre: 0, lists: Vec::new(), in_title: false, serial: 0, form: NO_EL, dets: Vec::new(), tborder: Vec::new(), tgrid: Vec::new(), rs_new: false, media: None, pic_src: String::new(), depth };
+    let mut p = P { doc: Doc::empty(), rules, stack: Vec::new(), cur: None, pre: 0, lists: Vec::new(), in_title: false, serial: 0, form: NO_EL, dets: Vec::new(), tborder: Vec::new(), tgrid: Vec::new(), rs_new: false, media: None, pic_src: String::new(), depth, need: (false, false, false), root_kids: Vec::new(), next_after: u32::MAX };
+    p.need = css::needs(&p.rules);
+    p.doc.need = p.need;
     // Yaşirin <html> va <body> (teglar bölmasa ham uslublari qöllanadi)
     if implicit_body {
         p.open("html", "html");
@@ -1958,6 +2074,9 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc
             let name: String = t.chars().take_while(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
             if name.is_empty() {
                 continue;
+            }
+            if p.need.2 && !closing {
+                p.next_after = count_after(src, i, &name, VOID.contains(&name.as_str()) || t.ends_with('/'));
             }
             // <iframe srcdoc="…">: qiymat ajratiladi, qolgan atributlar odatdagiday öqiladi
             let (t_own, srcdoc) = if !closing && name == "iframe" { split_srcdoc(t) } else { (String::new(), None) };
@@ -1982,6 +2101,7 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc
                     blk.spans.push(Span { text: String::from("svg"), link, bold: false, code: false, br: false, color: None, size: 14.0, el: p.el(), button: false, underline: false, input: NO_EL, fx: 0 });
                     p.doc.blocks.push(blk);
                 }
+                p.note_child("svg", t);
                 i = close_end;
                 continue;
             }
@@ -2013,6 +2133,7 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc
                 p.doc.inputs[k as usize].size = w.clamp(6, 40);
                 p.doc.inputs[k as usize].options = opts;
                 p.input_span(k);
+                p.note_child("select", t);
                 i = e;
                 continue;
             }
@@ -2023,6 +2144,7 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc
                 let k = p.add_input(0, t, v, None);
                 p.doc.inputs[k as usize].size = attr(t, "cols").and_then(|v| v.parse().ok()).unwrap_or(40);
                 p.input_span(k);
+                p.note_child("textarea", t);
                 i = e;
                 continue;
             }
@@ -2036,6 +2158,7 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc
                         None => p.doc.scripts.push(Script::Inline(String::from(&src[i..e]))),
                     }
                 }
+                p.note_child(&name, t);
                 i = e;
                 continue;
             }
@@ -2389,6 +2512,9 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc
                 _ if blockish => p.flush(),
                 _ => {}
             }
+            if void {
+                p.note_child(&name, t);
+            }
             continue;
         }
         let next = src[i..].find('<').map(|j| i + j).unwrap_or(b.len());
@@ -2398,7 +2524,148 @@ fn parse_inner(src: &str, rules: &[Rule], implicit_body: bool, depth: u8) -> Doc
     }
     p.flush();
     p.doc.title = String::from(p.doc.title.trim());
+    sib_index(&mut p.doc.elems);
     p.doc
+}
+
+/// Elementlarning aka-ukalar orasidagi örni (qayta uslublaşda :nth-child, :last-child uçun).
+fn sib_index(elems: &mut [ElInfo]) {
+    let mut cnt: BTreeMap<u16, u32> = BTreeMap::new();
+    for e in elems.iter_mut() {
+        let c = cnt.entry(e.parent).or_insert(0);
+        *c += 1;
+        e.nth = *c;
+    }
+    for e in elems.iter_mut() {
+        e.after = cnt.get(&e.parent).copied().unwrap_or(e.nth).saturating_sub(e.nth);
+    }
+}
+
+/// Tegning barça atributlari: (nom kiçik harfda, qiymat). `tag` — "input type=text …".
+fn all_attrs(tag: &str) -> Vec<(String, String)> {
+    let b = tag.as_bytes();
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut i = b.iter().position(|c| c.is_ascii_whitespace()).unwrap_or(b.len());
+    while i < b.len() && out.len() < 64 {
+        while i < b.len() && (b[i].is_ascii_whitespace() || b[i] == b'/') {
+            i += 1;
+        }
+        let st = i;
+        while i < b.len() && !b[i].is_ascii_whitespace() && b[i] != b'=' && b[i] != b'/' && b[i] != b'>' {
+            i += 1;
+        }
+        if st == i {
+            i += 1;
+            continue;
+        }
+        let name = tag[st..i].to_ascii_lowercase();
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let mut val = String::new();
+        if i < b.len() && b[i] == b'=' {
+            i += 1;
+            while i < b.len() && b[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i < b.len() && (b[i] == b'"' || b[i] == b'\'') {
+                let q = b[i];
+                let vs = i + 1;
+                let ve = b[vs..].iter().position(|&c| c == q).map(|k| vs + k).unwrap_or(b.len());
+                val = decode_entities(&tag[vs..ve]);
+                i = ve + 1;
+            } else {
+                let vs = i;
+                while i < b.len() && !b[i].is_ascii_whitespace() && b[i] != b'>' {
+                    i += 1;
+                }
+                val = decode_entities(&tag[vs..i]);
+            }
+        }
+        if !out.iter().any(|(k, _)| *k == name) {
+            out.push((name, val));
+        }
+    }
+    out
+}
+
+/// Oldindan körib: `from` da boşlangan `name` elementidan keyin ota içida neçta aka-uka element bor
+/// (:last-child, :nth-last-child uçun). Juda uzun / tugamagan hujjatda — u32::MAX (nomaʼlum).
+fn count_after(src: &str, from: usize, name: &str, void: bool) -> u32 {
+    let b = src.as_bytes();
+    let low_raw = |n: &str| matches!(n, "script" | "style" | "textarea" | "select" | "svg" | "noscript" | "template" | "title");
+    let implied = |n: &str| matches!(n, "li" | "p" | "option" | "dt" | "dd");
+    if !void && low_raw(name) {
+        // xom matnli element: yopiluvçi tegigaça ötkazib yuboramiz
+        let close = alloc::format!("</{}", name);
+        match find_ci(src, from, &close) {
+            Some(e) => {
+                return count_after(src, src[e..].find('>').map(|j| e + j + 1).unwrap_or(b.len()), name, true);
+            }
+            None => return 0,
+        }
+    }
+    // oçiq teglar steki: boşida elementning özi; böşalganda — ota darajasidamiz
+    let mut stack: Vec<String> = if void { Vec::new() } else { alloc::vec![String::from(name)] };
+    let limit = from.saturating_add(400_000).min(b.len());
+    let mut i = from;
+    let mut n = 0u32;
+    while i < limit {
+        let Some(lt) = src[i..limit].find('<').map(|j| i + j) else { i = limit; break };
+        if src[lt..].starts_with("<!--") {
+            i = src[lt..].find("-->").map(|j| lt + j + 3).unwrap_or(b.len());
+            continue;
+        }
+        let Some(gt) = src[lt..].find('>').map(|j| lt + j) else { i = b.len(); break };
+        let tag = &src[lt + 1..gt];
+        i = gt + 1;
+        let closing = tag.starts_with('/');
+        let t = tag.trim_start_matches('/');
+        let tn: String = t.chars().take_while(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
+        if tn.is_empty() {
+            continue;
+        }
+        if closing {
+            match stack.iter().rposition(|x| *x == tn) {
+                Some(k) => stack.truncate(k),
+                None => return n, // otaning yopiluvçisi
+            }
+            continue;
+        }
+        if implied(&tn) && stack.last().is_some_and(|x| *x == tn) {
+            stack.pop(); // yopilmagan <li>/<p> — yangisi boşlandi
+        }
+        if stack.is_empty() {
+            n += 1;
+            if n > 100_000 {
+                return u32::MAX;
+            }
+        }
+        let v = VOID.contains(&tn.as_str()) || t.ends_with('/');
+        if !v {
+            if low_raw(&tn) {
+                let close = alloc::format!("</{}", tn);
+                match find_ci(src, i, &close) {
+                    Some(e) => i = src[e..].find('>').map(|j| e + j + 1).unwrap_or(b.len()),
+                    None => i = b.len(),
+                }
+                continue;
+            }
+            if stack.len() < 256 {
+                stack.push(tn);
+            }
+        }
+    }
+    if i >= b.len() { n } else { u32::MAX }
+}
+
+/// Registrsiz qidiruv (ASCII naqş).
+fn find_ci(s: &str, from: usize, pat: &str) -> Option<usize> {
+    let (h, p) = (s.as_bytes(), pat.as_bytes());
+    if p.is_empty() || from >= h.len() {
+        return None;
+    }
+    (from..=h.len().saturating_sub(p.len())).find(|&k| h[k..k + p.len()].eq_ignore_ascii_case(p))
 }
 
 /// Teglarsiz matn (innerHTML qator içida).

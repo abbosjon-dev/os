@@ -115,9 +115,32 @@ pub struct Compound {
     pub tag: Option<String>,
     pub id: Option<String>,
     pub classes: Vec<String>,
-    pub direct: bool, // keyingi (öngdagi) bilan ">" — bevosita ota
+    pub comb: u8,     // keyingi (öngdagi) bilan birikma: 0 — avlod (bo'şliq), 1 — ">" ota, 2 — "+" darhol oldingi qöşni, 3 — "~" oldingi qöşnilardan biri
     pub hover: bool,  // :hover — siçqonça ostidagi element (yoki uning ajdodi)
     pub root: bool,   // :root — hujjat ildizi (html yoki eng yuqori element)
+    pub attrs: Vec<AttrSel>,
+    pub pseudo: Vec<Pseudo>,
+}
+
+/// [nom], [nom=q], [nom~=q], [nom^=q], [nom$=q], [nom*=q], [nom|=q] (i — registrsiz).
+#[derive(Clone, Default, PartialEq, Debug)]
+pub struct AttrSel {
+    pub name: String,
+    pub op: u8, // 0 — bor, b'=', b'~', b'^', b'$', b'*', b'|'
+    pub val: String,
+    pub ci: bool,
+}
+
+/// Tuzilma psevdo-klasslari.
+#[derive(Clone)]
+pub enum Pseudo {
+    FirstChild,
+    LastChild,
+    OnlyChild,
+    NthChild(i32, i32),     // an+b
+    NthLastChild(i32, i32),
+    NthOfType(i32, i32),    // :first-of-type = (0,1)
+    Not(Vec<Compound>),
 }
 
 #[derive(Clone)]
@@ -125,6 +148,7 @@ pub struct Rule {
     pub sel: Vec<Vec<Compound>>, // vergul bilan ajratilgan tanlagiçlar; har biri — avlod zanjiri
     pub decls: Vec<(String, String)>,
     pub media: Vec<Vec<Mq>>,     // @media şartlari: tașqi Vec — VA (ichma-ich), içki — YOKI (vergul)
+    pub ua: bool,                // brauzerning öz uslubi (muallif qoidalaridan oldin, specificity'dan qatʼi nazar)
 }
 
 /// Bitta media so'rovi: "screen and (max-width: 600px)".
@@ -329,9 +353,10 @@ pub fn media_state(rules: &[Rule]) -> Vec<bool> {
 
 /// Elementga :hover li qoida tegişli bölişi mumkinmi (oxirgi bölagi mos keladi)?
 pub fn hover_hits(rules: &[Rule], tag: &str, id: &str, classes: &[String]) -> bool {
-    let me = ElRef { tag, id, classes, hover: true };
+    // tuzilma / atribut şartlari bu yerda e'tiborsiz — aniq natijani qayta uslublaş beradi
+    let me = ElRef { tag, id, classes, hover: true, ..ElRef::default() };
     rules.iter().any(|r| {
-        r.sel.iter().any(|ch| ch.iter().any(|c| c.hover) && ch.last().is_some_and(|l| compound_match(l, &me, false)))
+        r.sel.iter().any(|ch| ch.iter().any(|c| c.hover) && ch.last().is_some_and(|l| simple_match(l, &me, false)))
     })
 }
 
@@ -367,50 +392,292 @@ fn strip_comments(s: &str) -> String {
     out
 }
 
-fn parse_compound(s: &str) -> Option<Compound> {
-    let mut c = Compound::default();
-    let mut i = 0;
-    let b = s.as_bytes();
-    let ident = |i: &mut usize| -> String {
-        let st = *i;
-        while *i < b.len() && (b[*i].is_ascii_alphanumeric() || b[*i] == b'-' || b[*i] == b'_') {
-            *i += 1;
+/// CSS nomi (identifikator) oxiri: harf, raqam, '-', '_' va ASCII bölmagan belgilar.
+fn ident_end(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'-' || b[i] == b'_' || b[i] >= 0x80) {
+        i += 1;
+    }
+    i
+}
+
+/// `open` dagi '(' yoki '[' ning juftini topadi (qötirnoq içi hisobga olinmaydi).
+fn sel_close(b: &[u8], open: usize) -> Option<usize> {
+    let (o, c) = if b[open] == b'(' { (b'(', b')') } else { (b'[', b']') };
+    let (mut depth, mut q, mut i) = (0i32, 0u8, open);
+    while i < b.len() {
+        let ch = b[i];
+        if q != 0 {
+            if ch == b'\\' {
+                i += 1;
+            } else if ch == q {
+                q = 0;
+            }
+        } else if ch == b'"' || ch == b'\'' {
+            q = ch;
+        } else if ch == o {
+            depth += 1;
+        } else if ch == c {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
         }
-        String::from(&s[st..*i])
+        i += 1;
+    }
+    None
+}
+
+/// Yuqori darajadagi `sep` böyiça bölaş (qavslar, [ ] va qötirnoqlar içida emas).
+fn split_sel(s: &str, sep: u8) -> Vec<&str> {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let (mut st, mut i) = (0usize, 0usize);
+    while i < b.len() {
+        match b[i] {
+            b'(' | b'[' => {
+                i = sel_close(b, i).map(|e| e + 1).unwrap_or(b.len());
+                continue;
+            }
+            b'"' | b'\'' => {
+                let q = b[i];
+                i += 1;
+                while i < b.len() && b[i] != q {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+                continue;
+            }
+            c if c == sep => {
+                out.push(&s[st..i]);
+                st = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out.push(&s[st.min(s.len())..]);
+    out
+}
+
+/// "ul > li + li a" → [("ul", >), ("li", +), ("li", bo'şliq), ("a", 0)]: bölak va undan keyingi birikma.
+fn split_chain(s: &str) -> Option<Vec<(&str, u8)>> {
+    let b = s.as_bytes();
+    let mut out: Vec<(&str, u8)> = Vec::new();
+    let mut pending: Option<u8> = None;
+    let mut i = 0;
+    while i < b.len() {
+        let ch = b[i];
+        if ch.is_ascii_whitespace() {
+            if pending.is_none() && !out.is_empty() {
+                pending = Some(0);
+            }
+            i += 1;
+            continue;
+        }
+        if matches!(ch, b'>' | b'+' | b'~') {
+            if out.is_empty() || matches!(pending, Some(x) if x != 0) {
+                return None;
+            }
+            pending = Some(match ch {
+                b'>' => 1,
+                b'+' => 2,
+                _ => 3,
+            });
+            i += 1;
+            continue;
+        }
+        let st = i;
+        while i < b.len() && !b[i].is_ascii_whitespace() && !matches!(b[i], b'>' | b'+' | b'~') {
+            match b[i] {
+                b'(' | b'[' => i = sel_close(b, i)? + 1,
+                b'"' | b'\'' | b'\\' | b'{' | b'}' => return None,
+                _ => i += 1,
+            }
+        }
+        if let Some(last) = out.last_mut() {
+            last.1 = pending.take().unwrap_or(0);
+        }
+        out.push((&s[st..i], 0));
+    }
+    if matches!(pending, Some(x) if x != 0) || out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+/// "[type=text i]" içi → atribut şarti.
+fn parse_attr(s: &str) -> Option<AttrSel> {
+    let s = s.trim();
+    let e = ident_end(s.as_bytes(), 0);
+    if e == 0 {
+        return None;
+    }
+    let name = s[..e].to_ascii_lowercase();
+    let rest = s[e..].trim_start();
+    if rest.is_empty() {
+        return Some(AttrSel { name, ..AttrSel::default() });
+    }
+    let rb = rest.as_bytes();
+    let (op, skip) = match rb[0] {
+        b'=' => (b'=', 1),
+        c @ (b'~' | b'^' | b'$' | b'*' | b'|') if rb.get(1) == Some(&b'=') => (c, 2),
+        _ => return None,
+    };
+    let v = rest[skip..].trim_start();
+    let (val, tail) = match v.as_bytes().first() {
+        Some(&q) if q == b'"' || q == b'\'' => {
+            let body = &v[1..];
+            let end = body.find(q as char)?;
+            (String::from(&body[..end]), body[end + 1..].trim())
+        }
+        _ => {
+            let e = ident_end(v.as_bytes(), 0);
+            if e == 0 {
+                return None;
+            }
+            (String::from(&v[..e]), v[e..].trim())
+        }
+    };
+    let ci = match tail {
+        "" | "s" | "S" => false,
+        "i" | "I" => true,
+        _ => return None,
+    };
+    Some(AttrSel { name, op, val: if ci { val.to_lowercase() } else { val }, ci })
+}
+
+/// an+b: "odd", "even", "2n+1", "-n + 3", "n", "4".
+fn parse_nth(s: &str) -> Option<(i32, i32)> {
+    let t: String = s.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
+    match t.as_str() {
+        "odd" => return Some((2, 1)),
+        "even" => return Some((2, 0)),
+        _ => {}
+    }
+    let num = |x: &str| -> Option<i32> {
+        if x.is_empty() || x.len() > 6 || !x.bytes().all(|c| c.is_ascii_digit()) {
+            None
+        } else {
+            x.parse().ok()
+        }
+    };
+    let signed = |x: &str| -> Option<i32> {
+        match x.strip_prefix('-') {
+            Some(d) => num(d).map(|v| -v),
+            None => num(x.strip_prefix('+').unwrap_or(x)),
+        }
+    };
+    match t.find('n') {
+        Some(np) => {
+            let a = match &t[..np] {
+                "" | "+" => 1,
+                "-" => -1,
+                x => signed(x)?,
+            };
+            let r = &t[np + 1..];
+            let b = if r.is_empty() {
+                0
+            } else if r.starts_with('+') || r.starts_with('-') {
+                signed(r)?
+            } else {
+                return None;
+            };
+            Some((a, b))
+        }
+        None => Some((0, signed(&t)?)),
+    }
+}
+
+/// `idx` (1 dan) an+b ko'rinişida (n ≥ 0) ifodalanadimi?
+fn nth_ok(a: i32, b: i32, idx: i32) -> bool {
+    if a == 0 {
+        idx == b
+    } else {
+        let d = idx - b;
+        d % a == 0 && d / a >= 0
+    }
+}
+
+fn parse_compound(s: &str, depth: u8) -> Option<Compound> {
+    if depth > 4 || s.is_empty() {
+        return None;
+    }
+    let mut c = Compound::default();
+    let b = s.as_bytes();
+    let mut i = 0;
+    let ident = |i: &mut usize| -> Option<String> {
+        let e = ident_end(b, *i);
+        if e == *i {
+            return None;
+        }
+        let r = String::from(&s[*i..e]);
+        *i = e;
+        Some(r)
     };
     while i < b.len() {
         match b[i] {
             b'.' => {
                 i += 1;
-                c.classes.push(ident(&mut i));
+                c.classes.push(ident(&mut i)?);
             }
             b'#' => {
                 i += 1;
-                c.id = Some(ident(&mut i));
+                c.id = Some(ident(&mut i)?);
             }
             b'*' => i += 1,
+            b'[' => {
+                let e = sel_close(b, i)?;
+                c.attrs.push(parse_attr(&s[i + 1..e])?);
+                i = e + 1;
+            }
             b':' => {
-                // Zararsiz psevdo-klasslar e'tiborsiz; holatga bogʻliqlari (:hover…) — qoida taşlanadi
-                let rest = &s[i + 1..];
-                let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
-                if name == "root" {
-                    c.root = true;
-                    i += 1 + name.len();
-                } else if matches!(name.as_str(), "link" | "visited" | "any-link") {
-                    i += 1 + name.len();
-                } else if name == "hover" {
-                    c.hover = true;
-                    i += 1 + name.len();
+                // Holatga bogʻliq / nomaʼlum psevdo-klass (:focus, ::before …) — faqat şu tanlagiç taşlanadi
+                i += 1;
+                let name = ident(&mut i)?.to_ascii_lowercase();
+                let arg = if b.get(i) == Some(&b'(') {
+                    let e = sel_close(b, i)?;
+                    let a = &s[i + 1..e];
+                    i = e + 1;
+                    Some(a)
                 } else {
-                    return None;
+                    None
+                };
+                match (name.as_str(), arg) {
+                    ("root", None) => c.root = true,
+                    ("hover", None) => c.hover = true,
+                    ("link" | "visited" | "any-link", None) => {}
+                    ("first-child", None) => c.pseudo.push(Pseudo::FirstChild),
+                    ("last-child", None) => c.pseudo.push(Pseudo::LastChild),
+                    ("only-child", None) => c.pseudo.push(Pseudo::OnlyChild),
+                    ("first-of-type", None) => c.pseudo.push(Pseudo::NthOfType(0, 1)),
+                    ("nth-child", Some(a)) => {
+                        let (x, y) = parse_nth(a)?;
+                        c.pseudo.push(Pseudo::NthChild(x, y));
+                    }
+                    ("nth-last-child", Some(a)) => {
+                        let (x, y) = parse_nth(a)?;
+                        c.pseudo.push(Pseudo::NthLastChild(x, y));
+                    }
+                    ("nth-of-type", Some(a)) => {
+                        let (x, y) = parse_nth(a)?;
+                        c.pseudo.push(Pseudo::NthOfType(x, y));
+                    }
+                    ("not", Some(a)) => {
+                        let mut inner = Vec::new();
+                        for part in split_sel(a, b',') {
+                            let toks = split_chain(part.trim())?;
+                            if toks.len() != 1 {
+                                return None; // :not() içida birikmalar qöllanmaydi
+                            }
+                            inner.push(parse_compound(toks[0].0, depth + 1)?);
+                        }
+                        c.pseudo.push(Pseudo::Not(inner));
+                    }
+                    _ => return None,
                 }
             }
-            b'[' => return None, // atribut tanlagiçi — qöllanmaydi
             _ => {
-                let t = ident(&mut i);
-                if t.is_empty() {
-                    return None;
-                }
+                let t = ident(&mut i)?;
                 c.tag = Some(t.to_ascii_lowercase());
             }
         }
@@ -418,33 +685,29 @@ fn parse_compound(s: &str) -> Option<Compound> {
     Some(c)
 }
 
-/// "a, b c" — tanlagiçlar ro'yxati.
+/// "a, b c, ul > li + li" — tanlagiçlar ro'yxati. Noto'g'ri tanlagiç faqat özi taşlanadi.
 fn parse_selectors(s: &str) -> Vec<Vec<Compound>> {
     let mut out = Vec::new();
-    for part in s.split(',') {
-        let part = part.trim();
-        if part.is_empty() || part.contains('+') || part.contains('~') {
+    for part in split_sel(s, b',') {
+        let Some(toks) = split_chain(part.trim()) else { continue };
+        if toks.len() > 32 {
             continue;
         }
-        let spaced = part.replace('>', " > ");
-        let mut chain: Option<Vec<Compound>> = Some(Vec::new());
-        for tok in spaced.split_whitespace() {
-            let Some(ch) = chain.as_mut() else { break };
-            if tok == ">" {
-                if let Some(last) = ch.last_mut() {
-                    last.direct = true;
+        let mut ch = Vec::new();
+        for (t, comb) in toks {
+            match parse_compound(t, 0) {
+                Some(mut c) => {
+                    c.comb = comb;
+                    ch.push(c);
                 }
-                continue;
-            }
-            match parse_compound(tok) {
-                Some(c) => ch.push(c),
-                None => chain = None,
+                None => {
+                    ch.clear();
+                    break;
+                }
             }
         }
-        if let Some(ch) = chain {
-            if !ch.is_empty() {
-                out.push(ch);
-            }
+        if !ch.is_empty() {
+            out.push(ch);
         }
     }
     out
@@ -528,21 +791,33 @@ fn parse_block(src: &str, rules: &mut Vec<Rule>, depth: u8) {
         let sel = parse_selectors(&rest_t[..ob]);
         let decls = parse_decls(&rest_t[ob + 1..cb]);
         if !sel.is_empty() && !decls.is_empty() {
-            rules.push(Rule { sel, decls, media: Vec::new() });
+            rules.push(Rule { sel, decls, media: Vec::new(), ua: false });
         }
         rest = &rest_t[cb + 1..];
     }
 }
 
-/// Element: (teg, id, klasslar) — tanlagiçga moslaş uçun.
+/// Element: (teg, id, klasslar, atributlar, aka-ukalar orasidagi örni) — tanlagiçga moslaş uçun.
+#[derive(Clone, Copy)]
 pub struct ElRef<'a> {
     pub tag: &'a str,
     pub id: &'a str,
     pub classes: &'a [String],
     pub hover: bool, // siçqonça şu element (yoki uning avlodi) ustidami
+    pub attrs: &'a [(String, String)], // atributlar (nomi kiçik harfda); class / id bölmasa ham ular hisobga olinadi
+    pub nth: u32,   // aka-ukalar (element) orasidagi tartib raqami, 1 dan; 0 — nomaʼlum
+    pub after: u32, // keyingi aka-ukalar soni; u32::MAX — nomaʼlum
+    pub prev: &'a [ElRef<'a>], // oldingi aka-ukalar (eng yaqini — oxirida); to'liq bölmasligi mumkin
 }
 
-fn compound_match(c: &Compound, e: &ElRef, top: bool) -> bool {
+impl Default for ElRef<'_> {
+    fn default() -> Self {
+        ElRef { tag: "", id: "", classes: &[], hover: false, attrs: &[], nth: 0, after: u32::MAX, prev: &[] }
+    }
+}
+
+/// Teg / id / klass / :hover / :root — tuzilma va atributlarsiz.
+fn simple_match(c: &Compound, e: &ElRef, top: bool) -> bool {
     (!c.hover || e.hover)
         && (!c.root || top || e.tag == "html")
         && c.tag.as_ref().is_none_or(|t| t == e.tag)
@@ -550,33 +825,155 @@ fn compound_match(c: &Compound, e: &ElRef, top: bool) -> bool {
         && c.classes.iter().all(|k| e.classes.iter().any(|x| x == k))
 }
 
-/// Tanlagiç zanjiri: oxirgisi — elementning özi, oldingilari — ajdodlarida (tartib bilan).
+fn attr_ok(a: &AttrSel, e: &ElRef) -> bool {
+    let joined;
+    let v: &str = match e.attrs.iter().find(|(k, _)| *k == a.name) {
+        Some((_, v)) => v,
+        None if a.name == "id" && !e.id.is_empty() => e.id,
+        None if a.name == "class" && !e.classes.is_empty() => {
+            joined = e.classes.join(" ");
+            &joined
+        }
+        None => return false,
+    };
+    let low;
+    let v = if a.ci {
+        low = v.to_lowercase();
+        low.as_str()
+    } else {
+        v
+    };
+    let q = a.val.as_str();
+    match a.op {
+        0 => true,
+        b'=' => v == q,
+        b'~' => !q.is_empty() && v.split_whitespace().any(|w| w == q),
+        b'^' => !q.is_empty() && v.starts_with(q),
+        b'$' => !q.is_empty() && v.ends_with(q),
+        b'*' => !q.is_empty() && v.contains(q),
+        b'|' => v == q || v.strip_prefix(q).is_some_and(|r| r.starts_with('-')),
+        _ => false,
+    }
+}
+
+fn pseudo_ok(p: &Pseudo, e: &ElRef, top: bool) -> bool {
+    let last = e.after != u32::MAX && e.after == 0;
+    match p {
+        Pseudo::FirstChild => e.nth == 1,
+        Pseudo::LastChild => last,
+        Pseudo::OnlyChild => e.nth == 1 && last,
+        Pseudo::NthChild(a, b) => e.nth > 0 && nth_ok(*a, *b, e.nth as i32),
+        Pseudo::NthLastChild(a, b) => e.after != u32::MAX && nth_ok(*a, *b, e.after as i32 + 1),
+        Pseudo::NthOfType(a, b) => {
+            // oldingi aka-ukalar ro'yxati to'liq bölsagina
+            e.nth > 0 && e.prev.len() + 1 == e.nth as usize && nth_ok(*a, *b, 1 + e.prev.iter().filter(|s| s.tag == e.tag).count() as i32)
+        }
+        Pseudo::Not(list) => !list.iter().any(|x| compound_match(x, e, top)),
+    }
+}
+
+fn compound_match(c: &Compound, e: &ElRef, top: bool) -> bool {
+    simple_match(c, e, top) && c.attrs.iter().all(|a| attr_ok(a, e)) && c.pseudo.iter().all(|p| pseudo_ok(p, e, top))
+}
+
+/// `e.prev[j]` — örni (nth, after) va öz oldingi aka-ukalari bilan.
+fn sib<'a>(e: &ElRef<'a>, j: usize) -> ElRef<'a> {
+    let mut s = e.prev[j];
+    let back = (e.prev.len() - j) as u32;
+    s.nth = if e.nth > back { e.nth - back } else { 0 };
+    s.after = if e.after == u32::MAX { u32::MAX } else { e.after + back };
+    s.prev = &e.prev[..j];
+    s
+}
+
+/// `chain[ci]` `e` ga mos keldi (`anc` — uning ajdodlari, ota oxirida); chapdagi bölaklar orqaga qaytiş bilan tekşiriladi.
+fn match_left(chain: &[Compound], ci: usize, e: ElRef, anc: &[ElRef], budget: &mut u32) -> bool {
+    if ci == 0 {
+        return true;
+    }
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    let c = &chain[ci - 1];
+    match c.comb {
+        1 => {
+            let Some((p, up)) = anc.split_last() else { return false };
+            compound_match(c, p, up.is_empty()) && match_left(chain, ci - 1, *p, up, budget)
+        }
+        2 | 3 => {
+            for j in (0..e.prev.len()).rev() {
+                let s = sib(&e, j);
+                if compound_match(c, &s, false) && match_left(chain, ci - 1, s, anc, budget) {
+                    return true;
+                }
+                if c.comb == 2 {
+                    break;
+                }
+            }
+            false
+        }
+        _ => {
+            for k in (0..anc.len()).rev() {
+                if compound_match(c, &anc[k], k == 0) && match_left(chain, ci - 1, anc[k], &anc[..k], budget) {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
+
+/// Tanlagiç zanjiri: oxirgisi — elementning özi; oldingilari birikma turiga qarab
+/// ajdodlarda (bo'şliq, >) yoki oldingi aka-ukalarda (+, ~). Moslaş öngdan çapga.
 pub fn matches(chain: &[Compound], el: &ElRef, ancestors: &[ElRef]) -> bool {
-    let Some((last, prev)) = chain.split_last() else { return false };
+    let Some(last) = chain.last() else { return false };
     if !compound_match(last, el, ancestors.is_empty()) {
         return false;
     }
-    let mut k = ancestors.len();
-    for c in prev.iter().rev() {
-        if c.direct {
-            // "c > keyingi": bevosita ota bölişi şart
-            if k == 0 || !compound_match(c, &ancestors[k - 1], k == 1) {
-                return false;
-            }
-            k -= 1;
-            continue;
-        }
-        loop {
-            if k == 0 {
-                return false;
-            }
-            k -= 1;
-            if compound_match(c, &ancestors[k], k == 0) {
-                break;
+    let mut budget = 4096;
+    match_left(chain, chain.len() - 1, *el, ancestors, &mut budget)
+}
+
+fn spec_c(c: &Compound) -> u32 {
+    let ids = c.id.is_some() as u32;
+    let cls = (c.classes.len() + c.attrs.len()) as u32 + c.hover as u32 + c.root as u32;
+    let mut s = (ids << 20) + (cls << 10) + c.tag.is_some() as u32;
+    for p in &c.pseudo {
+        s += match p {
+            Pseudo::Not(l) => l.iter().map(spec_c).max().unwrap_or(0),
+            _ => 1 << 10,
+        };
+    }
+    s
+}
+
+/// Specificity (a, b, c) bir sonda: a·2²⁰ + b·2¹⁰ + c. :not(X) — X ning specificity'si.
+pub fn specificity(chain: &[Compound]) -> u32 {
+    chain.iter().map(spec_c).sum()
+}
+
+/// Qoidalar qanday kontekst talab qiladi: (atributlar, oldingi aka-ukalar ro'yxati, keyingi aka-ukalar soni).
+pub fn needs(rules: &[Rule]) -> (bool, bool, bool) {
+    fn walk(c: &Compound, n: &mut (bool, bool, bool)) {
+        n.0 |= !c.attrs.is_empty();
+        n.1 |= c.comb == 2 || c.comb == 3;
+        for p in &c.pseudo {
+            match p {
+                Pseudo::NthOfType(..) => n.1 = true,
+                Pseudo::LastChild | Pseudo::OnlyChild | Pseudo::NthLastChild(..) => n.2 = true,
+                Pseudo::Not(l) => l.iter().for_each(|x| walk(x, n)),
+                _ => {}
             }
         }
     }
-    true
+    let mut n = (false, false, false);
+    for r in rules {
+        for ch in &r.sel {
+            ch.iter().for_each(|c| walk(c, &mut n));
+        }
+    }
+    n
 }
 
 const NAMED: [(&str, u32); 30] = [
@@ -1490,13 +1887,19 @@ pub fn compute_v(parent: &Sty, pvars: &Vars, rules: &[Rule], el: &ElRef, ancesto
     let mut s = parent.inherit();
     let inl = inline.map(parse_decls).unwrap_or_default();
     let mut decls: Vec<(&str, &str)> = Vec::new();
-    for r in rules {
+    // Kaskad: brauzer uslublari, keyin muallif qoidalari specificity böyiça (teng bölsa — manba tartibi)
+    let mut hits: Vec<(bool, u32, usize)> = Vec::new();
+    for (ri, r) in rules.iter().enumerate() {
         if !media_ok(&r.media) {
             continue;
         }
-        if r.sel.iter().any(|ch| matches(ch, el, ancestors)) {
-            decls.extend(r.decls.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        if let Some(sp) = r.sel.iter().filter(|ch| matches(ch, el, ancestors)).map(|ch| specificity(ch)).max() {
+            hits.push((!r.ua, sp, ri));
         }
+    }
+    hits.sort_by_key(|h| (h.0, h.1));
+    for &(_, _, ri) in &hits {
+        decls.extend(rules[ri].decls.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     }
     decls.extend(inl.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     let custom: Vec<(String, String)> = decls.iter().filter(|(k, _)| k.starts_with("--")).map(|(k, v)| (String::from(*k), String::from(*v))).collect();
@@ -1554,7 +1957,7 @@ pub fn self_test_vars() -> Result<usize, &'static str> {
     let none: [String; 0] = [];
     let cls = |c: &'static str| alloc::vec![String::from(c)];
     fn el<'a>(tag: &'a str, classes: &'a [String]) -> ElRef<'a> {
-        ElRef { tag, id: "", classes, hover: false }
+        ElRef { tag, id: "", classes, ..ElRef::default() }
     }
     let root = Sty::root();
     let (hs, hv) = compute_v(&root, &no_vars(), &rules, &el("html", &none), &[], None);
@@ -1642,5 +2045,157 @@ pub fn self_test_vars() -> Result<usize, &'static str> {
         return Err("padding: calc(%) yoki noto'g'ri calc() xato qöllandi");
     }
     n += 3;
+    Ok(n)
+}
+
+/// O'z-özini tekşiruv: birikmalar (>, +, ~), [atribut], :first/last/nth-child, :not(), specificity.
+pub fn self_test_selectors() -> Result<usize, &'static str> {
+    let mut n = 0;
+    let none: [String; 0] = [];
+    let at = |k: &str, v: &str| alloc::vec![(String::from(k), String::from(v))];
+    fn e<'a>(tag: &'a str, classes: &'a [String]) -> ElRef<'a> {
+        ElRef { tag, id: "", classes, ..ElRef::default() }
+    }
+    let sel = |s: &str| -> Vec<Compound> { parse_selectors(s).into_iter().next().unwrap_or_default() };
+    let top = alloc::vec![String::from("top")];
+    // 1) "ul > li": bevosita bola mos, nevara (ul > li > div > li) mos emas
+    let (ul, li, div) = (e("ul", &top), e("li", &none), e("div", &none));
+    let c = sel("ul > li");
+    if !matches(&c, &li, &[ul]) || matches(&c, &li, &[ul, li, div]) {
+        return Err("'ul > li' nevara li ga mos keldi yoki bolaga mos kelmadi");
+    }
+    let c2 = sel("ul.top>li");
+    let inner_ul = e("ul", &none);
+    if !matches(&c2, &li, &[ul]) || matches(&c2, &li, &[ul, li, inner_ul]) {
+        return Err("'ul.top>li' ichma-ich ro'yxatda xato");
+    }
+    if !matches(&sel("ul li"), &li, &[ul, li, div]) {
+        return Err("avlod tanlagiçi buzildi");
+    }
+    n += 3;
+    // 2) "h1 + p" — faqat darhol keyingi p; "h1 ~ p" — hammasi
+    let body = e("body", &none);
+    let kids = [e("h1", &none), e("p", &none), e("p", &none), e("div", &none), e("p", &none)];
+    let at_k = |k: usize| ElRef { nth: k as u32 + 1, after: (kids.len() - k - 1) as u32, prev: &kids[..k], ..kids[k] };
+    let adj = sel("h1 + p");
+    let sib_all = sel("h1 ~ p");
+    let hits = |c: &[Compound]| -> Vec<usize> { (0..kids.len()).filter(|&k| matches(c, &at_k(k), core::slice::from_ref(&body))).collect() };
+    if hits(&adj) != [1] || hits(&sib_all) != [1, 2, 4] || hits(&sel("h1+p+p")) != [2] || hits(&sel("body > h1 ~ div + p")) != [4] {
+        return Err("'+' / '~' birikmalari notöğri");
+    }
+    n += 4;
+    // 3) :nth-child, :first-child, :last-child, :only-child, :nth-last-child, :nth-of-type
+    let row = |k: u32| ElRef { nth: k, after: 6 - k, ..e("tr", &none) };
+    let nth = |s: &str| -> Vec<u32> { let c = sel(s); (1..=6).filter(|&k| matches(&c, &row(k), &[])).collect() };
+    if nth("tr:nth-child(2n+1)") != [1, 3, 5] || nth("tr:nth-child(odd)") != [1, 3, 5] || nth(":nth-child(even)") != [2, 4, 6] {
+        return Err(":nth-child(2n+1) / odd / even notöğri");
+    }
+    if nth(":nth-child(-n+3)") != [1, 2, 3] || nth(":nth-child( 3n - 1 )") != [2, 5] || nth(":nth-child(4)") != [4] || nth(":nth-child(n+5)") != [5, 6] {
+        return Err(":nth-child(-n+3) / an-b notöğri");
+    }
+    if nth(":first-child") != [1] || nth(":last-child") != [6] || nth(":nth-last-child(2)") != [5] || !nth(":only-child").is_empty() {
+        return Err(":first-child / :last-child / :nth-last-child notöğri");
+    }
+    if hits(&sel("p:first-of-type")) != [1] || hits(&sel("p:nth-of-type(3)")) != [4] {
+        return Err(":nth-of-type notöğri");
+    }
+    // nomaʼlum örin (nth = 0, after = MAX) — tuzilma psevdo-klasslari mos kelmaydi
+    if matches(&sel("li:first-child"), &li, &[]) || matches(&sel("li:last-child"), &li, &[]) {
+        return Err("nomaʼlum örinli element :first-child ga mos keldi");
+    }
+    n += 5;
+    // 4) atributlar
+    let h1 = at("href", "https://zamin.app/docs.pdf");
+    let a = ElRef { attrs: &h1, ..e("a", &none) };
+    let t1 = at("type", "TEXT");
+    let inp = ElRef { attrs: &t1, ..e("input", &none) };
+    let ok = |s: &str, el: &ElRef| matches(&sel(s), el, &[]);
+    if !ok("[href^=\"https\"]", &a) || ok("[href^='http:']", &a) || !ok("a[href$=\".pdf\"]", &a) || !ok("[href*=zamin]", &a) || !ok("[href]", &a) || ok("[title]", &a) {
+        return Err("[href^=…] / $= / *= / [atr] notöğri");
+    }
+    if !ok("input[type=text i]", &inp) || ok("input[type=text]", &inp) || !ok("[type=\"TEXT\" s]", &inp) {
+        return Err("[type=text i] registrsiz moslaş notöğri");
+    }
+    let l1 = at("lang", "uz-Latn");
+    let cl = alloc::vec![String::from("btn"), String::from("katta")];
+    let x = ElRef { attrs: &l1, ..e("p", &cl) };
+    if !ok("[lang|=uz]", &x) || ok("[lang|=u]", &x) || !ok("[class~=katta]", &x) || ok("[class~=kat]", &x) {
+        return Err("[lang|=…] / [class~=…] notöğri");
+    }
+    n += 4;
+    // 5) :not() va specificity
+    let fa = alloc::vec![String::from("karta"), String::from("faol")];
+    let k1 = alloc::vec![String::from("karta")];
+    let (cf, ck) = (e("div", &fa), e("div", &k1));
+    let nt = sel(".karta:not(.faol)");
+    if matches(&nt, &cf, &[]) || !matches(&nt, &ck, &[]) || !matches(&sel("div:not(.a, .b, [x])"), &ck, &[]) || matches(&sel(":not(div)"), &ck, &[]) {
+        return Err(":not() notöğri");
+    }
+    if specificity(&sel(":not(.a)")) != specificity(&sel(".a")) || specificity(&sel("li:not(#x)")) != specificity(&sel("li#x")) {
+        return Err(":not(.a) specificity'si .a nikiga teng emas");
+    }
+    if !(specificity(&sel("#a")) > specificity(&sel(".a.b.c")) && specificity(&sel(".a")) > specificity(&sel("ul li p")) && specificity(&sel("[x]")) == specificity(&sel(":first-child"))) {
+        return Err("specificity tartibi notöğri");
+    }
+    n += 3;
+    // 6) noto'g'ri tanlagiçlar — panic yöq, faqat öşa qoida taşlanadi
+    let rules = parse_sheet(
+        "p { color: #010101 } a[ { color: red } li:nth-child(2n+) { color: red } .x::before { content: 'y' }
+         > p { color: red } p + { color: red } :not(p > a) { color: red } :nth-child(foo) { color: red }
+         [=x] { color: red } a[href=\"x { color: red } .ok, p ~ ~ p { color: #020202 } div:hover:not(.q) { color: #030303 }",
+    );
+    if rules.iter().any(|r| r.decls.iter().any(|(_, v)| v == "red") || r.sel.iter().any(|c| c.is_empty())) {
+        return Err("noto'g'ri tanlagiç qoidasi qabul qilindi yoki to'g'risi taşlandi");
+    }
+    let good = rules.iter().filter(|r| r.decls.iter().any(|(_, v)| v.starts_with("#0"))).count();
+    if good != 3 || rules.iter().find(|r| r.decls[0].1 == "#020202").is_none_or(|r| r.sel.len() != 1) {
+        return Err("yaroqli qoidalar (yoki vergulli ro'yxatning to'g'ri qismi) yöqoldi");
+    }
+    for bad in ["::", ":not(", "[a", "a > > b", ":nth-child()", "*:not(:not(:not(:not(:not(:not(a))))))", "a,,b", "[a=\"b]", "\u{ff}:\u{ff}"] {
+        let _ = parse_selectors(bad);
+    }
+    n += 2;
+    // 7) kaskad: yuqori specificity keyinroq e'lon qilingandan ustun; teng bölsa — tartib
+    let rules = parse_sheet("ul li { color: #111111 } li { color: #222222 } .z { font-size: 12px } li.z { font-size: 14px } .z { font-size: 16px }");
+    let z = alloc::vec![String::from("z")];
+    let s = compute(&Sty::root(), &rules, &e("li", &z), &[e("ul", &none)], None);
+    if s.color != Some(0x111111) {
+        return Err("kaskad: 'ul li' 'li' dan ustun bölmadi");
+    }
+    if (s.size - 14.0).abs() > 0.01 {
+        return Err("kaskad: 'li.z' '.z' dan ustun bölmadi");
+    }
+    n += 1;
+    // 8) HTML bilan: zebra jadval, 'li + li', :last-child (oldindan körish), input[type=password]
+    let d = crate::html::parse(
+        "<style>tr:nth-child(odd) td{color:#aa0000} tr:nth-child(even) td{color:#00aa00} li+li{color:#0000aa}
+         li:last-child{font-weight:bold} input[type=password]{background:#fff0f0} .k:not(.f){color:#123456}</style>
+         <table><tr><td>R1</td></tr><tr><td>R2</td></tr><tr><td>R3</td></tr></table>
+         <ul><li>L1<ul><li>N1</li><li>N2</li></ul></li><li>L2</li><li>L3</ul>
+         <p class=k>K1</p><p class='k f'>K2</p><input type=text><input type=password>",
+    );
+    let sp = |t: &str| d.blocks.iter().flat_map(|b| b.spans.iter()).find(|s| s.text.trim() == t).map(|s| (s.color, s.bold));
+    if sp("R1").map(|s| s.0) != Some(Some(0xaa0000)) || sp("R2").map(|s| s.0) != Some(Some(0x00aa00)) || sp("R3").map(|s| s.0) != Some(Some(0xaa0000)) {
+        return Err("HTML: zebra jadval (tr:nth-child) qöllanmadi");
+    }
+    if sp("L1").map(|s| s.0) == Some(Some(0x0000aa)) {
+        return Err("HTML: 'li + li' birinçi li ga qöllandi");
+    }
+    if sp("L2").map(|s| s.0) != Some(Some(0x0000aa)) {
+        return Err("HTML: 'li + li' ikkinçi li ga qöllanmadi");
+    }
+    if sp("N1").map(|s| s.0) == Some(Some(0x0000aa)) || sp("N2").map(|s| s.0) != Some(Some(0x0000aa)) {
+        return Err("HTML: 'li + li' ichma-ich birinçi li ga qöllandi");
+    }
+    if sp("L3").map(|s| s.1) != Some(true) || sp("L1").map(|s| s.1) != Some(false) || sp("N1").map(|s| s.1) != Some(false) || sp("N2").map(|s| s.1) != Some(true) {
+        return Err("HTML: li:last-child (oldindan körish) notöğri");
+    }
+    if sp("K1").map(|s| s.0) != Some(Some(0x123456)) || sp("K2").map(|s| s.0) == Some(Some(0x123456)) {
+        return Err("HTML: .k:not(.f) notöğri");
+    }
+    if d.inputs.len() != 2 || d.inputs[0].bg.is_some() || d.inputs[1].bg != Some(0xfff0f0) {
+        return Err("HTML: input[type=password] uslubi qöllanmadi");
+    }
+    n += 5;
     Ok(n)
 }

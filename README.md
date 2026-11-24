@@ -387,6 +387,29 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   `calc(50% - 20px)` = 280 (600 enli konteyner)).
 
   ![var() va calc(): zamin://ozgaruvchi](docs/web-vars.png)
+- **CSS tanlagichlar: `>`, `+`, `~`, `[atribut]`, `:nth-child(an+b)`, `:not()`** — tanlagich endi
+  to'liq tokenlarga ajratiladi (qavslar, `[ ]` va tirnoqlar ichidagi vergul/bo'shliq hisobga olinadi)
+  va zanjir **o'ngdan chapga** qaytish (backtracking) bilan moslanadi: avlod (bo'shliq), bola (`>`),
+  darhol keyingi qo'shni (`+`) va keyingi qo'shnilar (`~`). Atributlar: `[a]`, `[a=v]`, `[a~=v]`,
+  `[a^=v]`, `[a$=v]`, `[a*=v]`, `[a|=v]`, registrsiz `i` bayrog'i (`[type=text i]`). Psevdo-klasslar:
+  `:first-child`, `:last-child`, `:only-child`, `:nth-child(an+b)` (`odd`, `even`, `-n+3`,
+  `3n - 1`), `:nth-last-child()`, `:first-of-type`, `:nth-of-type()`, `:not(ro'yxat)`. HTML
+  tahlilchisi har bir ochiq element uchun bolalar ro'yxatini (oldingi qo'shnilar) va tartib
+  raqamini yuritadi; `:last-child` uchun manba oldindan ko'rib chiqiladi (yopilmagan `<li>`/`<p>`
+  ham hisobga olinadi). Bu ma'lumotlar faqat qoidalarda kerak bo'lsa yig'iladi (`css::needs`), qayta
+  uslublashda (`:hover`, `classList`) esa `ElInfo` dagi `nth`/`after` dan olinadi. **Kaskad**
+  endi specificity bo'yicha: avval brauzer uslublari, keyin muallif qoidalari `(id, klass/atribut/
+  psevdo, teg)` tartibida, teng bo'lsa manba tartibida; `:not(X)` — X ning specificity'si.
+  Noto'g'ri yoki qo'llanmaydigan tanlagich (`a[`, `:nth-child(2n+)`, `::before`, `:focus`) panic
+  bermaydi — vergulli ro'yxatda faqat o'sha tanlagich tashlanadi. `input[type=password]` kabi
+  qoidalardagi fon, ramka va matn rangi forma maydonlariga ham qo'llanadi. Sinov:
+  `zamin://tanlagich` (zebra jadval `tr:nth-child(odd)`, `li + li` ajratgich chiziq,
+  `input[type=password]`, `.karta:not(.faol)`), yuklanish self-testida
+  `css::self_test_selectors` (27 tekshiruv: `ul > li` nevaraga mos kelmaydi, `h1 + p` / `h1 ~ p`,
+  `nth-child(2n+1)` → 1,3,5, `nth-child(-n+3)` → 1..3, `[href^="https"]`, `[type=text i]`,
+  `:not(.a)` specificity'si = `.a`, noto'g'ri tanlagichlar, HTML orqali zebra va `:last-child`).
+
+  ![CSS tanlagichlar: zamin://tanlagich](docs/web-selectors.png)
 - **`<iframe>` — ichki hujjat haqiqiy chiziladi** — `srcdoc="…"` (belgilar bilan kodlangan yoki
   tirnoq ichida xom HTML) alohida hujjat sifatida **o'z CSS i bilan** tahlil qilinadi va ramka-quti
   ichida chiziladi: fon — ichki `body` foni (bo'lmasa oq), `width` (px yoki %) yoki CSS `width`,

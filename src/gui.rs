@@ -9063,6 +9063,63 @@ h1{color:var(--accent)}
 <p class="xato">Noto'g'ri calc() va zaxirasiz var() — xossa e'tiborsiz qoldirildi.</p>
 <p><a href="zamin://bosh">Bosh sahifa</a></p>
 "##,
+        "zamin://tanlagich" => r##"<title>CSS tanlagiçlar: birikmalar, atributlar, :nth-child</title>
+<style>
+body{background:#f4f6fb;color:#1a2233}
+h1{color:#2563eb}
+h2{color:#334155}
+.zebra{border:1px solid #cbd5e1;border-radius:10px}
+.zebra td{padding:4px}
+.zebra tr:nth-child(odd) td{background:#e0e7ff}
+.zebra tr:nth-child(even) td{background:#ffffff}
+.zebra tr:first-child td{background:#1e3a8a;color:#ffffff;font-weight:bold}
+.qator li + li{border-top:1px solid #94a3b8}
+.qator > li{padding:4px}
+.qator > li:last-child{color:#16a34a;font-weight:bold}
+.qator ul li{color:#9333ea}
+h2 ~ p.izoh{color:#64748b}
+h2 + p.izoh{color:#b45309}
+.forma input[type=password]{background:#fff1f2;border:2px solid #e11d48;color:#9f1239}
+.forma input[type="text" i]{background:#ecfeff;border:2px solid #0891b2}
+a[href^="https"]{color:#059669}
+a[href$=".pdf"]{color:#dc2626}
+.kartalar{display:flex;gap:12px}
+.karta{background:#ffffff;border:2px solid #2563eb;border-radius:12px;padding:12px}
+.karta:not(.faol){background:#f1f5f9;border:2px solid #cbd5e1;color:#64748b}
+.karta.faol{background:#dbeafe}
+.xato:hover:focus, li:nth-child(2n+), a[ { color:#ff0000 }
+.xato::before, :not(p > a), [=x] { color:#ff0000 }
+</style>
+<h1>CSS tanlagiçlar</h1>
+<p>Birikmalar <code>&gt;</code>, <code>+</code>, <code>~</code>; atribut tanlagiçlari; <code>:first-child</code>, <code>:last-child</code>, <code>:nth-child(an+b)</code>, <code>:not()</code>.</p>
+<h2>tr:nth-child(odd) — zebra jadval</h2>
+<p class="izoh">h2 + p — darhol keyingi xatboşi (jigarrang).</p>
+<p class="izoh">h2 ~ p — keyingi barça xatboşilar (kulrang).</p>
+<table class="zebra">
+<tr><td>Sarlavha (:first-child)</td><td>Qiymat</td></tr>
+<tr><td>Ikkinçi (even)</td><td>2</td></tr>
+<tr><td>Uçinçi (odd)</td><td>3</td></tr>
+<tr><td>Törtinçi (even)</td><td>4</td></tr>
+</table>
+<h2>li + li — ajratgiç çiziq</h2>
+<ul class="qator">
+<li>Birinçi band (çiziqsiz)</li>
+<li>Ikkinçi band<ul><li>Ichma-ich band (ul li)</li></ul></li>
+<li>Uçinçi band</li>
+<li>Oxirgi band (:last-child)</li>
+</ul>
+<h2>input[type=password] — atribut tanlagiçi</h2>
+<div class="forma"><p>Login: <input type="TEXT" placeholder="foydalanuvçi"> Parol: <input type="password" value="maxfiy"></p></div>
+<p><a href="https://zamin.app">https:// havola (yaşil)</a> · <a href="zamin://haqida">ichki havola</a> · <a href="hujjat.pdf">.pdf havola (qizil)</a></p>
+<h2>.karta:not(.faol)</h2>
+<div class="kartalar">
+<div class="karta">Oddiy karta (:not(.faol) — xira)</div>
+<div class="karta faol">Faol karta</div>
+<div class="karta">Yana oddiy karta</div>
+</div>
+<p>Noto'g'ri tanlagiçli qoidalar (qizil rang) taşlandi — sahifaning qolgan qismi bezakli.</p>
+<p><a href="zamin://bosh">Bosh sahifa</a></p>
+"##,
         "zamin://bosh" => r##"<title>Bosh sahifa</title>
 <style>
 .hero{background:#1e3a8a;color:#ffffff;text-align:center}
@@ -9087,6 +9144,7 @@ h1{color:var(--accent)}
 <li><a href="zamin://bezak">CSS gradient va box-shadow sinovi</a></li>
 <li><a href="zamin://overflow">CSS overflow, white-space, ellipsis va opacity sinovi</a></li>
 <li><a href="zamin://ozgaruvchi">CSS özgaruvçilar var(--x) va calc() sinovi</a></li>
+<li><a href="zamin://tanlagich">CSS tanlagiçlar: &gt; + ~, [atribut], :nth-child, :not() sinovi</a></li>
 <li><a href="zamin://tarix">Tarix</a> — körilgan sahifalar</li>
 <li><a href="zamin://haqida">Brauzer haqida</a></li>
 <li><a href="https://example.com/">example.com</a> (HTTPS, haqiqiy internet)</li>
@@ -10936,6 +10994,8 @@ fn draw_browser(win: &Window) {
                     gfx::draw_text_centered(x + it.w / 2, y + (it.h - it.px) / 2, &inp.value, ftx, it.px);
                 }
                 _ => {
+                    // CSS ranglari (input[type=password] { background … }) bölsa — ular
+                    let (fbg, fbd, ftx) = (inp.bg.unwrap_or(fbg), inp.bc.unwrap_or(fbd), inp.fg.unwrap_or(ftx));
                     gfx::fill_round_rect(x, y, it.w, it.h, u / 4, fbg);
                     gfx::round_outline(x, y, it.w, it.h, u / 4, if focused { 2 } else { 1 }, if focused { accent() } else { fbd });
                     let shown: String = if inp.kind == 3 { inp.value.chars().map(|_| '*').collect() } else { inp.value.clone() };
