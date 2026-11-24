@@ -17,6 +17,20 @@ use zamin::{String, Vec, format, matn, print, println, tr};
 
 zamin::entry!(main);
 
+/// Rangli çiqiş (ANSI SGR) yoqilganmi: grafik terminal `TERM=zamin-rang` beradi;
+/// seriya konsolda oddiy matn qoladi.
+static RANG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// SGR ketma-ketligi — faqat rangli rejimda (aks holda böş satr).
+fn sgr(code: &'static str) -> &'static str {
+    if RANG.load(core::sync::atomic::Ordering::Relaxed) { code } else { "" }
+}
+
+/// Xato xabari — qizil rangda.
+macro_rules! xato {
+    ($($arg:tt)*) => { println!("{}{}{}", sgr("\x1b[31m"), format_args!($($arg)*), sgr("\x1b[0m")) };
+}
+
 /// [uz, ru, en], qöşimça nomlar, yordam [uz, ru, en]
 type Cmd = ([&'static str; 3], &'static [&'static str], [&'static str; 3]);
 
@@ -44,6 +58,7 @@ const BUILTINS: &[Cmd] = &[
     (["oxir", "конец", "tail"], &[], ["oxirgi qatorlar: oxir [-n N] fayl", "последние строки: конец [-n N] файл", "last lines: tail [-n N] file"]),
     (["hajm", "счёт", "wc"], &["счет"], ["qator, söz va baytlar soni: hajm fayl", "число строк, слов и байт: счёт файл", "line, word and byte count: wc file"]),
     (["çiqiş", "выход", "exit"], &["chiqish", "chiqiş", "ciqis"], ["çiqiş (qayta kiriş söraladi)", "выйти (снова запросит вход)", "log out"]),
+    (["rang", "цвета", "colors"], &["ranglar"], ["16 rangli jadval (ANSI)", "таблица 16 цветов (ANSI)", "16-color table (ANSI)"]),
 ];
 
 /// Yadroga uzatiladigan tizim buyruqlari
@@ -457,7 +472,7 @@ impl Shell {
                     Ok(mut file) => {
                         let _ = file.write(format!("{}\n", text.trim()).as_bytes());
                     }
-                    Err(e) => println!("  {}: {}", f, e),
+                    Err(e) => xato!("  {}: {}", f, e),
                 }
                 return true;
             }
@@ -469,7 +484,7 @@ impl Shell {
             }
             if find(ADMIN, name).is_some() {
                 if zamin::admin(stages[0]).is_err() {
-                    println!("  {}", tr(["ruxsat yöq", "доступ запрещён", "permission denied"]));
+                    xato!("  {}", tr(["ruxsat yöq", "доступ запрещён", "permission denied"]));
                 }
                 return true;
             }
@@ -485,13 +500,13 @@ impl Shell {
             let st = st.strip_prefix("işlat ").or_else(|| st.strip_prefix("ishlat ")).unwrap_or(st).trim();
             let (name, args) = st.split_once(' ').map_or((st, ""), |(n, a)| (n, a.trim()));
             if name.is_empty() {
-                println!("  {}", tr(["böş buyruq", "пустая команда", "empty command"]));
+                xato!("  {}", tr(["böş buyruq", "пустая команда", "empty command"]));
                 return;
             }
             match self.find_program(name) {
                 Some(path) => programs.push((path, String::from(name), String::from(args))),
                 None => {
-                    println!("  {}: {}", tr(["nomaʼlum buyruq yoki dastur", "неизвестная команда или программа", "unknown command or program"]), name);
+                    xato!("  {}: {}", tr(["nomaʼlum buyruq yoki dastur", "неизвестная команда или программа", "unknown command or program"]), name);
                     return;
                 }
             }
@@ -502,7 +517,7 @@ impl Shell {
                 match File::open(&self.resolve(f), flags) {
                     Ok(file) => Some(file),
                     Err(e) => {
-                        println!("  {}: {}", f, e);
+                        xato!("  {}: {}", f, e);
                         return;
                     }
                 }
@@ -525,7 +540,7 @@ impl Shell {
                 match zamin::pipe() {
                     Ok((r, w)) => (Some(r), Some(w)),
                     Err(e) => {
-                        println!("  {}", e);
+                        xato!("  {}", e);
                         break;
                     }
                 }
@@ -540,7 +555,7 @@ impl Shell {
             };
             match zamin::spawn_with(path, args, [stdin, stdout, INHERIT]) {
                 Ok(pid) => pids.push((pid, name.clone())),
-                Err(e) => println!("  {}: {}", name, e),
+                Err(e) => xato!("  {}: {}", name, e),
             }
             // Bizdagi nusxalarni yopamiz — aks holda öquvçi heç qaçon "oxiri" ni körmaydi
             if let Some(r) = prev_read {
@@ -596,14 +611,20 @@ impl Shell {
                     Ok(list) if list.is_empty() => println!("  {}", tr(["(böş papka)", "(пустая папка)", "(empty directory)"])),
                     Ok(list) => {
                         for e in list {
-                            let shown = if e.is_dir { format!("{}/", e.name) } else { e.name.clone() };
+                            let shown = if e.is_dir {
+                                format!("{}{}/{}", sgr("\x1b[1;34m"), e.name, sgr("\x1b[0m"))
+                            } else if e.mode & 0o111 != 0 {
+                                format!("{}{}{}", sgr("\x1b[32m"), e.name, sgr("\x1b[0m"))
+                            } else {
+                                e.name.clone()
+                            };
                             let size = if e.is_dir { format!("{} {}", e.size, tr(["ta", "шт.", "items"])) } else { format!("{} B", e.size) };
                             let po = 10usize.saturating_sub(e.owner.chars().count());
                             let when = if e.mtime > 0 { zamin::time::short(&zamin::time::local(e.mtime)) } else { String::from("-") };
                             println!("  {} {}{:po$} {:>10}  {}  {}", fs::mode_string(e.mode, e.is_dir), e.owner, "", size, when, shown, po = po);
                         }
                     }
-                    Err(e) => println!("  {}: {}", path, e),
+                    Err(e) => xato!("  {}: {}", path, e),
                 }
             }
             4 => {
@@ -618,7 +639,7 @@ impl Shell {
                         }
                         Err(_) => println!("  ({} B)", data.len()),
                     },
-                    Err(e) => println!("  {}: {}", path, e),
+                    Err(e) => xato!("  {}: {}", path, e),
                 }
             }
             5 => match args.split_once(' ') {
@@ -626,7 +647,7 @@ impl Shell {
                     let path = self.resolve(f);
                     match fs::write(&path, format!("{}\n", text).as_bytes()) {
                         Ok(()) => println!("  {}: {}", tr(["yozildi", "записано", "written"]), path),
-                        Err(e) => println!("  {}: {}", path, e),
+                        Err(e) => xato!("  {}: {}", path, e),
                     }
                 }
                 None => println!("  {}", BUILTINS[5].2[lang]),
@@ -634,13 +655,13 @@ impl Shell {
             6 => {
                 let path = self.resolve(args);
                 if let Err(e) = fs::mkdir(&path) {
-                    println!("  {}: {}", path, e);
+                    xato!("  {}: {}", path, e);
                 }
             }
             7 => {
                 let path = self.resolve(args);
                 if let Err(e) = fs::remove(&path) {
-                    println!("  {}: {}", path, e);
+                    xato!("  {}: {}", path, e);
                 }
             }
             8 => {
@@ -650,14 +671,14 @@ impl Shell {
                         self.cwd = normalize(&target);
                         let _ = zamin::chdir(&self.cwd); // yadroga ham soddalaştirilgan yöl
                     }
-                    Err(e) => println!("  {}: {}", target, e),
+                    Err(e) => xato!("  {}: {}", target, e),
                 }
             }
             9 => println!("  {}", self.cwd),
             10 => match args.split_once('=') {
                 Some((k, v)) => {
                     if let Err(e) = zamin::set_env(k.trim(), v.trim()) {
-                        println!("  {}", e);
+                        xato!("  {}", e);
                     }
                 }
                 None if !args.is_empty() => println!("  {}={}", args, zamin::env(args).unwrap_or_default()),
@@ -672,6 +693,7 @@ impl Shell {
                 self.run_pipeline(&[args], None, false);
             }
             22 => return false, // çiqiş
+            23 => color_table(),
             16..=21 => self.file_cmd(i, args),
             15 => {
                 let mut it = args.split_whitespace();
@@ -681,7 +703,7 @@ impl Shell {
                 };
                 match zamin::signal(pid, sig) {
                     Ok(()) => println!("  {} {} -> {}", tr(["signal yuborildi:", "сигнал отправлен:", "signal sent:"]), sig, pid),
-                    Err(e) => println!("  {}: {}", pid, e),
+                    Err(e) => xato!("  {}: {}", pid, e),
                 }
             }
             13 => {
@@ -692,17 +714,17 @@ impl Shell {
                 match u16::from_str_radix(mode.trim(), 8) {
                     Ok(m) => {
                         if let Err(e) = zamin::chmod(&self.resolve(file.trim()), m) {
-                            println!("  {}: {}", file, e);
+                            xato!("  {}: {}", file, e);
                         }
                     }
-                    Err(_) => println!("  {}", BUILTINS[13].2[lang]),
+                    Err(_) => xato!("  {}", BUILTINS[13].2[lang]),
                 }
             }
             14 => {
                 // Qafas: faqat joriy papka; dastur işga tuşira olmaydi, nomli kanallar yöq
                 let (name, rest) = args.split_once(' ').map_or((args, ""), |(n, a)| (n, a.trim()));
                 let Some(path) = self.find_program(name) else {
-                    println!("  {}: {}", tr(["nomaʼlum dastur", "неизвестная программа", "unknown program"]), name);
+                    xato!("  {}: {}", tr(["nomaʼlum dastur", "неизвестная программа", "unknown program"]), name);
                     return true;
                 };
                 match zamin::spawn_full(&path, rest, [INHERIT; 3], zamin::SpawnExtra { handle: None, sandbox: true }) {
@@ -712,7 +734,7 @@ impl Shell {
                         zamin::set_foreground(0);
                         println!("  [{} {}: {}]", name, tr(["qafasda tugadi, kod", "завершён в песочнице, код", "finished in sandbox, code"]), code);
                     }
-                    Err(e) => println!("  {}: {}", name, e),
+                    Err(e) => xato!("  {}: {}", name, e),
                 }
             }
             _ => {}
@@ -732,23 +754,23 @@ impl Shell {
                 let dst = self.resolve(dst);
                 let dst = matn::dest_path(&src, &dst, fs::entries(&dst).is_ok());
                 if normalize(&src) == normalize(&dst) {
-                    println!("  {}: {}", dst, tr(["manba va manzil bir xil", "источник и цель совпадают", "source and destination are the same"]));
+                    xato!("  {}: {}", dst, tr(["manba va manzil bir xil", "источник и цель совпадают", "source and destination are the same"]));
                     return;
                 }
                 if i == 17 {
                     match fs::rename(&src, &dst) {
                         Ok(()) => println!("  {}: {} → {}", tr(["köçirildi", "перемещено", "moved"]), src, dst),
-                        Err(e) => println!("  {}: {}", src, e),
+                        Err(e) => xato!("  {}: {}", src, e),
                     }
                     return;
                 }
                 let data = match fs::read(&src) {
                     Ok(d) => d,
-                    Err(e) => return println!("  {}: {}", src, e),
+                    Err(e) => return xato!("  {}: {}", src, e),
                 };
                 match fs::write(&dst, &data) {
                     Ok(()) => println!("  {}: {} → {} ({} B)", tr(["nusxalandi", "скопировано", "copied"]), src, dst, data.len()),
-                    Err(e) => println!("  {}: {}", dst, e),
+                    Err(e) => xato!("  {}: {}", dst, e),
                 }
             }
             18 => {
@@ -760,7 +782,7 @@ impl Shell {
                             println!("{}", l);
                         }
                     }
-                    Err(e) => println!("  {}: {}", path, e),
+                    Err(e) => xato!("  {}: {}", path, e),
                 }
             }
             _ => {
@@ -771,7 +793,7 @@ impl Shell {
                 let path = self.resolve(file);
                 let data = match fs::read(&path) {
                     Ok(d) => d,
-                    Err(e) => return println!("  {}: {}", path, e),
+                    Err(e) => return xato!("  {}: {}", path, e),
                 };
                 if i == 21 {
                     let (l, w, b) = matn::wc(&data);
@@ -798,12 +820,12 @@ impl Shell {
         let data = match fs::read(&src_path) {
             Ok(d) => d,
             Err(e) => {
-                println!("  {}: {}", src_path, e);
+                xato!("  {}: {}", src_path, e);
                 return;
             }
         };
         if data.get(..4) != Some(b"\x7fELF") || data.get(18) != Some(&183) {
-            println!("  {}", tr(["bu Zamin dasturi emas (AArch64 ELF kerak)", "это не программа Zamin (нужен AArch64 ELF)", "not a Zamin program (AArch64 ELF required)"]));
+            xato!("  {}", tr(["bu Zamin dasturi emas (AArch64 ELF kerak)", "это не программа Zamin (нужен AArch64 ELF)", "not a Zamin program (AArch64 ELF required)"]));
             return;
         }
         let name = it.next().unwrap_or_else(|| src.rsplit('/').next().unwrap_or(src));
@@ -812,8 +834,34 @@ impl Shell {
         let result = fs::write(&dst, &data).and_then(|_| zamin::chmod(&dst, 0o755));
         match result {
             Ok(()) => println!("  {} {} ({} B)", tr(["Örnatildi:", "Установлено:", "Installed:"]), name, data.len()),
-            Err(e) => println!("  {}: {}", dst, e),
+            Err(e) => xato!("  {}: {}", dst, e),
         }
+    }
+}
+
+/// `rang`: 16 rangli jadval — oddiy (30–37) va yorqin (90–97) old fon, 40–47 / 100–107 fon.
+fn color_table() {
+    const NAMES: [[&str; 3]; 8] = [
+        ["qora", "чёрный", "black"],
+        ["qizil", "красный", "red"],
+        ["yaşil", "зелёный", "green"],
+        ["sariq", "жёлтый", "yellow"],
+        ["kök", "синий", "blue"],
+        ["binafşa", "пурпурный", "magenta"],
+        ["moviy", "голубой", "cyan"],
+        ["oq", "белый", "white"],
+    ];
+    let e = "\x1b"; // jadval doim rangli (namoyiş buyrug'i)
+    let bold = tr(["qalin", "жирный", "bold"]);
+    println!("  {:<10}{:<10}{:<8} {:<6}{}", "30–37", "90–97", "1;3x", "40–47", "100–107");
+    for (k, name) in NAMES.iter().enumerate() {
+        let name = tr(*name);
+        // qora fonda oq, qolganlarida qora matn
+        let ink = if k == 0 { 97 } else { 30 };
+        println!(
+            "  {e}[{}m{:<10}{e}[0m{e}[{}m{:<10}{e}[0m{e}[1;{}m{:<8}{e}[0m {e}[{};{}m {:>3} {e}[0m {e}[{};30m {:>3} {e}[0m",
+            30 + k, name, 90 + k, name, 30 + k, bold, 40 + k, ink, 40 + k, 100 + k, 100 + k, e = e
+        );
     }
 }
 
@@ -840,6 +888,7 @@ fn main() -> i64 {
     if zamin::args() == "--self-test" {
         return self_test();
     }
+    RANG.store(zamin::env("TERM").as_deref() == Some("zamin-rang"), core::sync::atomic::Ordering::Relaxed);
     let history = fs::read(HISTORY_PATH).map(|d| History::from_text(&String::from_utf8_lossy(&d))).unwrap_or_else(|_| History::new());
     let mut sh = Shell { cwd: String::from("~"), background: Vec::new(), history, inbuf: Vec::new() };
     println!("{}", tr([

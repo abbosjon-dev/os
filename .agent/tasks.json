@@ -414,7 +414,9 @@
       "id": "T52",
       "title": "Grafik terminal: ANSI SGR ranglari (30–37, 90–97, 40–47, 1, 0, 39/49) va rangli ls / xato chiqishi",
       "detail": "Hozir src/gui.rs (~1206–1213) da \\x1b[2J va \\x1b[K dan boshqa ketma-ketliklar e'tiborsiz qoladi, shuning uchun ranglar ekranga chiqmaydi. Fayllar: src/termbuf.rs (har katakka fg/bg/bold atributi; scrollback va qatorni o'rash atributlarni saqlaydi; CSI parametrlarini tahlil qiluvchi sof funksiya, bo'lingan ketma-ketlik keyingi o'qishda davom etadi), src/gui.rs (atributli chizish; tanlash/nusxa olish faqat matnni oladi), user/src/bin/terminal.rs (`ls` papkalarni ko'k qalin, bajariladigan fayllarni yashil ko'rsatadi; xato xabarlari qizil; `rang` buyrug'i 16 rangli jadval chiqaradi). Qabul mezoni: termbuf self-test `[ok] SGR: …` (\\x1b[1;31m, \\x1b[0m, \\x1b[92m, 2 o'qishga bo'lingan \\x1b[3 + 4m, noma'lum CSI e'tiborsiz). Skrinshot docs/terminal-rang.png — `ls /` va `rang` chiqishida rangli piksellar bor (shot.py da piksel tekshiruvi). verify.sh full o'tadi.",
-      "batch": 8
+      "batch": 8,
+      "status": "done",
+      "done_at": "2026-11-24 11:23:04"
     },
     {
       "id": "T53",

@@ -743,6 +743,10 @@ fn self_tests() {
         Ok(n) => println!("  [ok] terminal scrollback: {} qator çegarasi, söz/belgi böyiça öraş, UTF-8, tanlov va söz çegarasi ({} sinov)", termbuf::MAX_LINES, n),
         Err(e) => panic!("terminal scrollback tekşiruvi yiqildi: {}", e),
     }
+    match termbuf::self_test_sgr() {
+        Ok(n) => println!("  [ok] SGR: \\x1b[1;31m (qalin qizil), \\x1b[0m, \\x1b[92m, 2 öqişga bölingan \\x1b[3 + 4m, 38;5;n / 39 / 49, noma'lum CSI va OSC eʼtiborsiz, tarix kesilişida atributlar saqlanadi ({} sinov)", n),
+        Err(e) => panic!("SGR tekşiruvi yiqildi: {}", e),
+    }
     match gui::self_test_term_ctrl() {
         Ok(n) => println!("  [ok] terminal Ctrl: C (töxtatiş / qatorni bekor qiliş), L (tozalaş), U (qatorni öçiriş), D (yopiş), oldingi plan bor/yöq ({} sinov)", n),
         Err(e) => panic!("terminal Ctrl tekşiruvi yiqildi: {}", e),

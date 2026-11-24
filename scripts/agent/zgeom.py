@@ -13,6 +13,7 @@ import re
 N_LAUNCHERS = 14
 BROWSER = 1  # LAUNCHERS dagi "Brauzer" indeksi
 SETTINGS = 12  # LAUNCHERS dagi "Sozlamalar" indeksi
+TERMINAL = 3  # LAUNCHERS dagi "Terminal" indeksi
 
 
 _ADV = None
@@ -62,6 +63,7 @@ def metrics(w, h):
         return (dx + gap + i * (icon + gap) + icon // 2, dy + pad + icon // 2)
 
     g["browser"] = icon_c(BROWSER)
+    g["terminal"] = icon_c(TERMINAL)
     # new_window(n=0): brauzer oynasi (u*40 x u*30), svetofor "kattalashtirish" nuqtasi
     bw, bh = u * 40, u * 30
     x = min(w // 8, max(w - bw, 1))

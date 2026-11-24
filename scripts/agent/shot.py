@@ -7,6 +7,9 @@ import os,sys,pty,time,select,socket,json,subprocess
 #   CLICKS dagi "@nom" (browser, max, addr, home, center, park) — zgeom.py dan, ekran ölçamiga qarab;
 #   "u,URL" — manzil satriga URL yozib öçiş; "t,MATN" — yoziş; "bs,N" — N marta Backspace;
 #   "kp,tab" — bitta tugma (QEMU qcode).
+#   PIXCHECK="snap:rrggbb:min;...": rangli piksel tekşiruvi — `snap` (böş — yakuniy surat) da
+#   terminal oynasi (töq fon 0e121a çegarasi) içida rangga yaqin (±24) piksellar >= min bölişi kerak,
+#   aks holda çiqiş kodi 3.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import zgeom
 argv=[]; SW,SH=1280,800; VPS=False; GOP=None; CPU="max"
@@ -190,7 +193,25 @@ qf.write(json.dumps({"execute":"screendump","arguments":{"filename":PPM}})+"\n")
 print("dump:",qf.readline().strip()[:60]); time.sleep(0.8)
 subprocess.run(["convert",PPM,OUT],check=True)
 for pp,nm in SNAPS: subprocess.run(["convert",pp,OUT.replace(".png","_"+nm+".png")]); print("saved",OUT,os.path.getsize(OUT))
+def pixcheck(path, rgb, need):
+    from PIL import Image
+    im = Image.open(path).convert("RGB"); w, h = im.size; px = im.load()
+    bg = [(x, y) for y in range(0, h, 2) for x in range(0, w, 2) if px[x, y] == (0x0e, 0x12, 0x1a)]
+    if not bg: return 0
+    x0, x1 = min(p[0] for p in bg), max(p[0] for p in bg); y0, y1 = min(p[1] for p in bg), max(p[1] for p in bg)
+    t = ((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255)
+    return sum(1 for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)
+               if all(abs(a - b) <= 24 for a, b in zip(px[x, y], t)))
+PIXFAIL = []
+for spec in filter(None, os.environ.get("PIXCHECK", "").split(";")):
+    nm, col, need = spec.split(":")
+    path = OUT if not nm else OUT.replace(".png", "_" + nm + ".png")
+    got = pixcheck(path, int(col, 16), int(need))
+    print("pixcheck %s #%s: %d piksel (kerak >= %s)" % (nm or "yakuniy", col, got, need))
+    if got < int(need): PIXFAIL.append("%s #%s %d<%s" % (nm or "yakuniy", col, got, need))
 for _ in range(10): pump(0.05)
 open(OUT+".log","wb").write(buf)
 qf.write(json.dumps({"execute":"quit"})+"\n"); qf.flush()
 time.sleep(1); os.kill(pid,9)
+if PIXFAIL:
+    print("PIXCHECK FAIL: " + ", ".join(PIXFAIL)); sys.exit(3)

@@ -1349,6 +1349,25 @@ test@zamin:~> köçir /tmp/b.txt /tmp/c.txt           # mv / перемести�
 
 ![Terminal: öralgan qatorda tanlov va kontekst menyusi](docs/apps/terminal-select.png)
 
+### Ranglar (ANSI SGR)
+
+- Grafik terminal ANSI **SGR** ketma-ketliklarini tuşunadi: `0` (tiklaş), `1` / `22` (qalin),
+  `30–37` / `90–97` (oddiy / yorqin matn rangi), `40–47` / `100–107` (fon), `39` / `49`
+  (standart rang). `38;5;n` va `38;2;r;g;b` parametrlari taşlab ketiladi; boşqa CSI
+  (kursor, `?25l`, `\x1b[K`) va OSC (`\x1b]0;…\x07`) — eʼtiborsiz, ekranga çiqmaydi.
+- Har bir qator matni yonida atribut bölaklari (`termbuf::Runs` — bayt ofseti → rang/fon/qalin)
+  saqlanadi: scrollback kesilişi (`trim_attrs`) va qatorni öraş ranglarni buzmaydi.
+  Ikki öqişga bölingan ketma-ketlik (`\x1b[3` + `4m`) keyingi öqişda davom etadi.
+- Tanlaş va nusxa olish faqat matnni oladi (ranglarsiz).
+- `fayllar` / `ls` — papkalar **kök qalin**, bajariladigan fayllar yaşil; xato xabarlari
+  qizil. `rang` (`colors`) — 16 rangli jadval (matn, yorqin, qalin, fon).
+  Ranglar faqat grafik terminalda (`TERM=zamin-rang`); seriya konsolda oddiy matn qoladi.
+- Yuklanişda `[ok] SGR: …` (`\x1b[1;31m`, `\x1b[0m`, `\x1b[92m`, bölingan `\x1b[3`+`4m`,
+  nomaʼlum CSI, tarix kesilişi); `verify.sh full` terminalda `ls /`, `rang` va xato çiqişini
+  suratga olib, oyna içidagi rangli piksellarni sanaydi (`shot.py` `PIXCHECK`).
+
+![Terminal: rangli ls, rang jadvali va xato](docs/terminal-rang.png)
+
 ## Oqimlar
 
 Bitta jarayon içida bir neçta oqim parallel (turli yadrolarda) işlaydi. Ular jarayonning

@@ -158,7 +158,8 @@ struct Window {
     pin: usize,         // kiriş quvuri (GUI yozadi → bola stdin); NONE_PIPE — yöq
     pout: usize,        // çiqiş quvuri (bola stdout → GUI öqiydi); NONE_PIPE — yöq
     cur: Vec<u8>,       // hali tugamagan çiqiş qatori (bayt oqimi)
-    esc: Option<String>, // qayta işlanayotgan ESC ketma-ketligi
+    vt: crate::termbuf::Vt, // Terminal: ESC holati (bölingan ketma-ketlik), joriy SGR atributi
+    tattr: Vec<crate::termbuf::Runs>, // Terminal: `lines` qatorlarining rang atributlari
     side: Vec<String>,  // Fayllar: yon panel papkalari (uy papkasidagi)
     thumbs: Vec<Option<crate::image::Image>>, // Fayllar: rasm eskizlari (rows bilan bir xil tartibda)
     fmeta: Vec<(u64, u64)>, // Fayllar: (hajm, özgartirilgan vaqt — unix) rows bilan bir xil tartibda
@@ -345,7 +346,7 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         play_pos: 0,
         play_t: 0,
         pid: 0, pin: NONE_PIPE, pout: NONE_PIPE,
-        cur: Vec::new(), esc: None,
+        cur: Vec::new(), vt: crate::termbuf::Vt::default(), tattr: Vec::new(),
         side: Vec::new(),
         thumbs: Vec::new(),
         fmeta: Vec::new(),
@@ -1157,7 +1158,12 @@ fn spawn_terminal(win: &mut Window) {
         detached: true,
         parent: 0,
         stdio: [Handle::PipeRead(pin), Handle::PipeWrite(pout), Handle::PipeWrite(pout)],
-        env: task::default_env(),
+        env: {
+            // grafik terminal ANSI SGR ranglarini chizadi
+            let mut env = task::default_env();
+            env.push((String::from("TERM"), String::from("zamin-rang")));
+            env
+        },
         trusted: false, // grafik terminal: tizim buyruqlari (parol, tiklaş) ruxsatsiz
         cwd: task::default_cwd(),
         uid: accounts::current_uid(),
@@ -1195,37 +1201,10 @@ fn close_terminal(win: &mut Window) {
 }
 
 /// Bola jarayon çiqişini (bayt oqimi) oyna satrlariga qoşadi.
-/// Oddiy terminal emulyatori: `\n`, `\r`, orqaga oçiriş, ANSI ESC (tozalaş) ni tuşunadi.
+/// Terminal emulyatori (`termbuf::feed`): `\n`, `\r`, orqaga öçiriş, ANSI SGR ranglar, tozalaş.
 fn feed(win: &mut Window, bytes: &[u8]) {
-    for &b in bytes {
-        if let Some(esc) = win.esc.as_mut() {
-            esc.push(b as char);
-            if esc.len() >= 2 && (0x40..=0x7e).contains(&b) {
-                let seq = core::mem::take(&mut win.esc).unwrap();
-                if seq.ends_with('J') {
-                    // ekranni tozalaş (\x1b[2J)
-                    win.lines.clear();
-                    win.cur.clear();
-                    win.tclear = 0;
-                }
-                // \x1b[K (qator oxirigaça öçiriş): \r allaqaçon qatorni böşatadi, kursor doim
-                // oxirida — qöşimça iş kerak emas.
-                // boşqa ketma-ketliklar (kursor, \x1b[H) — eʼtiborsiz
-            } else if esc.len() > 24 {
-                win.esc = None;
-            }
-            continue;
-        }
-        match b {
-            0x1b => win.esc = Some(String::new()),
-            b'\n' => push_line(win),
-            b'\r' => win.cur.clear(),
-            0x08 => {
-                win.cur.pop();
-            }
-            0..=0x1f => {}
-            _ => win.cur.push(b),
-        }
+    if crate::termbuf::feed(&mut win.vt, &mut win.lines, &mut win.tattr, &mut win.cur, bytes) {
+        win.tclear = 0;
     }
     // yangi çiqiş — pastga qaytamiz; tarix çegarasi (eskilar bitta drain bilan kesiladi)
     if !bytes.is_empty() {
@@ -1236,8 +1215,7 @@ fn feed(win: &mut Window, bytes: &[u8]) {
 }
 
 fn push_line(win: &mut Window) {
-    let line = String::from_utf8_lossy(&core::mem::take(&mut win.cur)).into_owned();
-    win.lines.push(line);
+    crate::termbuf::end_line(&mut win.vt, &mut win.lines, &mut win.tattr, &mut win.cur);
 }
 
 /// Terminal joylaşuvi: (ustunlar soni, körinadigan vizual qatorlar soni).
@@ -1361,7 +1339,7 @@ fn term_copy(w: &mut Window) {
 /// Enter: terilgan qatorni bola stdin iga yuboradi; ekranda özimiz aks ettiramiz.
 fn term_enter(w: &mut Window) {
     let line = core::mem::take(&mut w.input);
-    w.cur.extend_from_slice(line.as_bytes());
+    crate::termbuf::push_plain(&mut w.vt, &mut w.cur, line.as_bytes());
     push_line(w);
     if w.pin != NONE_PIPE {
         let mut data = line.into_bytes();
@@ -1413,8 +1391,10 @@ fn pump(windows: &mut [Window]) -> bool {
                     // bola tugadi (stdout yopildi) — yangi terminal oçamiz
                     close_terminal(win);
                     push_line(win);
-                    win.lines.push(String::from("[terminal tugadi — qaytadan oçildi]"));
-                    crate::termbuf::trim(&mut win.lines);
+                    win.vt = crate::termbuf::Vt::default();
+                    win.cur.extend_from_slice("[terminal tugadi — qaytadan oçildi]".as_bytes());
+                    push_line(win);
+                    term_trim(win);
                     spawn_terminal(win);
                     changed = true;
                     break;
@@ -2494,8 +2474,8 @@ fn term_ctrl(w: &mut Window, code: u16) -> bool {
         TermCtrl::Interrupt | TermCtrl::CancelLine => {
             // terilgan matn + ^C — tugagan qator sifatida qoladi
             let line = core::mem::take(&mut w.input);
-            w.cur.extend_from_slice(line.as_bytes());
-            w.cur.extend_from_slice(b"^C");
+            crate::termbuf::push_plain(&mut w.vt, &mut w.cur, line.as_bytes());
+            crate::termbuf::push_plain(&mut w.vt, &mut w.cur, b"^C");
             push_line(w);
             term_trim(w);
             if act == TermCtrl::Interrupt {
@@ -2514,9 +2494,8 @@ fn term_ctrl(w: &mut Window, code: u16) -> bool {
 
 /// Tarix çegarasi; Ctrl+L belgisi ham kesilgan qatorlarga moslanadi.
 fn term_trim(win: &mut Window) {
-    let before = win.lines.len();
-    crate::termbuf::trim(&mut win.lines);
-    win.tclear = win.tclear.saturating_sub(before - win.lines.len());
+    let removed = crate::termbuf::trim_attrs(&mut win.lines, &mut win.tattr);
+    win.tclear = win.tclear.saturating_sub(removed);
 }
 
 /// Pastki (aylantirilmagan) holatda birinçi körinadigan vizual qator — Ctrl+L dan
@@ -5634,6 +5613,33 @@ fn draw_term_line(x: usize, y: usize, s: &str, px: usize) -> usize {
     gfx::draw_text_mono(x, y, s, base_col, px)
 }
 
+/// SGR atributli vizual qator `src[a..b]`: har bir run öz rangida (fon — katak ostida,
+/// qalin — 1 px siljitib qayta chiziladi). Qaytaradi — oxirgi belgidan keyingi x.
+#[allow(clippy::too_many_arguments)]
+fn draw_term_attr(x: usize, y: usize, src: &str, a: usize, b: usize, runs: &[(usize, crate::termbuf::Attr)], px: usize, lh: usize) -> usize {
+    let adv = gfx::mono_advance(px);
+    let mut cx = x;
+    let mut p = a;
+    while p < b {
+        let at = crate::termbuf::attr_at(runs, p);
+        let mut q = runs.iter().map(|r| r.0).find(|&o| o > p).unwrap_or(b).min(b);
+        while !src.is_char_boundary(q) {
+            q += 1;
+        }
+        let seg = &src[p..q];
+        if at.bg != 0 {
+            fill_rect(cx, y.saturating_sub(1), seg.chars().count() * adv, lh, crate::termbuf::PALETTE[at.bg as usize - 1]);
+        }
+        let col = if at.fg == 0 { 0xd3dae5 } else { crate::termbuf::PALETTE[at.fg as usize - 1] };
+        if at.bold {
+            gfx::draw_text_mono(cx + 1, y, seg, col, px);
+        }
+        cx = gfx::draw_text_mono(cx, y, seg, col, px);
+        p = q;
+    }
+    cx
+}
+
 /// Terminal oynasi: toʻq fon, rangli prompt, blok kursor.
 fn draw_terminal(win: &Window) {
     let px = small();
@@ -5651,6 +5657,12 @@ fn draw_terminal(win: &Window) {
     let (first, max) = term_first(win, &rows, vis);
     let sc = max - first;
     let li_cur = win.lines.len();
+    // joriy qator: bola çiqişi atributlari, terilayotgan kiriş — standart rangda
+    let mut cur_runs = win.vt.runs.clone();
+    if !cur_runs.is_empty() {
+        cur_runs.retain(|r| r.0 < win.cur.len());
+        cur_runs.push((win.cur.len(), crate::termbuf::Attr::default()));
+    }
     let mut ty = top + pad;
     let mut ex = win.x + pad;
     let adv = gfx::mono_advance(px);
@@ -5661,7 +5673,8 @@ fn draw_terminal(win: &Window) {
             let x0 = win.x + pad + src[a..sa].chars().count() * adv;
             gfx::blend_rect(x0, ty.saturating_sub(1), src[sa..sb].chars().count() * adv, lh, 0x2f88ff, 120);
         }
-        ex = draw_term_line(win.x + pad, ty, &src[a..b], px);
+        let runs: &[(usize, crate::termbuf::Attr)] = if li == li_cur { &cur_runs } else { win.tattr.get(li).map_or(&[], |r| r.as_slice()) };
+        ex = if runs.is_empty() { draw_term_line(win.x + pad, ty, &src[a..b], px) } else { draw_term_attr(win.x + pad, ty, src, a, b, runs, px, lh) };
         ty += lh;
     }
     if sc == 0 {

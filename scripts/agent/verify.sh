@@ -3,6 +3,7 @@
 #   verify.sh quick — yiğiş: xato va ogohlantirish yöq
 #   verify.sh full  — + QEMU da (grafikasiz) yuklaniş: barça self-test [ok], panic yöq;
 #                     + seriya qobiq: nusxa/köçir/qidir/bosh/oxir/hajm (seriya_qobiq.py)
+#                     + grafik terminal ranglari: `ls /`, `rang`, xato — piksel tekşiruvi (shot.py PIXCHECK)
 #                     + brauzer sahifalari surati: yumaloq burçaklarda töq piksel yöq
 #                     + pci sinovi (DTB + virtio-pci, GICv2/GICv3)
 #                     + vps sinovi (UEFI firmware örnatilgan bölsa)
@@ -440,6 +441,17 @@ echo "$RESULT"
 QRES=$(timeout 300 python3 scripts/agent/seriya_qobiq.py "$KERNEL" "$LOG_DIR/verify-qobiq.log" 2>&1)
 echo "${QRES:-FAIL seriya qobiq: timeout (qarang $LOG_DIR/verify-qobiq.log)}"
 [[ "$QRES" == OK* ]] || exit 1
+
+# --- Grafik terminal: ANSI SGR ranglari (`ls /` — kök qalin papkalar, `rang` — 16 rangli jadval,
+#     xato — qizil). shot.py PIXCHECK terminal oynasi içidagi rangli piksellarni sanaydi. ---
+mkdir -p /tmp/claude-0
+TRES=$(SETUP_LANG=1 PIXCHECK="ls:63a8ff:200;:ff8a94:100;:e0aaff:100;:4fd6d6:300;:f0616d:200" \
+    CLICKS="w,2;@terminal;w,3;t,ls /;kp,ret;w,2;snap,ls;t,rang;kp,ret;w,2;t,cat yoq;kp,ret;w,2;m,@park" \
+    timeout 300 python3 scripts/agent/shot.py "$KERNEL" "$LOG_DIR/terminal-rang.png" fresh 2>&1)
+if ! echo "$TRES" | grep -q "pixcheck yakuniy #f0616d" || echo "$TRES" | grep -q "PIXCHECK FAIL"; then
+    echo "FAIL terminal ranglari: $(echo "$TRES" | grep -E 'pixcheck|FAIL' | tr '\n' ' ' | cut -c1-300)"; exit 1
+fi
+echo "[ok] terminal ranglari: $(echo "$TRES" | grep -c '^pixcheck') piksel tekşiruvi (ls /, rang, xato) ötdi"
 
 # --- Yumaloq burçaklar regressiyasi: brauzer sahifalari suratga olinadi va
 #     check_corners.py dan ötkaziladi ("qora tişçalar" qaytmasligi uçun) ---
