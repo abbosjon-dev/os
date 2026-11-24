@@ -289,10 +289,16 @@ def plan_tasks(cfg, state, tasks, n_plan):
             if title and title.lower() not in seen:
                 out.append({"title": title, "detail": detail})
                 seen.add(title.lower())
+        out = [t for t in out if not is_stage_end(t["title"])]
         assert out
         return {"bosqich": str(obj.get("bosqich", ""))[:100], "tasks": out}, "", est
     except Exception as e:
         return False, f"reja JSON xato: {e}; matn: {text[:300]}", est
+
+
+def is_stage_end(title):
+    low = title.lower()
+    return low.startswith("bosqich yakuni") or "versiyani oshir" in low
 
 
 def add_plan(tasks, plan):
@@ -301,6 +307,10 @@ def add_plan(tasks, plan):
     batch = tasks.get("batch", 0) + 1
     tasks["batch"] = batch
     for t in plan["tasks"]:
+        # bosqich yakuni (versiya oshirish) vazifasini supervisor o'zi qo'shadi —
+        # rejalashtiruvchi ham qo'shgan bo'lsa, takror versiya oshirilmasin
+        if is_stage_end(t["title"]):
+            continue
         tasks["tasks"].append({"id": f"T{nid}", "title": t["title"], "detail": t["detail"],
                                "batch": batch})
         nid += 1
