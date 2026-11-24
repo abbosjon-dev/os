@@ -857,13 +857,24 @@ Sinov: `scripts/agent/verify.sh obraz` — `virt,gic-version=3`, UEFI (QEMU_EFI.
 pflash), faqat virtio-*-pci; GPT bölimi, grafik ekran, DHCP, sozlaş ustasi → sozlamalar
 bölimga yoziladi (MBR, ikkala GPT sarlavhasi va ESP butun) → qayta yuklanişda öqiladi.
 
+**SCSI disk kontrolleri (virtio-scsi).** Netcup SCP da disk kontrolleri "SCSI" tanlansa,
+QEMU `virtio-scsi-pci` + `scsi-hd` beradi. `src/drivers/virtio_scsi.rs` — virtio 1.x zamonaviy
+PCI (`0x1af4:0x1048`, eski `0x1004`), controlq/eventq/requestq; nişonlar va LUN 0 dan boşlab
+skanerlaş: INQUIRY, TEST UNIT READY (UNIT ATTENTION tozalanadi), READ CAPACITY(10) → (16),
+READ/WRITE(10), 2^32 sektordan katta diskda (16), yozişdan keyin SYNCHRONIZE CACHE. Har bir LUN
+virtio-blk bilan bir xil blok qurilma interfeysi orqali GPT/ZaminFS va FAT ga beriladi (tizim
+diski uziliş orqali, FAT — sörov bilan). Jurnal: `virtio-scsi: LUN 0, N sektor …`,
+`[disk] virtio-scsi: … MiB`. Self-test: `[ok] virtio-scsi CDB: …` (READ/WRITE(10)/(16) LBA va
+uzunlik maydonlari, LUN manzili, sense kaliti). Sinov: `verify.sh vps` → `vps-scsi` (GPT obrazi
+scsi-hd da: GPT bölimi, sozlaş ustasi diskka yozadi, qayta yuklanişda öqiladi).
+
 ![VPS obrazi: UEFI + GICv3 + virtio-pci](docs/vps-boot.png)
 
 ## VPS ga örnatiş
 
 Zamin OS ARM64 VPS da (masalan, **Netcup VPS ARM G12**) öz yadrosi bilan, Linux siz
 işlaydi. Talablar: **AArch64** (ARMv8.0 dan; Neoverse-N1/Ampere sinovdan ötgan), **UEFI**
-firmware (EDK2/AAVMF), **virtio** disk va tarmoq (PCI orqali), GICv2 yoki GICv3; DTB yoki
+firmware (EDK2/AAVMF), **virtio** disk (virtio-blk yoki SCSI: virtio-scsi) va tarmoq (PCI orqali), GICv2 yoki GICv3; DTB yoki
 ACPI. Ekran: **virtio-gpu**, u bölmasa — firmware bergan **UEFI GOP** chiziqli framebufferi
 (masalan `ramfb`; 32 bpp RGBX/BGRX); ikkalasi ham bölmasa — faqat seriya konsol. Avval VPS ni tekşirib olish mumkin (faqat
 öqiydi): `bash scripts/vps/tekshir.sh`.

@@ -335,7 +335,7 @@ pub mod msg {
     pub const SH_NO_CHANNELS: Text = ["  hozirça kanallar yöq", "  каналов пока нет", "  no channels yet"];
 
     // --- Disk va sozlamalar ---
-    pub const DISK_FOUND: Text = ["[disk] virtio-blk: {} MiB", "[disk] virtio-blk: {} МиБ", "[disk] virtio-blk: {} MiB"];
+    pub const DISK_FOUND: Text = ["[disk] {}: {} MiB", "[disk] {}: {} МиБ", "[disk] {}: {} MiB"];
     pub const DISK_GPT: Text = [
         "[disk] GPT: Zamin bölimi #{} (LBA {} dan) — tizim diski",
         "[disk] GPT: раздел Zamin #{} (с LBA {}) — системный диск",

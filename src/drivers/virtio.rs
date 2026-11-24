@@ -49,6 +49,7 @@ const DESC_WRITE: u16 = 2;
 pub const DEVICE_BLOCK: u32 = 2;
 pub const DEVICE_RNG: u32 = 4;
 pub const DEVICE_GPU: u32 = 16;
+pub const DEVICE_SCSI: u32 = 8;
 
 #[repr(C)]
 struct Desc {
@@ -66,6 +67,8 @@ pub struct Transport {
     queue: usize,
     last_used: u16,
     pci: Option<PciRegs>,
+    /// Bildiriş (notify) uçun navbat raqami (virtio-scsi: requestq = 2)
+    qsel: u16,
 }
 
 /// virtio-pci zamonaviy registrlari (VA).
@@ -155,7 +158,7 @@ impl Transport {
                 None => return Self::probe_pci(device_id, n - skipped),
             }
         };
-        let mut t = Transport { base, queue: 0, last_used: 0, pci: None };
+        let mut t = Transport { base, queue: 0, last_used: 0, pci: None, qsel: 0 };
         let version = t.rd(VERSION);
         let _ = t.rd(MAGIC);
 
@@ -216,7 +219,38 @@ impl Transport {
         let notify = c.setup_queue(0, QSIZE, queue, queue + 128, queue + PAGE_SIZE)?;
         c.driver_ok();
         let regs = PciRegs { cfg: c.cfg, notify, isr: c.isr, device: c.device, irq: c.irq };
-        Some(Transport { base: 0, queue, last_used: 0, pci: Some(regs) })
+        Some(Transport { base: 0, queue, last_used: 0, pci: Some(regs), qsel: 0 })
+    }
+
+    /// Berilgan turdagi qurilmalar soni (MMIO + PCI) — qurilmani reset qilmasdan.
+    pub fn count(device_id: u32) -> usize {
+        let mmio = (0..MMIO_SLOTS)
+            .map(|i| MMIO_BASE + i * MMIO_STRIDE)
+            .filter(|&b| unsafe {
+                read_volatile(b as *const u32) == 0x7472_6976 && read_volatile((b + DEVICE_ID) as *const u32) == device_id
+            })
+            .count();
+        mmio + super::pci::virtio_types().iter().filter(|&&t| t == device_id).count()
+    }
+
+    /// Bir neça navbatli virtio-pci qurilmasi (masalan, virtio-scsi: controlq, eventq,
+    /// requestq): `nq` ta navbat sozlanadi, Transport `main` navbat bilan işlaydi.
+    pub fn probe_pci_queues(device_id: u32, n: usize, nq: u16, main: u16) -> Option<Transport> {
+        let c = PciCaps::find(device_id, n)?;
+        c.begin(0)?;
+        let mut main_q = None;
+        for sel in 0..nq {
+            let queue = frame::alloc_contiguous(2)?;
+            unsafe { core::ptr::write_bytes(queue as *mut u8, 0, 2 * PAGE_SIZE) };
+            let notify = c.setup_queue(sel, QSIZE, queue, queue + 128, queue + PAGE_SIZE)?;
+            if sel == main {
+                main_q = Some((queue, notify));
+            }
+        }
+        let (queue, notify) = main_q?;
+        c.driver_ok();
+        let regs = PciRegs { cfg: c.cfg, notify, isr: c.isr, device: c.device, irq: c.irq };
+        Some(Transport { base: 0, queue, last_used: 0, pci: Some(regs), qsel: main })
     }
 
     /// Qurilmaning uzilişi (GIC INTID): virtio-mmio uyaçasi n → SPI 16+n → 48+n;
@@ -272,8 +306,8 @@ impl Transport {
             barrier();
         }
         match self.pci {
-            Some(p) => mwr16(p.notify, 0),
-            None => self.wr(QUEUE_NOTIFY, 0),
+            Some(p) => mwr16(p.notify, self.qsel),
+            None => self.wr(QUEUE_NOTIFY, self.qsel as u32),
         }
     }
 

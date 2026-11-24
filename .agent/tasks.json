@@ -358,7 +358,9 @@
       "id": "T45",
       "title": "VPS: virtio-scsi-pci disk drayveri (Netcup SCP dagi 'SCSI' disk kontrolleri)",
       "detail": "Nima uchun: Netcup SCP da disk kontrollerini virtio yoki SCSI qilib tanlash mumkin. SCSI tanlanganda QEMU virtio-scsi-pci + scsi-hd beradi, Zamin esa hozir faqat virtio-blk ni taniydi, shuning uchun tizim diski topilmay qoladi. Fayllar: yangi src/drivers/virtio_scsi.rs (virtio 1.x modern PCI, controlq/eventq/requestq, SCSI CDB: INQUIRY, TEST UNIT READY, READ CAPACITY(10/16), READ(10/16), WRITE(10/16), SYNCHRONIZE CACHE; LUN 0 dan boshlab skanerlash), src/drivers/pci.rs (vendor 0x1af4 qurilma 0x1048/0x1004), src/drivers/mod.rs. Disk bir xil blok qurilma interfeysi orqali GPT/ZaminFS va FAT ga beriladi. scripts/agent/verify.sh vps ga yangi holat qo'shiladi: -device virtio-scsi-pci,id=scsi0 -device scsi-hd,drive=sys (ESP esa virtio-blk-pci yoki u ham scsi-hd), scripts/vps/README.md ga eslatma. Qabul mezoni: verify.sh vps logida 'virtio-scsi: LUN 0, N sektor' chiqadi, GPT bo'limi topiladi, sozlash ustasi diskka yozadi va qayta yuklanishda o'qiydi, panic yo'q. Self-test: CDB yasash (READ(10)/(16) LBA va uzunlik maydonlari) [ok].",
-      "batch": 7
+      "batch": 7,
+      "status": "done",
+      "done_at": "2026-11-24 02:41:18"
     },
     {
       "id": "T46",

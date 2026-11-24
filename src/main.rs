@@ -231,7 +231,7 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
     // 7) Disk va saqlangan sozlamalar (til, hisob)
     let disk = drivers::virtio_blk::init();
     match disk {
-        Some(bytes) => tprintln!(msg::DISK_FOUND, bytes >> 20),
+        Some(bytes) => tprintln!(msg::DISK_FOUND, drivers::virtio_blk::kind(), bytes >> 20),
         None => tprintln!(msg::DISK_NONE),
     }
     if let Some((num, lba)) = drivers::virtio_blk::partition() {
@@ -636,6 +636,12 @@ fn self_tests() {
     match drivers::virtio_blk::self_test_gpt() {
         Ok(n) => println!("  [ok] GPT: Zamin bölimi, CRC32 (sarlavha/jadval), begona GPT ga tegilmaydi ({} sinov)", n),
         Err(e) => panic!("GPT tahlilçisi yiqildi: {}", e),
+    }
+
+    // virtio-scsi: SCSI buyruq bloklari (CDB)
+    match drivers::virtio_scsi::self_test() {
+        Ok(n) => println!("  [ok] virtio-scsi CDB: READ/WRITE(10) va (16) LBA/uzunlik maydonlari, LUN manzili, sense kaliti ({} sinov)", n),
+        Err(e) => panic!("virtio-scsi CDB sinovi yiqildi: {}", e),
     }
 
     // JavaScript interpretatori va HTML/CSS tahlilçisi

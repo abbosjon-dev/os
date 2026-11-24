@@ -56,6 +56,21 @@ Avtomatik sinov: `scripts/agent/verify.sh obraz` — obrazni yasaydi, ikki marta
 (GPT bölimi, grafik ekran, DHCP, sozlaş ustasi → sozlamalar bölimga yoziladi, MBR/GPT/ESP
 butunligi tekşiriladi → qayta yuklanişda diskdan öqiladi). `verify.sh full` ham uni işlatadi.
 
+**SCSI disk kontrolleri.** Netcup SCP da disk kontrollerini *virtio* yoki *SCSI* qilib tanlaş
+mumkin. SCSI tanlansa, QEMU `virtio-scsi-pci` + `scsi-hd` beradi — Zamin ikkalasini ham taniydi
+(`src/drivers/virtio_scsi.rs`: nişonlar va LUN 0 dan skanerlaş, INQUIRY, READ CAPACITY(10/16),
+READ/WRITE(10/16), SYNCHRONIZE CACHE). Jurnalda: `virtio-scsi: LUN 0, N sektor …` va
+`[disk] virtio-scsi: … MiB`. Mahalliy sinov — yuqoridagi buyruqda disk qatorini almaştiring:
+
+```bash
+    -device virtio-scsi-pci,id=scsi0 \
+    -drive file=target/zamin-vps.img,if=none,format=raw,id=sys -device scsi-hd,drive=sys,bus=scsi0.0 \
+```
+
+`verify.sh vps` (va `full`) bu holatni ham tekşiradi (`vps-scsi`: obraz scsi-hd da, ESP ham
+şu diskda; GPT bölimi, sozlaş ustasi diskka yozadi, qayta yuklanişda öqiladi). Rescue tizimida
+SCSI disk odatda `/dev/sda` deb köringan böladi (virtio da — `/dev/vda`).
+
 ![VPS obrazi QEMU da](../../docs/vps-boot.png)
 
 ## 4. Netcup ga örnatiş
@@ -69,7 +84,7 @@ butunligi tekşiriladi → qayta yuklanişda diskdan öqiladi). `verify.sh full`
 1. SCP → serveringiz → **Media** → **Rescue System** → yoqing. Panel bergan root parolini
    saqlang; server Rescue (Debian live) bilan qayta yuklanadi.
 2. SSH bilan kiring: `ssh root@<IP>`.
-3. Diskni aniqlang: `lsblk` — odatda `/dev/vda` (virtio disk). Rescue tizimi uni **ulamaydi**.
+3. Diskni aniqlang: `lsblk` — odatda `/dev/vda` (virtio disk; SCSI kontrollerda — `/dev/sda`). Rescue tizimi uni **ulamaydi**.
 4. Skript va obrazni oling, keyin **özingiz** işga tuşiring:
 
    ```bash
