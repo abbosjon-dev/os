@@ -6,6 +6,9 @@
 #                     + brauzer sahifalari surati: yumaloq burçaklarda töq piksel yöq
 #                     + pci sinovi (DTB + virtio-pci, GICv2/GICv3)
 #                     + vps sinovi (UEFI firmware örnatilgan bölsa)
+#                     + quvvat tugmasi (vps_power.py): QMP system_powerdown → ACPI GED (UEFI + ACPI)
+#                       va PL061 gpio-keys (-kernel + DTB) → disk sinxronlandi → QEMU özi çiqadi (kod 0)
+#                       15 s içida → qayta yuklanişda sozlamalar, ZaminFS va fayl butun
 #                     + obraz sinovi (scripts/vps/obraz.sh GPT obrazi, UEFI)
 #   verify.sh vps   — yiğiş + UEFI yuklaniş (Netcup ARM VPS ga öxşaş): BOOTAA64.EFI FAT32
 #                     diskda, virt,gic-version=3, QEMU_EFI.fd, virtio-*-pci qurilmalar —
@@ -153,6 +156,13 @@ vps_usb_test() {
     res=$(timeout 220 python3 scripts/agent/vps_usb.py "$kernel" "$LOG_DIR/verify-vps-usb.log" docs/vps-usb.png 2>&1); rc=$?
     echo "${res:-FAIL vps-usb: timeout (qarang $LOG_DIR/verify-vps-usb.log)}"
     [ $rc -eq 2 ] && return 0
+    [ $rc -eq 0 ]
+}
+# Muloyim öçiriş (Netcup SCP "Shutdown (ACPI)"): QMP system_powerdown — ACPI GED va DTB gpio-keys
+power_test() {
+    local kernel=${CARGO_TARGET_DIR:-target}/aarch64-unknown-none-softfloat/debug/kernel res rc
+    res=$(timeout 480 python3 scripts/agent/vps_power.py "$kernel" "$LOG_DIR" 2>&1); rc=$?
+    echo "${res:-FAIL power: timeout (qarang $LOG_DIR/verify-power-*.log)}"
     [ $rc -eq 0 ]
 }
 # --- VPS disk obrazi (scripts/vps/obraz.sh): bitta GPT disk — ESP + Zamin bölimi ---
@@ -545,6 +555,9 @@ pci_test || exit 1
 # --- VPS (UEFI) yuklaniş ---
 vps_all; rc=$?
 [ $rc -eq 1 ] && exit 1
+
+# --- Quvvat tugmasi: muloyim öçiriş (ACPI GED / PL061 gpio-keys) ---
+power_test || exit 1
 
 # --- VPS disk obrazi (GPT, bitta disk) ---
 obraz_test; rc=$?

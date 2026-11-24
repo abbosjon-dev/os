@@ -883,6 +883,33 @@ virtio-*-pci qurilmalar. ECAM DTB dagi `pci-host-ecam-generic` dan öqiladi, BAR
 `ranges` dan tayinlanadi, disk INTx uzilişi, tarmoq, GPU, klaviatura/planşet va rng
 tekşiriladi. `verify.sh full` buni ham işlatadi.
 
+### Quvvat tugmasi: muloyim öçiriş (Netcup SCP "Shutdown (ACPI)")
+
+Netcup SCP dagi **Shutdown (ACPI)**, libvirt `virsh shutdown` va QEMU QMP `system_powerdown`
+QEMU virt da quvvat tugmasi hodisasini yuboradi. Zamin uni ikki yöl bilan qabul qiladi
+(`src/drivers/pwrbtn.rs`):
+
+- **ACPI** (UEFI + ACPI jadvallari): **Generic Event Device** — `src/acpi.rs` FADT dagi
+  `X_DSDT` orqali DSDT AML ni öqiydi, `Name (_HID, "ACPI0013")` dan keyin `_CRS` dagi
+  kengaytirilgan uziliş deskriptoridan (0x89) **GSIV** ni va `OperationRegion (…, SystemMemory, …)`
+  dan hodisa registri **MMIO** manzilini oladi (topilmasa — QEMU virt ning maʼlum manzili
+  `0x9080000`, GSIV 41). Uziliş GIC da fronti böyiça (edge) sozlanadi; registr öqilganda
+  tozalanadi, bit 1 — quvvat tugmasi.
+- **DTB** (`-kernel` yoki UEFI + `acpi=off`): `/gpio-keys` dagi `linux,code = KEY_POWER`
+  tugmasining `gpios` oyoği (QEMU: 3) **PL061 GPIO** (`arm,pl061`) da kiriş, kötariluvçi
+  front böyiça uziliş qilib sozlanadi.
+
+Jurnalda: `Quvvat tugmasi: GED @0x9080000, GSIV 41 (DSDT ACPI0013)` yoki
+`Quvvat tugmasi: PL061 GPIO @0x9030000, oyoq 3 (gpio-keys KEY_POWER), GSIV 39`.
+Uziliş işlovçisi faqat belgi qöyadi; `quvvat` yadro oqimi (`src/power.rs`) GUI ga
+"Öçirilmoqda…" bildirişnomasini yuboradi, **ZaminFS** ni va sozlamalarni diskka yozadi
+(`Quvvat: disk sinxronlandi (…)`), keyin **PSCI SYSTEM_OFF** — QEMU özi çiqadi (kod 0).
+
+Sinov — `scripts/agent/vps_power.py` (`verify.sh full` işlatadi): har ikki yölda sozlaş ustasi
+seriya port orqali tugatiladi, `~/quvvat.txt` yoziladi, QMP `system_powerdown` yuboriladi —
+jurnalda `Quvvat tugmasi bosildi` va `disk sinxronlandi`, QEMU 15 s içida kod 0 bilan çiqadi;
+qayta yuklanişda sozlamalar diskdan öqiladi, parol bilan ZaminFS tiklanadi va fayl butun.
+
 ### VPS disk obrazi (GPT: ESP + Zamin bölimi)
 
 `scripts/vps/obraz.sh` bitta **GPT raw obraz** yasaydi (standart 2 GiB, siyrak fayl):
@@ -1376,7 +1403,8 @@ src/arch/switch.s    Kontekst almaştiriş, yadro oqimi boşlaniş nuqtasi
 src/main.rs          kernel_main, panic handler
 src/uart.rs          PL011 UART drayveri, print!/println!
 src/exceptions.rs    Istisnolarni qayta işlaş (ESR/ELR/FAR)
-src/power.rs         PSCI: öçiriş / qayta yuklaş
+src/power.rs         PSCI: öçiriş / qayta yuklaş, quvvat tugmasidan muloyim öçiriş
+src/drivers/pwrbtn.rs Quvvat tugmasi: ACPI GED (ACPI0013) va PL061 gpio-keys
 src/sync.rs          SpinLock
 src/dtb.rs           Device Tree öquvçisi (RAM, UART, GIC, PCIe, til, PSCI usuli)
 src/memory/frame.rs  Fizik sahifa allokatori (bitmap)
@@ -1384,7 +1412,7 @@ src/memory/mmu.rs    MMU, sahifa jadvallari, map/unmap/translate
 src/memory/heap.rs   Kernel heap (free list) — Box/Vec/String işlaydi
 src/gic.rs           GICv2/GICv3 uzilişlar boşqaruvçisi (versiya DTB dan)
 src/efi.rs           UEFI kiriş nuqtasi: DTB/ACPI, xotira xaritasi, ExitBootServices
-src/acpi.rs          ACPI öquvçisi: RSDP/XSDT, MADT, GTDT, SPCR, MCFG, FADT
+src/acpi.rs          ACPI öquvçisi: RSDP/XSDT, MADT, GTDT, SPCR, MCFG, FADT, DSDT (GED)
 src/drivers/pci.rs   PCIe ECAM: sanaş, BAR lar, virtio-pci qurilmalari
 src/timer.rs         ARM taymeri (100 Hz)
 src/irq.rs           Uzilişlarni drayverlarga tarqatiş

@@ -24,6 +24,7 @@ const GICD_ICENABLER: usize = 0x180;
 const GICD_ICPENDR: usize = 0x280;
 const GICD_IPRIORITYR: usize = 0x400;
 const GICD_ITARGETSR: usize = 0x800;
+const GICD_ICFGR: usize = 0xc00;
 const GICD_SGIR: usize = 0xf00;
 const GICD_IROUTER: usize = 0x6000;
 
@@ -230,6 +231,19 @@ pub fn enable(id: u32) {
         return;
     }
     wr(gicd() + GICD_ISENABLER + 4 * (id / 32) as usize, 1 << (id % 32));
+}
+
+/// SPI ni fronti böyiça (edge) qabul qiliş: qisqa impuls (masalan ACPI GED) ham
+/// "kutilmoqda" holatida saqlanib qoladi. Uzilişni yoqişdan oldin çaqiriladi.
+pub fn set_edge(id: u32) {
+    if id < 32 || id >= line_count() {
+        return;
+    }
+    let a = gicd() + GICD_ICFGR + 4 * (id / 16) as usize;
+    wr(a, rd(a) | (2 << ((id % 16) * 2)));
+    if v3() {
+        wait_rwp();
+    }
 }
 
 /// Kelgan uzilişni tasdiqlaydi. Natija: IAR ning töliq qiymati —

@@ -51,6 +51,12 @@ pub struct AcpiInfo {
     /// Ildiz jadval (XSDT/RSDT) OEM ID si ("BOCHS " — QEMU).
     pub oem: [u8; 6],
     pub _pad2: [u8; 2],
+    /// Generic Event Device (DSDT dagi ACPI0013): hodisa registri (MMIO) va GSIV.
+    /// `ged_src`: 0 — yöq, 1 — DSDT AML dan öqildi, 2 — QEMU virt ning maʼlum manzili (zaxira).
+    pub ged_base: u64,
+    pub ged_gsiv: u32,
+    pub ged_src: u8,
+    pub _pad3: [u8; 3],
 }
 
 impl AcpiInfo {
@@ -78,6 +84,10 @@ impl AcpiInfo {
         sigs: [[0; 4]; MAX_TABLES],
         oem: [0; 6],
         _pad2: [0; 2],
+        ged_base: 0,
+        ged_gsiv: 0,
+        ged_src: 0,
+        _pad3: [0; 3],
     };
 
     pub fn has(&self, sig: &[u8; 4]) -> bool {
@@ -142,6 +152,7 @@ pub fn scan(rsdp: usize) -> Option<AcpiInfo> {
         a.bad_checksum += 1; // davom etamiz: ba'zi firmware lar xato checksum bilan keladi
     }
     let n = (root_len - 36) / entry;
+    let mut dsdt = 0usize;
     for i in 0..n {
         let p = root + 36 + i * entry;
         let t = if entry == 8 { rd_u64(p) as usize } else { rd_u32(p) as usize };
@@ -193,9 +204,21 @@ pub fn scan(rsdp: usize) -> Option<AcpiInfo> {
             b"FACP" if len >= 131 => {
                 // ARM_BOOT_ARCH (129): bit0 — PSCI bor, bit1 — HVC orqali
                 a.psci_hvc = (rd_u8(t + 129) & 2 != 0) as u8;
+                // DSDT: X_DSDT (140, 64-bit) yoki eski DSDT (40, 32-bit)
+                let x = if len >= 148 { rd_u64(t + 140) as usize } else { 0 };
+                dsdt = if x != 0 { x } else { rd_u32(t + 40) as usize };
             }
             _ => {}
         }
+    }
+    if let Some(len) = table_len(dsdt).filter(|_| rd_u32(dsdt) == u32::from_le_bytes(*b"DSDT")) {
+        if let Some((base, gsiv)) = ged_scan(dsdt, len) {
+            (a.ged_base, a.ged_gsiv, a.ged_src) = (base, gsiv, 1);
+        }
+    }
+    if a.ged_src == 0 && &a.oem == b"BOCHS " {
+        // QEMU virt: VIRT_ACPI_GED @ 0x0908_0000, SPI 9 (GSIV 41)
+        (a.ged_base, a.ged_gsiv, a.ged_src) = (QEMU_VIRT_GED, QEMU_VIRT_GED_GSIV, 2);
     }
     // MADT dagi GICD da versiya 0 bölişi mumkin ("aniqlanmagan"): GICR bölsa — v3
     if a.gic_version == 0 {
@@ -205,6 +228,58 @@ pub fn scan(rsdp: usize) -> Option<AcpiInfo> {
         a.gicr_len = 0x20000 * a.ncpu.max(1) as u64;
     }
     (a.gicd != 0 && a.gicr_or_gicc != 0).then_some(a)
+}
+
+pub const QEMU_VIRT_GED: u64 = 0x0908_0000;
+pub const QEMU_VIRT_GED_GSIV: u32 = 41;
+
+/// DSDT AML dan Generic Event Device ni qidiradi: `Name (_HID, "ACPI0013")` satridan keyin
+/// `_CRS` dagi kengaytirilgan uziliş deskriptori (0x89 — GSIV) va `OperationRegion (…,
+/// SystemMemory, manzil, …)` (0x5B 0x80) — hodisa tanlaş registri. Töliq AML interpretatori
+/// kerak emas: QEMU (va köp firmware) GED ni şu tartibda yozadi. Natija: (MMIO, GSIV).
+fn ged_scan(t: usize, len: usize) -> Option<(u64, u32)> {
+    const HID: &[u8] = b"\x0dACPI0013\0"; // StringPrefix + "ACPI0013" + NUL
+    let end = t + len;
+    let bytes = |a: usize, n: usize| unsafe { core::slice::from_raw_parts(a as *const u8, n) };
+    let mut p = t + 36;
+    let hid = loop {
+        if p + HID.len() > end {
+            return None;
+        }
+        if bytes(p, HID.len()) == HID {
+            break p + HID.len();
+        }
+        p += 1;
+    };
+    // Qurilma tavsifi odatda bir necha yuz bayt — keyingi qurilmaga ötib ketmaslik uçun çeklaymiz
+    let win = end.min(hid + 512);
+    let (mut gsiv, mut base) = (None, None);
+    let mut q = hid;
+    while q + 9 <= win && (gsiv.is_none() || base.is_none()) {
+        match rd_u8(q) {
+            // Extended Interrupt Descriptor: 0x89, uzunlik (u16 ≥ 6), bayroqlar, soni (≥ 1), GSIV
+            0x89 if gsiv.is_none() && rd_u16(q + 1) >= 6 && rd_u8(q + 4) >= 1 => {
+                let g = rd_u32(q + 5);
+                if (32..1020).contains(&g) {
+                    gsiv = Some(g);
+                }
+            }
+            // OperationRegion: 0x5B 0x80, NameSeg (4), RegionSpace (0 — SystemMemory), manzil
+            0x5b if base.is_none() && rd_u8(q + 1) == 0x80 && q + 8 <= win && rd_u8(q + 6) == 0 => {
+                let v = q + 7;
+                base = match rd_u8(v) {
+                    0x0b if v + 3 <= win => Some(rd_u16(v + 1) as u64),
+                    0x0c if v + 5 <= win => Some(rd_u32(v + 1) as u64),
+                    0x0e if v + 9 <= win => Some(rd_u64(v + 1)),
+                    _ => None,
+                }
+                .filter(|&b| b != 0);
+            }
+            _ => {}
+        }
+        q += 1;
+    }
+    Some((base?, gsiv?))
 }
 
 /// MADT (imzo "APIC"): GICC (0x0b) — har bir CPU, GICD (0x0c), GICR (0x0e).

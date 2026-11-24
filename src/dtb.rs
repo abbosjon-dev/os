@@ -148,6 +148,36 @@ impl Fdt {
     }
 }
 
+impl Fdt {
+    /// `/gpio-keys` (compatible "gpio-keys") içidagi quvvat tugmasi (`linux,code` = KEY_POWER,
+    /// 116): `gpios = <&gpio PIN bayroq>` dagi PIN. QEMU virt: PL061 ning 3-oyoği.
+    pub fn gpio_key_power(&self) -> Option<u32> {
+        const KEY_POWER: u64 = 116;
+        let (mut in_keys, mut pin, mut code, mut found) = (false, None, None, None);
+        let mut cur: &'static str = "";
+        self.for_each_prop(|depth, node, prop, val| {
+            if depth == 2 {
+                in_keys = prop == "compatible" && val.split(|&b| b == 0).any(|s| s == b"gpio-keys")
+                    || (in_keys && core::ptr::eq(node, cur));
+                cur = node;
+            } else if depth == 3 && in_keys {
+                if !core::ptr::eq(node, cur) {
+                    (cur, pin, code) = (node, None, None);
+                }
+                match prop {
+                    "gpios" if val.len() >= 8 => pin = Some(be_cells(&val[4..], 1) as u32),
+                    "linux,code" if val.len() >= 4 => code = Some(be_cells(val, 1)),
+                    _ => {}
+                }
+                if found.is_none() && code == Some(KEY_POWER) {
+                    found = pin;
+                }
+            }
+        });
+        found
+    }
+}
+
 /// `compatible` böyiça topilgan qurilma tuguni.
 #[derive(Clone, Copy, Default)]
 pub struct Node {

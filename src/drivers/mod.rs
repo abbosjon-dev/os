@@ -3,6 +3,7 @@
 pub mod fb;
 pub mod fwcfg;
 pub mod pci;
+pub mod pwrbtn;
 pub mod virtio;
 pub mod virtio_blk;
 pub mod virtio_gpu;

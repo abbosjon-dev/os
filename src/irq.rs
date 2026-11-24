@@ -53,6 +53,7 @@ pub fn handle() {
                     crate::drivers::virtio_net::handle_irq();
                 }
             }
+            id if id == crate::drivers::pwrbtn::irq() && id != 0 => crate::drivers::pwrbtn::handle_irq(),
             _ => crate::tprintln!(crate::i18n::msg::IRQ_UNKNOWN, id),
         }
         gic::end_of_interrupt(iar);

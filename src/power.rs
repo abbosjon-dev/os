@@ -45,6 +45,56 @@ fn psci_call(func: u64) {
     }
 }
 
+/// Quvvat tugmasi kuzatuvçisi (yadro oqimi): tugma bosilsa — muloyim öçiriş.
+pub extern "C" fn button_worker(_: usize) {
+    loop {
+        crate::task::sleep_ms(50);
+        if crate::drivers::pwrbtn::take_pressed() {
+            graceful_shutdown();
+        }
+    }
+}
+
+/// Muloyim öçiriş: GUI bildirişnomasi → ZaminFS va sozlamalarni diskka yoziş → PSCI SYSTEM_OFF.
+pub fn graceful_shutdown() -> ! {
+    use crate::i18n::pick;
+    crate::println!(
+        "  Quvvat tugmasi bosildi ({}, {}-marta) — muloyim öçiriş boşlandi",
+        crate::drivers::pwrbtn::source(),
+        crate::drivers::pwrbtn::presses()
+    );
+    crate::gui::notify(
+        pick(&["Öçirilmoqda…", "Выключение…", "Shutting down…"]),
+        pick(&[
+            "Quvvat tugmasi: maʼlumotlar diskka yozilmoqda",
+            "Кнопка питания: данные записываются на диск",
+            "Power button: saving data to disk",
+        ]),
+        0xff9f0a,
+    );
+    crate::task::sleep_ms(1200); // bildirişnoma ekranda körinsin
+    let t0 = crate::timer::uptime_ms();
+    let fs = crate::fs::commit();
+    // Sozlamalar faqat sozlaş ustasi tugagan bölsa (hisob bor) — aks holda böş hisob yozilmasin
+    let conf = if crate::drivers::virtio_blk::present() && !crate::accounts::all().is_empty() {
+        if crate::config::save_current() { "saqlandi" } else { "xato" }
+    } else {
+        "ötkazildi"
+    };
+    crate::audio::sound::stop();
+    match fs {
+        Ok(n) => crate::println!(
+            "  Quvvat: disk sinxronlandi (ZaminFS: {} blok, sozlamalar: {}, {} ms) — PSCI SYSTEM_OFF",
+            n, conf, crate::timer::uptime_ms() - t0
+        ),
+        Err(e) => crate::println!(
+            "  Quvvat: disk sinxronlandi (ZaminFS: {:?}, sozlamalar: {}, {} ms) — PSCI SYSTEM_OFF",
+            e, conf, crate::timer::uptime_ms() - t0
+        ),
+    }
+    shutdown()
+}
+
 pub fn shutdown() -> ! {
     psci_call(PSCI_SYSTEM_OFF);
     halt()

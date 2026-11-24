@@ -219,6 +219,7 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
     // 5) Uzilişlar va taymer
     irq::init();
     tprintln!(msg::IRQ_READY, gic::line_count(), timer::HZ, timer::frequency() / 1_000_000);
+    drivers::pwrbtn::init(fdt.as_ref(), efi.and_then(|e| e.acpi()));
 
     // 6) Tasodifiy sonlar generatori (kalitlar, nonce, tuz uçun)
     random::init();
@@ -264,6 +265,7 @@ pub extern "C" fn kernel_main(dtb_addr: usize) -> ! {
     tprintln!(msg::SCHED_READY, 1000 / timer::HZ, task::programs::PROGRAMS.len());
     task::spawn_kernel("tekşiruv", boot_tests, 0).expect("tekşiruv oqimi");
     task::spawn_kernel("saqlovçi", saver, 0).expect("saqlovçi oqimi");
+    task::spawn_kernel("quvvat", power::button_worker, 0).expect("quvvat oqimi");
 
     // 9) Qolgan protsessor yadrolarini uyğotamiz (PSCI CPU_ON)
     unsafe extern "C" {

@@ -398,7 +398,9 @@
       "id": "T50",
       "title": "VPS: ACPI quvvat tugmasi (GED / PL061 gpio-keys) orqali muloyim o'chirish — Netcup SCP 'ACPI shutdown'",
       "detail": "Netcup SCP dagi 'Shutdown (ACPI)' va libvirt `virsh shutdown` QEMU virt da quvvat tugmasi hodisasini yuboradi. ACPI yo'lida bu Generic Event Device (DSDT dagi ACPI0013, MMIO + GSIV), DTB yo'lida PL061 GPIO dagi gpio-keys (KEY_POWER, gpio 3). Fayllar: src/acpi.rs (DSDT/AML dan GED MMIO va IRQ ni topish; murakkab bo'lsa QEMU virt ning ma'lum manzili zaxira), src/dtb.rs (arm,pl061 + gpio-keys), yangi src/drivers/pwrbtn.rs, src/power.rs (muloyim o'chirish: GUI ga 'O'chirilmoqda' bildirishnomasi, ZaminFS/sozlamalarni diskka yozish, keyin PSCI SYSTEM_OFF), src/irq.rs yoki src/gic.rs (uzilishni ulash). Jurnalga `Quvvat tugmasi: GED @0x…, GSIV N` yoziladi. Qabul mezoni: scripts/agent/ ga yangi vps_power.py (UEFI + ACPI + GICv3 va -kernel DTB yo'li). Yuklangandan keyin QMP `system_powerdown` yuboriladi, so'ng tekshiriladi: jurnalda 'Quvvat tugmasi bosildi', 'disk sinxronlandi' bor, QEMU 15 soniya ichida o'zi chiqadi (exit kodi 0) va qayta yuklanganda disk butun. verify.sh full uni ishga tushiradi.",
-      "batch": 8
+      "batch": 8,
+      "status": "done",
+      "done_at": "2026-11-24 09:02:50"
     },
     {
       "id": "T51",
