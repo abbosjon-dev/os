@@ -64,6 +64,7 @@ def metrics(w, h):
 
     g["browser"] = icon_c(BROWSER)
     g["terminal"] = icon_c(TERMINAL)
+    g["files"] = icon_c(2)  # LAUNCHERS dagi "Fayllar"
     # new_window(n=0): brauzer oynasi (u*40 x u*30), svetofor "kattalashtirish" nuqtasi
     bw, bh = u * 40, u * 30
     x = min(w // 8, max(w - bw, 1))

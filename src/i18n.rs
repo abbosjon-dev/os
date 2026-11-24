@@ -666,4 +666,35 @@ pub mod msg {
         "ZaminFS 2: generation {}, superblock {}, blocks {} / {} (4 KiB)",
     ];
     pub const SEC_PASSWORD: Text = ["Parol diskda saqlanmaydi", "Пароль на диске не хранится", "Password is never stored"];
+    // Fayllar → Xususiyatlar oynasi
+    pub const PROP_TITLE: Text = ["Xususiyatlar", "Свойства", "Properties"];
+    pub const PROP_NAME: Text = ["Nomi", "Имя", "Name"];
+    pub const PROP_PATH: Text = ["Yöl", "Путь", "Path"];
+    pub const PROP_TYPE: Text = ["Turi", "Тип", "Type"];
+    pub const PROP_SIZE: Text = ["Hajmi", "Размер", "Size"];
+    pub const PROP_ITEMS: Text = ["Içida", "Содержит", "Contains"];
+    pub const PROP_ITEMS_FMT: Text = ["{} fayl, {} papka", "файлов: {}, папок: {}", "{} files, {} folders"];
+    pub const PROP_OWNER: Text = ["Egasi", "Владелец", "Owner"];
+    pub const PROP_CREATED: Text = ["Yaratilgan", "Создан", "Created"];
+    pub const PROP_MODIFIED: Text = ["Özgartirilgan", "Изменён", "Modified"];
+    pub const PROP_PERMS: Text = ["Ruxsatlar", "Права доступа", "Permissions"];
+    pub const PROP_WHO: [Text; 3] = [
+        ["Egasi", "Владелец", "Owner"],
+        ["Guruh", "Группа", "Group"],
+        ["Boşqalar", "Остальные", "Others"],
+    ];
+    pub const PROP_RWX: [Text; 3] = [
+        ["Öqiş", "Чтение", "Read"],
+        ["Yoziş", "Запись", "Write"],
+        ["Bajariş", "Выполнение", "Execute"],
+    ];
+    pub const PROP_LOCKED: Text = [
+        "Ruxsatni faqat egasi yoki administrator özgartiradi",
+        "Права меняет только владелец или администратор",
+        "Only the owner or an administrator can change permissions",
+    ];
+    pub const PROP_DENIED: Text = ["Ruxsat yöq", "Доступ запрещён", "Permission denied"];
+    pub const PROP_CHANGED: Text = ["Ruxsatlar özgartirildi", "Права изменены", "Permissions changed"];
+    pub const PROP_FOLDER: Text = ["Papka", "Папка", "Folder"];
+    pub const PROP_SYSTEM: Text = ["tizim fayli", "системный файл", "system file"];
 }

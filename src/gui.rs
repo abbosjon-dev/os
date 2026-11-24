@@ -190,6 +190,7 @@ struct Window {
     sel: Option<(usize, usize)>, // Muharrir: tanlaş langari (qator, ustun); oxiri — kursor
     udlg: Option<Box<UserDlg>>, // Sozlamalar → Foydalanuvçilar: oçiq dialog (parol / yangi hisob)
     nform: Option<Box<NetForm>>, // Sozlamalar → Tarmoq: DHCP / qölda (statik IPv4) formasi
+    props: Option<Box<PropsWin>>, // Fayllar → Xususiyatlar oynasi (Kind::Info)
 }
 
 impl Window {
@@ -377,6 +378,7 @@ fn base(x: usize, y: usize, w: usize, h: usize, kind: Kind, title: String, lines
         sel: None,
         udlg: None,
         nform: None,
+        props: None,
     }
 }
 
@@ -2244,6 +2246,18 @@ fn desktop() {
                     }
                 }
                 (input::EV_KEY, 99) if e.value == 1 => SHOT_REQ.store(true, Ordering::Relaxed),
+                (input::EV_KEY, 23) if e.value == 1 && alt => {
+                    // Alt+I — Fayllarda tanlangan element (yoki joriy papka) xususiyatlari
+                    if let Some(w) = windows.last().filter(|w| !w.hidden && w.kind == Kind::Files) {
+                        let p = match w.fsel.and_then(|r| w.rows.get(r)) {
+                            Some(r) => path_join(&w.path, &r.0),
+                            None => w.path.clone(),
+                        };
+                        open_props(&mut windows, &p, opened);
+                        opened += 1;
+                        changed = true;
+                    }
+                }
                 (input::EV_KEY, 20) if e.value == 1 && alt => {
                     // Alt+T — brauzerda yangi tab
                     if let Some(w) = windows.last_mut().filter(|w| !w.hidden && w.kind == Kind::Browser) {
@@ -2711,6 +2725,7 @@ fn handle_click(
             Kind::Clock => clock_click(&mut windows[i], cx, cy),
             Kind::Editor => editor_click(&mut windows[i], cx, cy),
             Kind::Terminal => term_click(&mut windows[i], cx, cy),
+            Kind::Info => props_click(&mut windows[i], cx, cy),
             Kind::Trash => match trash_click(&mut windows[i], cx, cy) {
                 2 => {
                     reload_all_files(windows);
@@ -3112,6 +3127,7 @@ enum CAct {
     SetWall(String),         // rasmni fon qilib qöyiş
     Delete(String),          // savatga tashlaş
     Rename(usize, usize),    // (oyna, element) — nomini özgartiriş
+    Props(String),           // Xususiyatlar oynasi (Alt+I)
     Copy(String, bool),      // buferga: (yöl, kesiş)
     TermCopy(usize),         // terminal (oyna id): tanlovni nusxalaş
     TermPaste(usize),        // terminal (oyna id): buferni terilgandek joylaş
@@ -3191,9 +3207,11 @@ fn build_ctx(windows: &[Window], desk: &Desk, cx: usize, cy: usize) -> Option<Ct
             items.push((s("Nusxa olish"), CAct::Copy(p.clone(), false)));
             items.push((s("Kesiş"), CAct::Copy(p.clone(), true)));
             items.push((s("Sep"), CAct::Sep));
+            items.push((s(tr(&crate::i18n::msg::PROP_TITLE)), CAct::Props(p.clone())));
             items.push((s("Savatga tashlaş"), CAct::Delete(p)));
         } else {
             items.push((s("Yangi papka"), CAct::NewFolder(w.path.clone(), w.id)));
+            items.push((s(tr(&crate::i18n::msg::PROP_TITLE)), CAct::Props(w.path.clone())));
             if desk.fclip.is_some() {
                 items.push((s("Joylaş"), CAct::Paste(w.path.clone())));
             }
@@ -3328,6 +3346,10 @@ fn ctx_exec(act: CAct, desk: &mut Desk, windows: &mut Vec<Window>, opened: &mut 
                     w.rename = Some(r.0.clone());
                 }
             }
+        }
+        CAct::Props(p) => {
+            open_props(windows, &p, *opened);
+            *opened += 1;
         }
         CAct::Copy(p, cut) => clip_set(desk, p, cut),
         CAct::TermCopy(id) => {
@@ -5040,6 +5062,7 @@ fn draw_window(win: &Window, active: bool, mx: usize, my: usize) {
         Kind::Monitor => draw_monitor(win),
         Kind::Puzzle => draw_puzzle(win),
         Kind::Paint => draw_paint(win),
+        Kind::Info if win.props.is_some() => draw_props(win),
         _ => draw_text_window(win),
     }
     gfx::reset_clip();
@@ -5655,6 +5678,253 @@ fn draw_text_window(win: &Window) {
         gfx::draw_text(win.x + pad, ty, line, 0xe7edf6, px);
         ty += lh;
     }
+}
+
+// ---------------- Fayllar → Xususiyatlar oynasi ----------------
+
+
+/// "Xususiyatlar" oynasi holati (Kind::Info oynasida).
+struct PropsWin {
+    path: String,
+    name: String,
+    p: fs::Props,
+    /// Joriy foydalanuvçi ruxsatlarni özgartira oladimi (egasi / admin)
+    can: bool,
+}
+
+/// Fayl / papka xususiyatlari oynasini oçadi (kontekst menyu yoki Alt+I).
+fn open_props(windows: &mut Vec<Window>, path: &str, n: usize) {
+    let p = match fs::props(path) {
+        Ok(p) => p,
+        Err(e) => {
+            notify(tr(&crate::i18n::msg::PROP_TITLE), &alloc::format!("{}: {:?}", path, e), 0xff453a);
+            return;
+        }
+    };
+    // Şu yöl uçun oyna oçiq bölsa — uni yangilab old planga çiqaramiz
+    if let Some(i) = windows.iter().position(|w| w.props.as_ref().is_some_and(|q| q.path == path)) {
+        let mut w = windows.remove(i);
+        w.hidden = false;
+        props_refresh(&mut w);
+        windows.push(w);
+        return;
+    }
+    let (sw, sh) = gfx::size();
+    let u = body();
+    let (w, h) = ((u * 27).min(sw), (u * 26).min(sh.saturating_sub(menubar_h())));
+    let x = (sw.saturating_sub(w) / 2 + (n % 4) * u).min(sw.saturating_sub(w));
+    let y = (menubar_h() + u * 2 + (n % 4) * u).min(sh.saturating_sub(h));
+    let name = String::from(path.trim_end_matches('/').rsplit('/').next().unwrap_or(path));
+    let mut win = base(x, y, w, h, Kind::Info, alloc::format!("{} — {}", tr(&crate::i18n::msg::PROP_TITLE), name), Vec::new());
+    let can = crate::security::may_chmod(p.owner, accounts::current_uid(), p.readonly);
+    win.path = String::from(path);
+    win.props = Some(Box::new(PropsWin { path: String::from(path), name, p, can }));
+    windows.push(win);
+}
+
+fn props_refresh(win: &mut Window) {
+    if let Some(d) = win.props.as_mut() {
+        if let Ok(p) = fs::props(&d.path) {
+            d.can = crate::security::may_chmod(p.owner, accounts::current_uid(), p.readonly);
+            d.p = p;
+        }
+    }
+}
+
+/// Qator balandligi va ma'lumot qatorlari soni.
+fn props_lh() -> usize {
+    body() * 3 / 2
+}
+
+fn props_info_rows(d: &PropsWin) -> usize {
+    if d.p.is_dir { 8 } else { 7 }
+}
+
+/// Ruxsat katakçasi (kim: 0 egasi / 1 guruh / 2 boşqalar; bit: 0 r / 1 w / 2 x).
+fn props_cb(win: &Window, who: usize, bit: usize) -> (usize, usize, usize, usize) {
+    let u = body();
+    let Some(d) = win.props.as_ref() else { return (0, 0, 0, 0) };
+    let lh = props_lh();
+    let gy = win.content_top() + u / 2 + props_info_rows(d) * lh + lh * 2 + lh;
+    let col = win.x + u * 9 + bit * u * 5;
+    let sz = u;
+    (col + (u * 4 - sz) / 2, gy + who * lh + (lh - sz) / 2, sz, sz)
+}
+
+fn draw_props(win: &Window) {
+    let Some(d) = win.props.as_ref() else { return draw_text_window(win) };
+    let u = body();
+    let px = small();
+    let lh = props_lh();
+    let (lx, vx) = (win.x + u, win.x + u * 8);
+    let vw = (win.x + win.w).saturating_sub(vx + u);
+    let mut y = win.content_top() + u / 2;
+    let tz = time::tz_name();
+    let kind = if d.p.is_dir { String::from(tr(&crate::i18n::msg::PROP_FOLDER)) } else { type_label(&d.name, FKind::of(&d.name, false)) };
+    let size = alloc::format!("{} ({} B)", human_size(d.p.size), d.p.size);
+    let mut owner = alloc::format!("{} (uid {})", accounts::username_of(d.p.owner), d.p.owner);
+    if d.p.readonly {
+        owner = alloc::format!("{} · {}", owner, tr(&crate::i18n::msg::PROP_SYSTEM));
+    }
+    let mut rows: Vec<(&str, String)> = alloc::vec![
+        (tr(&crate::i18n::msg::PROP_NAME), d.name.clone()),
+        (tr(&crate::i18n::msg::PROP_PATH), d.path.clone()),
+        (tr(&crate::i18n::msg::PROP_TYPE), kind),
+        (tr(&crate::i18n::msg::PROP_SIZE), size),
+    ];
+    if d.p.is_dir {
+        let mut items = String::new();
+        let _ = crate::i18n::write_template(&mut items, tr(&crate::i18n::msg::PROP_ITEMS_FMT), &[&d.p.files, &d.p.dirs]);
+        rows.push((tr(&crate::i18n::msg::PROP_ITEMS), items));
+    }
+    rows.push((tr(&crate::i18n::msg::PROP_OWNER), owner));
+    rows.push((tr(&crate::i18n::msg::PROP_CREATED), alloc::format!("{} ({})", fmt_mtime(d.p.ctime), tz)));
+    rows.push((tr(&crate::i18n::msg::PROP_MODIFIED), alloc::format!("{} ({})", fmt_mtime(d.p.mtime), tz)));
+    for (label, value) in &rows {
+        gfx::draw_text(lx, y + (lh - px) / 2, label, 0x9fb0c3, px);
+        gfx::draw_text(vx, y + (lh - px) / 2, &fit_text(value, vw, px), 0xeef3fa, px);
+        y += lh;
+    }
+    // Ajratgiç va ruxsatlar sarlavhasi: "Ruxsatlar  rw-r--r--  (644)"
+    y += lh / 2;
+    fill_rect(lx, y, win.w.saturating_sub(u * 2), 1, 0x3a4458);
+    y += lh / 2;
+    let perm = crate::security::mode_string(d.p.mode);
+    gfx::draw_text(lx, y + (lh - px) / 2, tr(&crate::i18n::msg::PROP_PERMS), OQ, px);
+    gfx::draw_text_mono(vx, y + (lh - px) / 2, &alloc::format!("{}  ({:03o})", perm, d.p.mode & 0o777), 0x63a8ff, px);
+    y += lh;
+    // Ustun sarlavhalari
+    let hpx = px * 9 / 10;
+    for bit in 0..3 {
+        let (cx, _, cw, _) = props_cb(win, 0, bit);
+        gfx::draw_text_centered(cx + cw / 2, y + (lh - hpx) / 2, tr(&crate::i18n::msg::PROP_RWX[bit]), 0x9fb0c3, hpx);
+    }
+    for who in 0..3 {
+        let (_, ry, _, rh) = props_cb(win, who, 0);
+        gfx::draw_text(lx, ry + (rh.saturating_sub(px)) / 2, tr(&crate::i18n::msg::PROP_WHO[who]), 0xd3dae5, px);
+        for bit in 0..3 {
+            let (bx, by, bw, bh) = props_cb(win, who, bit);
+            let on = d.p.mode & props_mask(who, bit) != 0;
+            let (fill, edge, alpha) = match (on, d.can) {
+                (true, true) => (accent(), accent(), 255),
+                (true, false) => (0x5d6b80, 0x5d6b80, 255),
+                (false, true) => (0x0f141d, 0x6a7891, 255),
+                (false, false) => (0x0f141d, 0x3a4458, 160),
+            };
+            if alpha == 255 {
+                gfx::fill_round_rect(bx, by, bw, bh, u / 4, fill);
+            } else {
+                fill_round_rect_a(bx, by, bw, bh, u / 4, fill, alpha);
+            }
+            gfx::round_outline(bx, by, bw, bh, u / 4, 1, edge);
+            if on {
+                // belgi ✓
+                let (fx, fy, s) = (bx as f32, by as f32, bw as f32);
+                let t = (s / 8.0).max(1.5);
+                seg(fx + s * 0.22, fy + s * 0.52, fx + s * 0.42, fy + s * 0.72, t, OQ);
+                seg(fx + s * 0.42, fy + s * 0.72, fx + s * 0.78, fy + s * 0.3, t, OQ);
+            }
+        }
+    }
+    if !d.can {
+        let (_, ry, _, _) = props_cb(win, 2, 0);
+        let ny = ry + lh;
+        let npx = px * 85 / 100;
+        gfx::draw_text(lx, ny, &fit_text(tr(&crate::i18n::msg::PROP_LOCKED), win.w.saturating_sub(u * 2), npx), 0xff9f0a, npx);
+    }
+}
+
+/// Ruxsat biti: kim (0 egasi, 1 guruh, 2 boşqalar) va r/w/x.
+fn props_mask(who: usize, bit: usize) -> u16 {
+    (4u16 >> bit) << ((2 - who) * 3)
+}
+
+/// Katakçani bosiş: ruxsat bölsa — bitni almaştiradi, bölmasa — bildiriş.
+fn props_click(win: &mut Window, cx: usize, cy: usize) -> bool {
+    if win.props.is_none() {
+        return false;
+    }
+    for who in 0..3 {
+        for bit in 0..3 {
+            if !in_rect(props_cb(win, who, bit), cx, cy) {
+                continue;
+            }
+            let d = win.props.as_mut().unwrap();
+            if !d.can {
+                notify(tr(&crate::i18n::msg::PROP_DENIED), tr(&crate::i18n::msg::PROP_LOCKED), 0xff453a);
+                return true;
+            }
+            let mode = d.p.mode ^ props_mask(who, bit);
+            match fs::chmod_as(&d.path, mode, accounts::current_uid()) {
+                Ok(()) => {
+                    props_refresh(win);
+                    let d = win.props.as_ref().unwrap();
+                    notify(tr(&crate::i18n::msg::PROP_CHANGED), &alloc::format!("{} · {}", d.name, crate::security::mode_string(d.p.mode)), 0x2fbf5f);
+                }
+                Err(_) => {
+                    notify(tr(&crate::i18n::msg::PROP_DENIED), tr(&crate::i18n::msg::PROP_LOCKED), 0xff453a);
+                    props_refresh(win);
+                }
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// Xususiyatlar self-testi: papka hajmi rekursiv yiğindisi va elementlar soni, ruxsat qatori
+/// formatlaşi, egasi / admin özgartiradi, begona (admin emas) foydalanuvçiga rad.
+pub fn self_test_props() -> Result<usize, &'static str> {
+    use crate::security::{may_chmod, mode_string};
+    use crate::abi::{OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
+    let mut n = 0;
+    let mut check = |ok: bool, e: &'static str| -> Result<(), &'static str> {
+        n += 1;
+        if ok { Ok(()) } else { Err(e) }
+    };
+    for (m, want) in [(0o644, "rw-r--r--"), (0o755, "rwxr-xr-x"), (0o700, "rwx------"), (0o000, "---------"), (0o1777, "rwxrwxrwt"), (0o1666, "rw-rw-rwT")] {
+        check(mode_string(m) == want, "mode_string formati notöğri")?;
+    }
+    check(props_mask(0, 0) == 0o400 && props_mask(1, 1) == 0o020 && props_mask(2, 2) == 0o001, "props_mask bitlari")?;
+    // Sinov papkasi: a.txt (100 B) + ich/b.txt (250 B) → 350 B, 2 fayl, 1 papka
+    let root = "/tmp/.xususiyat-sinov";
+    let _ = fs::remove(&alloc::format!("{}/ich/b.txt", root));
+    let _ = fs::remove(&alloc::format!("{}/ich", root));
+    let _ = fs::remove(&alloc::format!("{}/a.txt", root));
+    let _ = fs::remove(root);
+    fs::mkdir(root).map_err(|_| "sinov papkasi yaratilmadi")?;
+    fs::mkdir(&alloc::format!("{}/ich", root)).map_err(|_| "ich papkasi yaratilmadi")?;
+    let put = |p: &str, len: usize| -> Result<(), &'static str> {
+        let id = fs::open(p, OPEN_CREATE | OPEN_TRUNCATE | OPEN_WRITE).map_err(|_| "sinov fayli oçilmadi")?;
+        fs::write(id, Some(0), &alloc::vec![b'z'; len]).map_err(|_| "sinov fayli yozilmadi")?;
+        Ok(())
+    };
+    let a = alloc::format!("{}/a.txt", root);
+    put(&a, 100)?;
+    put(&alloc::format!("{}/ich/b.txt", root), 250)?;
+    let p = fs::props(root).map_err(|_| "papka xususiyatlari öqilmadi")?;
+    check(p.is_dir && p.size == 350, "papka hajmi yiğindisi notöğri")?;
+    check(p.files == 2 && p.dirs == 1, "papka elementlari soni notöğri")?;
+    let f = fs::props(&a).map_err(|_| "fayl xususiyatlari öqilmadi")?;
+    check(!f.is_dir && f.size == 100 && f.files == 0, "fayl hajmi notöğri")?;
+    check(mode_string(f.mode) == "rw-r--r--", "yangi fayl ruxsati rw-r--r-- emas")?;
+    check(f.ctime <= f.mtime, "vaqtlar tartibi")?;
+    // Begona foydalanuvçi (egasi emas, admin emas) — rad, ruxsat özgarmaydi
+    let stranger = (60000u32..).find(|&u| u != f.owner && !accounts::is_admin_uid(u)).unwrap_or(60000);
+    check(!may_chmod(f.owner, stranger, false), "begonaga ruxsat berildi")?;
+    check(matches!(fs::chmod_as(&a, 0o777, stranger), Err(fs::FsError::Denied)), "chmod_as begonani rad etmadi")?;
+    check(fs::props(&a).map(|q| q.mode & 0o777) == Ok(0o644), "rad etilgan chmod ruxsatni özgartirdi")?;
+    // Egasi özgartira oladi; admin (uid 0 — yadro) ham
+    check(may_chmod(stranger, stranger, false), "egasiga ruxsat berilmadi")?;
+    check(!may_chmod(stranger, stranger, true) && !may_chmod(0, 0, true), "tizim fayli özgartirildi")?;
+    check(fs::chmod_as(&a, 0o600, 0).is_ok(), "admin chmod_as rad etildi")?;
+    check(fs::props(&a).map(|q| mode_string(q.mode)) == Ok(String::from("rw-------")), "chmod_as natijasi notöğri")?;
+    // Tozalaş
+    let _ = fs::remove(&alloc::format!("{}/ich/b.txt", root));
+    let _ = fs::remove(&alloc::format!("{}/ich", root));
+    let _ = fs::remove(&a);
+    check(fs::remove(root).is_ok(), "sinov papkasi öçirilmadi")?;
+    Ok(n)
 }
 
 /// Terminal qatorini ranglab chizadi: user@zamin (yashil), yöl (koʻk).

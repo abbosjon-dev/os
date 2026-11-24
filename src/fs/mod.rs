@@ -602,6 +602,71 @@ pub fn chmod(path: &str, mode: u16) -> Result<(), FsError> {
     Ok(())
 }
 
+/// Ruxsatlarni foydalanuvçi `uid` nomidan özgartiradi (GUI "Xususiyatlar" oynasi):
+/// qaror `security::may_chmod` da — faqat egasi yoki administrator, tizim fayllari — heç kim.
+pub fn chmod_as(path: &str, mode: u16, uid: u32) -> Result<(), FsError> {
+    let mut v = vfs_as_kernel();
+    let id = v.lookup(path)?;
+    let n = v.node_mut(id)?;
+    if !crate::security::may_chmod(n.owner, uid, n.readonly) {
+        return Err(FsError::Denied);
+    }
+    n.mode = (n.mode & PERM_STICKY) | (mode & 0o777);
+    mark_dirty();
+    Ok(())
+}
+
+/// Fayl / papka xususiyatlari ("Xususiyatlar" oynasi uçun).
+pub struct Props {
+    pub is_dir: bool,
+    /// Fayl — öz hajmi; papka — içidagi barça fayllar hajmining rekursiv yiğindisi
+    pub size: u64,
+    /// Papka içidagi elementlar soni (rekursiv; papkaning özi kirmaydi)
+    pub files: usize,
+    pub dirs: usize,
+    pub owner: u32,
+    pub mode: u16,
+    pub readonly: bool,
+    pub ctime: u64,
+    pub mtime: u64,
+}
+
+pub fn props(path: &str) -> Result<Props, FsError> {
+    let v = vfs_as_caller();
+    let id = v.lookup(path)?;
+    let n = v.node(id)?;
+    let mut p = Props {
+        is_dir: matches!(n.data, Data::Dir(_)),
+        size: 0,
+        files: 0,
+        dirs: 0,
+        owner: n.owner,
+        mode: n.mode,
+        readonly: n.readonly,
+        ctime: n.ctime,
+        mtime: n.mtime,
+    };
+    // Rekursiya örniga stek: çuqur papkalar yadro stekini toldirmaydi
+    let mut stack = alloc::vec![id];
+    while let Some(cur) = stack.pop() {
+        match &v.node(cur)?.data {
+            Data::File(d) => {
+                p.size += d.size as u64;
+                if cur != id {
+                    p.files += 1;
+                }
+            }
+            Data::Dir(children) => {
+                if cur != id {
+                    p.dirs += 1;
+                }
+                stack.extend(children.iter().copied().filter(|&c| v.node(c).is_ok()));
+            }
+        }
+    }
+    Ok(p)
+}
+
 pub fn remove(path: &str) -> Result<(), FsError> {
     let mut v = vfs_as_caller();
     let id = v.lookup(path)?;

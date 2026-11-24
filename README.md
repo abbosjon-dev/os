@@ -192,6 +192,26 @@ körsatiladi.) Rasm eskizlari keşlanadi: papka qayta yuklanganda qayta dekodlan
   `öy.txt` va `Uy_öyi` ni topişini, böş so'rov hammasini qaytarişini, kirill/ş/ç/ğ
   qidiruvini, `crumbs("~/Hujjatlar/a/b")` yöllarini va tor enda `…` qisqartirişini tekşiradi.
 
+### Fayllar: Xususiyatlar oynasi (hajm, egasi, ruxsatlar)
+
+![Fayllar: Xususiyatlar oynasi](docs/fayl-xususiyat.png)
+
+- Fayl yoki papka ustida öng tugma → **Xususiyatlar** (böş joyda — joriy papka), yoki
+  Fayllar oynasida `Alt+I` (tanlangan element, tanlanmagan bölsa — joriy papka).
+- Oynada: nomi, töliq yöli, turi, hajmi (papka uçun — içidagi barça fayllar hajmining
+  **rekursiv yiğindisi** va `N fayl, M papka`), egasi (login va uid; tizim fayllari
+  belgilanadi), yaratilgan va özgartirilgan vaqt — mahalliy vaqtda (standart Toşkent, `UTC+5`).
+- **Ruxsatlar** — `rw-r--r--  (644)` qatori va 3×3 belgilaş katakçalari (Egasi / Guruh /
+  Boşqalar × Öqiş / Yoziş / Bajariş). Katakça bosilsa bit almaşadi va `fs::chmod_as` orqali
+  darhol saqlanadi.
+- Ruxsatni **faqat egasi yoki administrator** özgartiradi (qaror `security::may_chmod` da;
+  tizim fayllari — heç kim). Huquq bölmasa katakçalar xira (faol emas), pastda izoh turadi
+  va bosilganda "Ruxsat yöq" bildirişnomasi çiqadi.
+- Matnlar uç tilda (`i18n::msg::PROP_*`). Yuklanişda `[ok] Xususiyatlar` `/tmp` da sinov
+  papkasi yaratib hajm yiğindisini (350 B, 2 fayl, 1 papka), `mode_string` formatini
+  (`rw-r--r--`, `rwxr-xr-x`, sticky `t`), begona foydalanuvçiga rad (ruxsat özgarmaydi) va
+  admin özgartirişini tekşiradi.
+
 ### Brauzer: to'liq HTML (`zamin://html` sinov sahifasi)
 
 | Matn teglari va belgilar | Ro'yxatlar (A./iv./teskari), ichma-ich belgilar |
@@ -699,6 +719,7 @@ pastda "2 / 4". Video oynasida **ijro/pauza** tugmasi (`Space`), kadrlar böyiç
 | `Alt+C` / `Alt+X` / `Alt+V` | Fayllarda: nusxa olish / kesiş / joylaş; muharrirda — tanlangan matn (tizim almaşuv buferi); brauzer manzil qatori va `<input>` da — joylaş |
 | `Shift` + strelkalar / `Home` / `End`, `Alt+A` | Matn muharririda tanlaş / hammasini tanlaş |
 | `F2`, `Delete` | Fayllarda: nomini özgartiriş, savatga tashlaş |
+| `Alt+I` | Fayllarda: tanlangan element (yoki joriy papka) xususiyatlari |
 | `Alt+S` | Matn muharririda saqlaş |
 | `Alt+Z` / `Alt+Shift+Z` | Matn muharririda bekor qiliş / qaytariş |
 | `Alt+K` | Matn muharririda qidiruv (`Enter` — keyingisi, `Esc` — yopiş) |

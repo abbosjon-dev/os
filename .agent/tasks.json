@@ -430,7 +430,9 @@
       "id": "T54",
       "title": "Fayllar menejeri: 'Xususiyatlar' oynasi (hajm, tur, egasi, ruxsatlar, vaqtlar) va ruxsatlarni o'zgartirish",
       "detail": "Fayllar menejerida fayl ma'lumotlarini ko'radigan va ruxsatni o'zgartiradigan joy yo'q (gui.rs da 'xususiyat' topilmadi). Fayllar: src/gui.rs (kontekst menyusiga 'Xususiyatlar' bandi va Alt+I yorlig'i; oynada nom, to'liq yo'l, tur, hajm — papka uchun rekursiv yig'indi va elementlar soni, egasi, rwx ruxsatlari belgilash katakchalari bilan, yaratilgan/o'zgartirilgan vaqt Toshkent vaqtida). Ruxsatni faqat egasi yoki admin o'zgartiradi, src/fs va src/security.rs orqali; ruxsat bo'lmasa katakchalar faol emas va bildirishnoma chiqadi. src/i18n.rs da 3 tilda matnlar. Qabul mezoni: self-test `[ok] Xususiyatlar: …` (papka hajmi yig'indisi, ruxsat qatorini formatlash 'rw-r--r--', begona foydalanuvchiga rad). Skrinshot docs/fayl-xususiyat.png (scripts/agent/shot.py bilan Fayllar → kontekst menyu → Xususiyatlar). verify.sh full o'tadi.",
-      "batch": 8
+      "batch": 8,
+      "status": "done",
+      "done_at": "2026-11-24 13:37:23"
     },
     {
       "id": "T55",

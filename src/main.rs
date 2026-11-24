@@ -548,6 +548,11 @@ extern "C" fn boot_tests(_: usize) {
     // Seriya qobiq matn buyruqlari (qidir/bosh/oxir/hajm/nusxa) — umumiy src/matn.rs
     assert_eq!(matn::self_test(), 0, "matn buyruqlari sinovi yiqildi");
     println!("  [ok] matn buyruqlari: qidir -i/-n, bosh/oxir -n N, hajm (qator/söz/bayt), nusxa/köçir manzili");
+    // Fayllar → Xususiyatlar: papka hajmi yiğindisi, ruxsat qatori, begonaga rad (fs::init dan keyin)
+    match gui::self_test_props() {
+        Ok(n) => println!("  [ok] Xususiyatlar: papka hajmi yiğindisi (rekursiv, 350 B / 2 fayl / 1 papka), ruxsat qatori 'rw-r--r--', egasi/admin özgartiradi, begona foydalanuvçiga rad ({} sinov)", n),
+        Err(e) => panic!("Xususiyatlar tekşiruvi yiqildi: {}", e),
+    }
 
     // FAT yoziş: ikkinçi disk bölsa — fayl yozib, qayta öqib tekşiramiz
     if drivers::virtio_blk::fat_present() {
